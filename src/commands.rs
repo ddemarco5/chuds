@@ -90,10 +90,8 @@ fn format_dm_report(
         "**{}** - {}\n{}\n\n",
         result.quest_title, result.quest_giver, result.quest_description
     ));
-    out.push_str(&format!(
-        "STR **{}**  SMT **{}**  STH **{}**  EXP **{}**\n\n",
-        player.strength, player.smarts, player.stealth, player.experience
-    ));
+    out.push_str(&format!("{}", player.format_stats()));
+    out.push_str("\n\n");
     for (i, trial) in result.trials.iter().enumerate() {
         let pass_str = if trial.passed { "\u{2705}" } else { "\u{274c}" };
         let brain = if trial.chose_optimal { " \u{1F9E0}" } else { "" };
@@ -224,15 +222,28 @@ pub async fn delete_quest(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> 
     Ok(())
 }
 
-/// Create a chud for the calling user.
+/// Admin: create a chud for a specific Discord user.
 #[poise::command(slash_command)]
-pub async fn add_chud(ctx: Context<'_>) -> Result<(), Error> {
+pub async fn add_chud(ctx: Context<'_>, target_user_id: u64, name: String, description: String) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     if !admin_guard(ctx).await {
         return Ok(());
     }
-    engine::add_chud(ctx.author().id.get())?;
+    engine::add_chud(target_user_id, name, description)?;
     ctx.say("ok").await?;
+    Ok(())
+}
+
+/// Create your chud and join the game.
+#[poise::command(slash_command)]
+pub async fn chud(ctx: Context<'_>, name: String, description: String) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let player = engine::add_chud(ctx.author().id.get(), name, description)?;
+    let msg = format!(
+        "**{}** has entered the world!\n{}",
+        player.name, player.description
+    );
+    ctx.say(msg).await?;
     Ok(())
 }
 
@@ -248,9 +259,9 @@ pub async fn delete_chud(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Assign your chud to an open quest by its ID.
+/// Force-assign any user's chud to a quest by Discord user ID and quest ID.
 #[poise::command(slash_command)]
-pub async fn assign(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
+pub async fn assign(ctx: Context<'_>, target_user_id: u64, quest_id: u32) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     if !admin_guard(ctx).await {
         return Ok(());
@@ -259,6 +270,36 @@ pub async fn assign(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
     let channel_id = ctx.data().channel_id;
     let max_buffer = ctx.data().max_buffer_messages;
     let mut board = ctx.data().board.lock().await;
+    let info = engine::assign_chud_to_quest(&mut *board, target_user_id, quest_id)?;
+
+    let content = format!("**{}** ripped **{}** off the board", info.player_name, info.quest_title);
+    post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
+    storage::save_board(&*board)?;
+
+    update_board_message(http, channel_id, &mut *board).await?;
+    ctx.say("ok").await?;
+    Ok(())
+}
+
+/// Take an open quest off the board by title.
+#[poise::command(slash_command)]
+pub async fn take(ctx: Context<'_>, title: String) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let http = &ctx.serenity_context().http;
+    let channel_id = ctx.data().channel_id;
+    let max_buffer = ctx.data().max_buffer_messages;
+    let mut board = ctx.data().board.lock().await;
+
+    let quest_id = board
+        .quests
+        .iter()
+        .find(|q| {
+            matches!(&q.status, crate::board::QuestStatus::Open)
+                && q.generated.quest_title.to_lowercase() == title.to_lowercase()
+        })
+        .map(|q| q.id)
+        .ok_or_else(|| anyhow::anyhow!("No open quest found with that title"))?;
+
     let info = engine::assign_chud_to_quest(&mut *board, ctx.author().id.get(), quest_id)?;
 
     let content = format!("**{}** ripped **{}** off the board", info.player_name, info.quest_title);
@@ -267,6 +308,51 @@ pub async fn assign(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
 
     update_board_message(http, channel_id, &mut *board).await?;
     ctx.say("ok").await?;
+    Ok(())
+}
+
+/// Display your chud's name, description, and current stats.
+#[poise::command(slash_command)]
+pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let user_id = ctx.author().id.get();
+    let player = storage::load_player(user_id)?;
+    match player {
+        None => ctx.say("You don't have a chud.").await?,
+        Some(p) => {
+            let msg = format!("**{}**\n{}\n{}", p.name, p.description, p.format_stats());
+            ctx.say(msg).await?
+        }
+    };
+    Ok(())
+}
+
+/// Check the current status of your chud's active quest.
+#[poise::command(slash_command)]
+pub async fn job(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let user_id = ctx.author().id.get();
+    let player = storage::load_player(user_id)?;
+    let player = match player {
+        None => { ctx.say("You don't have a chud.").await?; return Ok(()); }
+        Some(p) => p,
+    };
+    let board = ctx.data().board.lock().await;
+    match board.active_quest_for(user_id) {
+        None => ctx.say(format!("**{}** is not on a job.", player.name)).await?,
+        Some(q) => {
+            let mut msg = format!(
+                "**{}** - *{}*\n{}",
+                q.generated.quest_title,
+                q.generated.quest_giver,
+                q.generated.description,
+            );
+            if q.quest_data.trials.len() > 1 {
+                msg.push_str(&format!("\n\n{} is overcoming trials and tribulations.", player.name));
+            }
+            ctx.say(msg).await?
+        }
+    };
     Ok(())
 }
 

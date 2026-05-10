@@ -4,12 +4,6 @@ use serde::{Deserialize, Serialize};
 use crate::quest_result::QuestResult;
 
 const MAX_STAT: u8 = 10;
-
-const CHUD_NAMES: &[&str] = &[
-    "Gorm", "Blun", "Drek", "Vorg", "Snib", "Thelp", "Mux", "Greeg",
-    "Furt", "Wubb", "Slonk", "Prez", "Boffo", "Dinge", "Crubb", "Norv",
-    "Welp", "Skrod", "Flob", "Quint",
-];
 /// Threshold = STAT_LEVEL_BASE * current_stat. Scales cost upward as the stat grows.
 pub const STAT_LEVEL_BASE: u32 = 8;
 /// Threshold = EXP_LEVEL_BASE * current_experience. Scales cost upward as experience grows.
@@ -43,6 +37,13 @@ fn apply_wins(val: &mut u8, counter: &mut u32, wins: u32, base: u32) -> bool {
 }
 
 impl Player {
+    pub fn format_stats(&self) -> String {
+        format!(
+            "Strength {} - Smarts {} - Stealth {} - Experience {}",
+            self.strength, self.smarts, self.stealth, self.experience
+        )
+    }
+
     pub fn log_stats(&self) {
         tracing::info!(
             name = %self.name,
@@ -81,11 +82,10 @@ impl Player {
     }
 }
 
-/// Create a new chud for the given Discord user with a random name and rolled stats.
+/// Create a new chud for the given Discord user with rolled stats.
 /// Stats are each rolled 1–3, then trimmed (highest first) until the sum is ≤ 5.
-pub fn create_chud(discord_user_id: u64) -> Player {
+pub fn create_chud(discord_user_id: u64, name: String, description: String) -> Player {
     let mut rng = rand::thread_rng();
-    let name = CHUD_NAMES[rng.gen_range(0..CHUD_NAMES.len())].to_string();
 
     let mut strength = rng.gen_range(1u8..=3);
     let mut smarts   = rng.gen_range(1u8..=3);
@@ -104,7 +104,7 @@ pub fn create_chud(discord_user_id: u64) -> Player {
     Player {
         discord_user_id,
         name,
-        description: "A placeholder man".to_string(),
+        description,
         strength,
         smarts,
         stealth,

@@ -60,11 +60,11 @@ pub fn delete_quest(board: &mut Board, quest_id: u32) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Create a chud for a Discord user and save it. Errors if one already exists.
-pub fn add_chud(discord_user_id: u64) -> anyhow::Result<Player> {
+pub fn add_chud(discord_user_id: u64, name: String, description: String) -> anyhow::Result<Player> {
     if storage::load_player(discord_user_id)?.is_some() {
         anyhow::bail!("chud already exists for user {}", discord_user_id);
     }
-    let player = create_chud(discord_user_id);
+    let player = create_chud(discord_user_id, name, description);
     storage::save_player(&player)?;
     tracing::info!(name = %player.name, discord_user_id, "chud created");
     Ok(player)
