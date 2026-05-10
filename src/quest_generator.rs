@@ -98,12 +98,14 @@ pub struct TrialStats {
     pub stealth: u8,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestData {
     pub quest_description: String,
     pub quest_difficulty: u8,
     pub trials: Vec<TrialStats>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneratedQuest {
     pub quest_title: String,
     pub quest_giver: String,
@@ -186,7 +188,7 @@ impl QuestGenerator {
                         return Err(e.into());
                     };
                     retries += 1;
-                    println!("Retryable error ({}), waiting {} seconds before retry {} of {}...", label, wait_secs, retries, MAX_RETRIES);
+                    tracing::warn!(error = label, wait_secs, retries, MAX_RETRIES, "retryable error, waiting before retry");
                     tokio::time::sleep(tokio::time::Duration::from_secs(wait_secs)).await;
                 }
                 Err(e) => return Err(e.into()),
@@ -207,9 +209,9 @@ impl QuestGenerator {
             quest_description: &quest.quest_description,
             quest_difficulty: quest.quest_difficulty,
         })?;
-        println!("Generating description...");
+        tracing::info!("generating quest description");
         let desc_resp = Self::prompt_with_retry(&self.description_agent, &desc_yaml).await?;
-        println!("Description received ({} chars)", desc_resp.len());
+        tracing::info!(chars = desc_resp.len(), "quest description received");
         let desc_response = serde_yaml::from_str::<DescResponse>(Self::strip_code_fences(&desc_resp))?;
         let quest_title = desc_response.quest_title;
         let quest_giver = desc_response.quest_giver;
@@ -231,9 +233,9 @@ impl QuestGenerator {
             trials: &quest.trials,
             quest_giver_description: &description,
         })?;
-        println!("Generating trials...");
+        tracing::info!("generating quest trials");
         let trials_resp = Self::prompt_with_retry(&self.trial_agent, &trial_yaml).await?;
-        println!("Trials received ({} chars)", trials_resp.len());
+        tracing::info!(chars = trials_resp.len(), "quest trials received");
         let trials = serde_yaml::from_str::<TrialsResponse>(Self::strip_code_fences(&trials_resp))?.trials;
 
         Ok(GeneratedQuest { quest_title, quest_giver, description, trials })
@@ -277,9 +279,9 @@ impl QuestGenerator {
                 margin: o.margin,
             }).collect(),
         })?;
-        println!("Generating results...");
+        tracing::info!("generating quest results");
         let results_resp = Self::prompt_with_retry(&self.results_agent, &results_yaml).await?;
-        println!("Results received ({} chars)", results_resp.len());
+        tracing::info!(chars = results_resp.len(), "quest results received");
         let r = serde_yaml::from_str::<ResultsResponse>(Self::strip_code_fences(&results_resp))?;
 
         Ok(QuestResults { trials: r.trials, summary: r.summary })

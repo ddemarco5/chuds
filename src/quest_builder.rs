@@ -1,6 +1,5 @@
-use std::io::{self, BufRead, Write};
-
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use rand_distr::{Distribution, Normal};
 
 use crate::player::Player;
@@ -9,42 +8,14 @@ use crate::quest_generator::{GeneratedQuest, QuestData, TrialStats};
 /// Standard deviation for the trial-count normal distribution. Tweak to taste.
 pub const TRIAL_COUNT_STDDEV: f64 = 1.0;
 const MIN_TRIALS: usize = 1;
-const MIN_DIFFICULTY: u8 = 1;
-const MAX_DIFFICULTY: u8 = 10;
 /// Probability (0.0-1.0) that any given stat is irrelevant (set to 0) for a trial.
 const STAT_ZERO_CHANCE: f64 = 0.10;
-/// Probability a non-optimal valid stat is dropped from consideration at minimum experience (1).
-const EXP_DROPOUT_MAX: f64 = 0.70;
 /// Probability a non-optimal valid stat is dropped from consideration at maximum experience (10).
+/// Higher experience → higher dropout → chud focuses more consistently on the optimal stat.
+const EXP_DROPOUT_MAX: f64 = 0.70;
+/// Probability a non-optimal valid stat is dropped from consideration at minimum experience (1).
+/// Lower experience → lower dropout → more random / exploratory stat selection.
 const EXP_DROPOUT_MIN: f64 = 0.05;
-
-pub fn prompt_user() -> anyhow::Result<(String, u8)> {
-    let stdin = io::stdin();
-    let mut stdin = stdin.lock();
-
-    let description = read_line(&mut stdin, "Quest description: ")?;
-    if description.trim().is_empty() {
-        anyhow::bail!("quest description cannot be empty");
-    }
-
-    let difficulty = loop {
-        let raw = read_line(&mut stdin, &format!("Quest difficulty ({}-{}): ", MIN_DIFFICULTY, MAX_DIFFICULTY))?;
-        match raw.trim().parse::<u8>() {
-            Ok(d) if (MIN_DIFFICULTY..=MAX_DIFFICULTY).contains(&d) => break d,
-            _ => println!("Please enter an integer between {} and {}.", MIN_DIFFICULTY, MAX_DIFFICULTY),
-        }
-    };
-
-    Ok((description.trim().to_string(), difficulty))
-}
-
-fn read_line<R: BufRead>(reader: &mut R, prompt: &str) -> anyhow::Result<String> {
-    print!("{}", prompt);
-    io::stdout().flush()?;
-    let mut buf = String::new();
-    reader.read_line(&mut buf)?;
-    Ok(buf)
-}
 
 pub fn roll_trial_count(difficulty: u8, rng: &mut impl Rng) -> usize {
     let mean = difficulty as f64 / 2.0;
@@ -69,7 +40,8 @@ pub fn roll_stats(difficulty: u8, rng: &mut impl Rng) -> TrialStats {
     stats
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum StatChoice {
     Strength,
     Smarts,

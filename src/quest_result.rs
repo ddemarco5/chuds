@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 use crate::player::Player;
-use crate::quest_builder::{PlayedQuest, TrialOutcome};
+use crate::quest_builder::{PlayedQuest, StatChoice, TrialOutcome};
 use crate::quest_generator::GeneratedQuest;
 
 fn is_optimal(outcome: &TrialOutcome, player: &Player) -> bool {
@@ -17,9 +19,10 @@ fn is_optimal(outcome: &TrialOutcome, player: &Player) -> bool {
     chosen_score >= best_score
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CompletedTrial {
     pub situation: String,
-    pub stat_used: String,
+    pub stat_used: StatChoice,
     pub player_roll: u8,
     pub trial_roll: u8,
     pub margin: i16,
@@ -28,6 +31,7 @@ pub struct CompletedTrial {
     pub narrative: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct QuestResult {
     pub quest_title: String,
     pub quest_giver: String,
@@ -55,7 +59,7 @@ impl QuestResult {
                 let chose_optimal = is_optimal(outcome, player);
                 CompletedTrial {
                     situation: situation.clone(),
-                    stat_used: outcome.stat_used.label().to_string(),
+                    stat_used: outcome.stat_used,
                     player_roll: outcome.player_roll,
                     trial_roll: outcome.trial_roll,
                     margin,
@@ -77,28 +81,29 @@ impl QuestResult {
     }
 
     pub fn stat_wins(&self) -> (u32, u32, u32) {
-        let count = |stat: &str| {
-            self.trials.iter().filter(|t| t.stat_used == stat && t.passed).count() as u32
-        };
-        (count("strength"), count("smarts"), count("stealth"))
+        let str_w = self.trials.iter().filter(|t| t.stat_used == StatChoice::Strength && t.passed).count() as u32;
+        let smt_w = self.trials.iter().filter(|t| t.stat_used == StatChoice::Smarts   && t.passed).count() as u32;
+        let sth_w = self.trials.iter().filter(|t| t.stat_used == StatChoice::Stealth  && t.passed).count() as u32;
+        (str_w, smt_w, sth_w)
     }
 
-    pub fn print(&self) {
-        println!("\nQuest: {}", self.quest_title);
-        println!("Poster: {}", self.quest_giver);
-        println!("{}", self.quest_description);
+    pub fn log(&self) {
+        tracing::info!(title = %self.quest_title, giver = %self.quest_giver, description = %self.quest_description, "quest result");
 
         for (i, trial) in self.trials.iter().enumerate() {
-            println!("\n-- Trial {} --", i + 1);
-            println!("{}", trial.situation);
-            println!("  {} | rolled {} vs {} -> {} [{}]",
-                trial.stat_used, trial.player_roll, trial.trial_roll,
-                if trial.passed { "PASS" } else { "FAIL" },
-                if trial.chose_optimal { "optimal" } else { "suboptimal" });
-            println!("  {}", trial.narrative);
+            tracing::info!(
+                trial = i + 1,
+                situation = %trial.situation,
+                stat = trial.stat_used.label(),
+                player_roll = trial.player_roll,
+                trial_roll = trial.trial_roll,
+                passed = trial.passed,
+                optimal = trial.chose_optimal,
+                narrative = %trial.narrative,
+                "trial outcome"
+            );
         }
 
-        println!("\n--- {}", self.summary);
-        println!("\n{}", if self.passed { "QUEST PASSED" } else { "QUEST FAILED" });
+        tracing::info!(passed = self.passed, summary = %self.summary, "quest complete");
     }
 }
