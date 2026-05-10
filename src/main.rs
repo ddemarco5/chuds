@@ -65,6 +65,10 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(4);
+    let max_jobs: usize = std::env::var("MAX_JOBS")
+        .map_err(|_| anyhow::anyhow!("MAX_JOBS not set"))?
+        .parse()
+        .map_err(|_| anyhow::anyhow!("MAX_JOBS must be a positive integer"))?;
     let tick_time_s: u64 = std::env::var("TICK_TIME_S")
         .map_err(|_| anyhow::anyhow!("TICK_TIME_S not set"))?
         .parse()
@@ -109,15 +113,22 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?;
                 tracing::info!(guild_id, "slash commands registered");
+                let guild_name = ctx.http
+                    .get_guild(serenity::GuildId::new(guild_id))
+                    .await
+                    .map(|g| g.name.clone())
+                    .unwrap_or_else(|_| "Server".to_string());
+                tracing::info!(guild_name, "fetched guild name");
                 {
                     let mut b = board.lock().await;
                     clear_channel_on_startup(ctx, channel_id, &mut b).await;
-                    commands::update_board_message(&ctx.http, channel_id, &mut b).await?;
+                    commands::update_board_message(&ctx.http, channel_id, &mut b, &guild_name).await?;
                 }
 
                 let tick_board = Arc::clone(&board);
                 let tick_generator = Arc::clone(&generator);
                 let tick_http = Arc::clone(&ctx.http);
+                let tick_guild_name = guild_name.clone();
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
                     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -131,6 +142,7 @@ async fn main() -> anyhow::Result<()> {
                             &tick_board,
                             channel_id,
                             max_buffer_messages,
+                            &tick_guild_name,
                         ).await {
                             tracing::error!(err = %e, "background tick failed");
                         }
@@ -143,6 +155,8 @@ async fn main() -> anyhow::Result<()> {
                     admin_user_id,
                     channel_id,
                     max_buffer_messages,
+                    max_jobs,
+                    guild_name,
                 })
             })
         })

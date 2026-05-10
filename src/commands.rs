@@ -13,6 +13,8 @@ pub struct Data {
     pub admin_user_id: u64,
     pub channel_id: u64,
     pub max_buffer_messages: usize,
+    pub max_jobs: usize,
+    pub guild_name: String,
 }
 
 pub type Error = anyhow::Error;
@@ -114,12 +116,103 @@ fn format_dm_report(
     out
 }
 
+fn format_chudlerboard() -> String {
+    let ids = match storage::list_player_ids() {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!(err = %e, "failed to list players for chudlerboard");
+            return String::new();
+        }
+    };
+    if ids.is_empty() {
+        return String::new();
+    }
+
+    let players: Vec<crate::player::Player> = ids
+        .iter()
+        .filter_map(|&id| match storage::load_player(id) {
+            Ok(Some(p)) => Some(p),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!(discord_user_id = id, err = %e, "failed to load player for chudlerboard");
+                None
+            }
+        })
+        .collect();
+
+    if players.is_empty() {
+        return String::new();
+    }
+
+    fn leaders_for(
+        players: &[crate::player::Player],
+        accessor: fn(&crate::player::Player) -> u8,
+    ) -> Vec<String> {
+        let max_val = players.iter().map(|p| accessor(p)).max().unwrap_or(0);
+        let mut names: Vec<String> = players
+            .iter()
+            .filter(|p| accessor(p) == max_val)
+            .map(|p| p.name.clone())
+            .collect();
+        names.sort();
+        names
+    }
+
+    let stat_defs: [(&str, Vec<String>); 4] = [
+        ("strongest", leaders_for(&players, |p| p.strength)),
+        ("smartest",  leaders_for(&players, |p| p.smarts)),
+        ("sneakiest", leaders_for(&players, |p| p.stealth)),
+        ("pro",       leaders_for(&players, |p| p.experience)),
+    ];
+
+    let mut groups: Vec<(Vec<String>, Vec<&str>)> = Vec::new();
+    for (adjective, names) in &stat_defs {
+        if let Some(group) = groups.iter_mut().find(|(n, _)| n == names) {
+            group.1.push(adjective);
+        } else {
+            groups.push((names.clone(), vec![adjective]));
+        }
+    }
+
+    let mut lines = Vec::new();
+    for (names, titles) in &groups {
+        let name_str = match names.len() {
+            1 => names[0].clone(),
+            2 => format!("{} and {}", names[0], names[1]),
+            _ => {
+                let (last, rest) = names.split_last().unwrap();
+                format!("{}, and {}", rest.join(", "), last)
+            }
+        };
+        let verb = if names.len() == 1 { "is" } else { "are" };
+        let title_str = match titles.len() {
+            1 => format!("the {}", titles[0]),
+            2 => format!("the {} and the {}", titles[0], titles[1]),
+            _ => {
+                let (last, rest) = titles.split_last().unwrap();
+                let parts: Vec<String> = rest.iter().map(|t| format!("the {}", t)).collect();
+                format!("{}, and the {}", parts.join(", "), last)
+            }
+        };
+        lines.push(format!("{} {} {}", name_str, verb, title_str));
+    }
+
+    format!("```\n----- Chudlerboard -----\n{}\n```", lines.join("\n"))
+}
+
 pub(crate) async fn update_board_message(
     http: &serenity::Http,
     channel_id: u64,
     board: &mut Board,
+    guild_name: &str,
 ) -> anyhow::Result<()> {
-    let content = format_board(board);
+    let chudlerboard = format_chudlerboard();
+    let board_section = format_board(board);
+    let content = if chudlerboard.is_empty() {
+        format!("----- {}'s Job Board -----\n{}", guild_name, board_section)
+    } else {
+        format!("{}\n----- {}'s Job Board -----\n{}", chudlerboard, guild_name, board_section)
+    };
     let ch = serenity::ChannelId::new(channel_id);
 
     if let Some(msg_id) = board.board_message_id {
@@ -159,6 +252,7 @@ pub async fn execute_tick(
     board: &tokio::sync::Mutex<Board>,
     channel_id: u64,
     max_buffer: usize,
+    guild_name: &str,
 ) -> anyhow::Result<()> {
     let mut board = board.lock().await;
 
@@ -184,7 +278,7 @@ pub async fn execute_tick(
         storage::save_board(&*board)?;
     }
 
-    update_board_message(http, channel_id, &mut *board).await?;
+    update_board_message(http, channel_id, &mut *board, guild_name).await?;
     Ok(())
 }
 
@@ -201,6 +295,7 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
         &ctx.data().board,
         ctx.data().channel_id,
         ctx.data().max_buffer_messages,
+        &ctx.data().guild_name,
     ).await?;
     ctx.say("ok").await?;
     Ok(())
@@ -218,8 +313,12 @@ pub async fn generate_job(
         return Ok(());
     }
     let mut board = ctx.data().board.lock().await;
+    if board.quests.len() >= ctx.data().max_jobs {
+        ctx.say(format!("Board is full ({} jobs max).", ctx.data().max_jobs)).await?;
+        return Ok(());
+    }
     engine::generate_job(&ctx.data().generator, &mut *board, description, difficulty).await?;
-    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board).await?;
+    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, &ctx.data().guild_name).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -238,8 +337,12 @@ pub async fn write_job(
         return Ok(());
     }
     let mut board = ctx.data().board.lock().await;
+    if board.quests.len() >= ctx.data().max_jobs {
+        ctx.say(format!("Board is full ({} jobs max).", ctx.data().max_jobs)).await?;
+        return Ok(());
+    }
     engine::write_job(&ctx.data().generator, &mut *board, title, giver, description, difficulty).await?;
-    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board).await?;
+    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, &ctx.data().guild_name).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -253,7 +356,7 @@ pub async fn delete_quest(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> 
     }
     let mut board = ctx.data().board.lock().await;
     engine::delete_quest(&mut *board, quest_id)?;
-    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board).await?;
+    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, &ctx.data().guild_name).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -312,7 +415,7 @@ pub async fn assign(ctx: Context<'_>, target_user_id: u64, quest_id: u32) -> Res
     // post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
     storage::save_board(&*board)?;
 
-    update_board_message(http, channel_id, &mut *board).await?;
+    update_board_message(http, channel_id, &mut *board, &ctx.data().guild_name).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -343,7 +446,7 @@ pub async fn take(ctx: Context<'_>, title: String) -> Result<(), Error> {
     post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
     storage::save_board(&*board)?;
 
-    update_board_message(http, channel_id, &mut *board).await?;
+    update_board_message(http, channel_id, &mut *board, &ctx.data().guild_name).await?;
     ctx.say("ok").await?;
     Ok(())
 }
