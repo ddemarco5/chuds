@@ -29,8 +29,8 @@ pub struct AssignInfo {
 // Board operations
 // ---------------------------------------------------------------------------
 
-/// Generate a quest via the LLM and add it to the board. Returns the new quest id.
-pub async fn add_quest(
+/// Fully generate a quest via the LLM and add it to the board. Returns the new quest id.
+pub async fn generate_job(
     generator: &QuestGenerator,
     board: &mut Board,
     description: String,
@@ -39,6 +39,24 @@ pub async fn add_quest(
     let quest_data = build_quest(description, difficulty);
     let generated = generator.submit(&quest_data).await?;
     tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest generated");
+    let id = board.add_quest(quest_data, generated);
+    storage::save_board(board)?;
+    tracing::info!(id, "quest added to board");
+    Ok(id)
+}
+
+/// Add a user-authored quest; only trial situations are LLM-generated. Returns the new quest id.
+pub async fn write_job(
+    generator: &QuestGenerator,
+    board: &mut Board,
+    title: String,
+    giver: String,
+    description: String,
+    difficulty: u8,
+) -> anyhow::Result<u32> {
+    let quest_data = build_quest(description.clone(), difficulty);
+    let generated = generator.submit_with_description(&quest_data, title, giver, description).await?;
+    tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest written");
     let id = board.add_quest(quest_data, generated);
     storage::save_board(board)?;
     tracing::info!(id, "quest added to board");
@@ -209,9 +227,8 @@ pub async fn tick(generator: &QuestGenerator, board: &mut Board) -> anyhow::Resu
     Ok(resolved)
 }
 
-/// Manually trigger a tick. Hook this up to a `tokio::interval` later.
+/// Run a single game tick.
 pub async fn run_tick(generator: &QuestGenerator, board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
-    tracing::info!("manual tick triggered");
     tick(generator, board).await
 }
 

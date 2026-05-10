@@ -39,8 +39,8 @@ fn apply_wins(val: &mut u8, counter: &mut u32, wins: u32, base: u32) -> bool {
 impl Player {
     pub fn format_stats(&self) -> String {
         format!(
-            "Strength {} - Smarts {} - Stealth {} - Experience {}",
-            self.strength, self.smarts, self.stealth, self.experience
+            "{}: *Strength {} - Smarts {} - Stealth {} - Experience {}*",
+            self.name, self.strength, self.smarts, self.stealth, self.experience
         )
     }
 

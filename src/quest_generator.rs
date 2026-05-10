@@ -241,6 +241,37 @@ impl QuestGenerator {
         Ok(GeneratedQuest { quest_title, quest_giver, description, trials })
     }
 
+    pub async fn submit_with_description(
+        &self,
+        quest: &QuestData,
+        title: String,
+        giver: String,
+        description: String,
+    ) -> anyhow::Result<GeneratedQuest> {
+        #[derive(Serialize)]
+        struct TrialPrompt<'a> {
+            quest_description: &'a str,
+            quest_difficulty: u8,
+            trials: &'a [TrialStats],
+            quest_giver_description: &'a str,
+        }
+        #[derive(Deserialize)]
+        struct TrialsResponse { trials: Vec<String> }
+
+        let trial_yaml = serde_yaml::to_string(&TrialPrompt {
+            quest_description: &quest.quest_description,
+            quest_difficulty: quest.quest_difficulty,
+            trials: &quest.trials,
+            quest_giver_description: &description,
+        })?;
+        tracing::info!("generating quest trials (description provided)");
+        let trials_resp = Self::prompt_with_retry(&self.trial_agent, &trial_yaml).await?;
+        tracing::info!(chars = trials_resp.len(), "quest trials received");
+        let trials = serde_yaml::from_str::<TrialsResponse>(Self::strip_code_fences(&trials_resp))?.trials;
+
+        Ok(GeneratedQuest { quest_title: title, quest_giver: giver, description, trials })
+    }
+
     pub async fn generate_results(
         &self,
         quest: &QuestData,

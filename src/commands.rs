@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use poise::serenity_prelude::{self as serenity, CreateMessage, EditMessage, MessageId};
 
 use crate::board::{Board, QuestStatus};
@@ -6,8 +8,8 @@ use crate::quest_generator::QuestGenerator;
 use crate::storage;
 
 pub struct Data {
-    pub generator: QuestGenerator,
-    pub board: tokio::sync::Mutex<Board>,
+    pub generator: Arc<QuestGenerator>,
+    pub board: Arc<tokio::sync::Mutex<Board>>,
     pub admin_user_id: u64,
     pub channel_id: u64,
     pub max_buffer_messages: usize,
@@ -151,22 +153,19 @@ pub(crate) async fn update_board_message(
 // Commands
 // ---------------------------------------------------------------------------
 
-/// Advance the board by one tick, resolving any due quests via the LLM.
-#[poise::command(slash_command)]
-pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
-        return Ok(());
-    }
-    let http = &ctx.serenity_context().http;
-    let channel_id = ctx.data().channel_id;
-    let max_buffer = ctx.data().max_buffer_messages;
-    let mut board = ctx.data().board.lock().await;
+pub async fn execute_tick(
+    http: &serenity::Http,
+    generator: &QuestGenerator,
+    board: &tokio::sync::Mutex<Board>,
+    channel_id: u64,
+    max_buffer: usize,
+) -> anyhow::Result<()> {
+    let mut board = board.lock().await;
 
-    let resolved = engine::run_tick(&ctx.data().generator, &mut *board).await?;
+    let resolved = engine::run_tick(generator, &mut *board).await?;
 
     for qr in &resolved {
-        let content = format!( "{}", qr.summary );
+        let content = format!("{}", qr.summary);
         post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
 
         let dm_content = format_dm_report(&qr.player_name, &qr.result, &qr.player);
@@ -186,13 +185,30 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
     }
 
     update_board_message(http, channel_id, &mut *board).await?;
+    Ok(())
+}
+
+/// Advance the board by one tick, resolving any due quests via the LLM.
+#[poise::command(slash_command)]
+pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    execute_tick(
+        &ctx.serenity_context().http,
+        &ctx.data().generator,
+        &ctx.data().board,
+        ctx.data().channel_id,
+        ctx.data().max_buffer_messages,
+    ).await?;
     ctx.say("ok").await?;
     Ok(())
 }
 
-/// Generate a new quest via the LLM and post it to the board.
+/// Fully generate a new quest via the LLM and post it to the board.
 #[poise::command(slash_command)]
-pub async fn add_quest(
+pub async fn generate_job(
     ctx: Context<'_>,
     description: String,
     difficulty: u8,
@@ -202,7 +218,27 @@ pub async fn add_quest(
         return Ok(());
     }
     let mut board = ctx.data().board.lock().await;
-    engine::add_quest(&ctx.data().generator, &mut *board, description, difficulty).await?;
+    engine::generate_job(&ctx.data().generator, &mut *board, description, difficulty).await?;
+    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board).await?;
+    ctx.say("ok").await?;
+    Ok(())
+}
+
+/// Post a user-authored quest; only trial situations are LLM-generated.
+#[poise::command(slash_command)]
+pub async fn write_job(
+    ctx: Context<'_>,
+    title: String,
+    giver: String,
+    description: String,
+    difficulty: u8,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let mut board = ctx.data().board.lock().await;
+    engine::write_job(&ctx.data().generator, &mut *board, title, giver, description, difficulty).await?;
     update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board).await?;
     ctx.say("ok").await?;
     Ok(())
@@ -240,7 +276,7 @@ pub async fn chud(ctx: Context<'_>, name: String, description: String) -> Result
     ctx.defer_ephemeral().await?;
     let player = engine::add_chud(ctx.author().id.get(), name, description)?;
     let msg = format!(
-        "**{}** has entered the world!\n{}",
+        "A chudly **{}** sautners through the door.\n{}",
         player.name, player.description
     );
     ctx.say(msg).await?;
@@ -268,12 +304,12 @@ pub async fn assign(ctx: Context<'_>, target_user_id: u64, quest_id: u32) -> Res
     }
     let http = &ctx.serenity_context().http;
     let channel_id = ctx.data().channel_id;
-    let max_buffer = ctx.data().max_buffer_messages;
+    // let max_buffer = ctx.data().max_buffer_messages;
     let mut board = ctx.data().board.lock().await;
-    let info = engine::assign_chud_to_quest(&mut *board, target_user_id, quest_id)?;
+    let _info = engine::assign_chud_to_quest(&mut *board, target_user_id, quest_id)?;
 
-    let content = format!("**{}** ripped **{}** off the board", info.player_name, info.quest_title);
-    post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
+    // let content = format!("**{}** ripped **{}** off the board", info.player_name, info.quest_title);
+    // post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
     storage::save_board(&*board)?;
 
     update_board_message(http, channel_id, &mut *board).await?;
@@ -302,7 +338,8 @@ pub async fn take(ctx: Context<'_>, title: String) -> Result<(), Error> {
 
     let info = engine::assign_chud_to_quest(&mut *board, ctx.author().id.get(), quest_id)?;
 
-    let content = format!("**{}** ripped **{}** off the board", info.player_name, info.quest_title);
+    let first_name = info.player_name.split_whitespace().next().unwrap_or(&info.player_name);
+    let content = format!("**{}** ripped **{}** off the board", first_name, info.quest_title);
     post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
     storage::save_board(&*board)?;
 

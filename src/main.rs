@@ -7,8 +7,11 @@ mod quest_generator;
 mod quest_result;
 mod storage;
 
+use std::{sync::Arc, time::Duration};
+
 use commands::Data;
 use poise::serenity_prelude as serenity;
+use tokio::time::MissedTickBehavior;
 
 async fn clear_channel_on_startup(ctx: &serenity::Context, channel_id: u64, board: &mut board::Board) {
     let ch = serenity::ChannelId::new(channel_id);
@@ -58,21 +61,26 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("GUILD_ID not set"))?
         .parse()
         .map_err(|_| anyhow::anyhow!("GUILD_ID must be a u64"))?;
-    let max_buffer_messages: usize = std::env::var("BUFFER_SIZE")
+    let max_buffer_messages: usize = std::env::var("MESSAGE_BUFFER_SIZE")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(4);
+    let tick_time_s: u64 = std::env::var("TICK_TIME_S")
+        .map_err(|_| anyhow::anyhow!("TICK_TIME_S not set"))?
+        .parse()
+        .map_err(|_| anyhow::anyhow!("TICK_TIME_S must be a positive integer"))?;
 
-    let generator = quest_generator::QuestGenerator::new(&api_key)?;
-    let mut board = storage::load_board()?;
+    let generator = Arc::new(quest_generator::QuestGenerator::new(&api_key)?);
+    let board = Arc::new(tokio::sync::Mutex::new(storage::load_board()?));
 
-    tracing::info!(quests = board.quests.len(), "chuds bot starting");
+    tracing::info!(tick_time_s, "chuds bot starting");
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
                 commands::tick(),
-                commands::add_quest(),
+                commands::generate_job(),
+                commands::write_job(),
                 commands::delete_quest(),
                 commands::chud(),
                 commands::add_chud(),
@@ -101,11 +109,37 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?;
                 tracing::info!(guild_id, "slash commands registered");
-                clear_channel_on_startup(ctx, channel_id, &mut board).await;
-                commands::update_board_message(&ctx.http, channel_id, &mut board).await?;
+                {
+                    let mut b = board.lock().await;
+                    clear_channel_on_startup(ctx, channel_id, &mut b).await;
+                    commands::update_board_message(&ctx.http, channel_id, &mut b).await?;
+                }
+
+                let tick_board = Arc::clone(&board);
+                let tick_generator = Arc::clone(&generator);
+                let tick_http = Arc::clone(&ctx.http);
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
+                    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                    interval.tick().await;
+                    loop {
+                        interval.tick().await;
+                        tracing::info!("background tick firing");
+                        if let Err(e) = commands::execute_tick(
+                            &tick_http,
+                            &tick_generator,
+                            &tick_board,
+                            channel_id,
+                            max_buffer_messages,
+                        ).await {
+                            tracing::error!(err = %e, "background tick failed");
+                        }
+                    }
+                });
+
                 Ok(Data {
                     generator,
-                    board: tokio::sync::Mutex::new(board),
+                    board,
                     admin_user_id,
                     channel_id,
                     max_buffer_messages,
