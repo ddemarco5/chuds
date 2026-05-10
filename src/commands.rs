@@ -58,7 +58,7 @@ fn format_board(board: &Board) -> String {
         .join("\n\n")
 }
 
-async fn update_board_message(
+pub(crate) async fn update_board_message(
     http: &serenity::Http,
     channel_id: u64,
     board: &mut Board,

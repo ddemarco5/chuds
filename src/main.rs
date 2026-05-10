@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("GUILD_ID must be a u64"))?;
 
     let generator = quest_generator::QuestGenerator::new(&api_key)?;
-    let board = storage::load_board()?;
+    let mut board = storage::load_board()?;
 
     tracing::info!(quests = board.quests.len(), "chuds bot starting");
 
@@ -71,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?;
                 tracing::info!(guild_id, "slash commands registered");
+                commands::update_board_message(&ctx.http, channel_id, &mut board).await?;
                 Ok(Data {
                     generator,
                     board: tokio::sync::Mutex::new(board),

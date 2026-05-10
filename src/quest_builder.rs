@@ -118,7 +118,7 @@ pub fn play_quest(quest: &QuestData, generated: &GeneratedQuest, player: &Player
         let player_stat = stat_used.player_stat(player);
         let required = stat_used.trial_required(stats);
         let player_roll: u8 = rng.gen_range(1..=player_stat);
-        let trial_roll: u8  = rng.gen_range(1..=required);
+        let trial_roll: u8  = rng.gen_range(1..=required + 1);
         let passed = player_roll >= trial_roll;
 
         outcomes.push(TrialOutcome {
