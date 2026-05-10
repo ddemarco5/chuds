@@ -10,6 +10,7 @@ pub struct Data {
     pub board: tokio::sync::Mutex<Board>,
     pub admin_user_id: u64,
     pub channel_id: u64,
+    pub max_buffer_messages: usize,
 }
 
 pub type Error = anyhow::Error;
@@ -58,6 +59,61 @@ fn format_board(board: &Board) -> String {
         .join("\n\n")
 }
 
+async fn post_buffered_message(
+    http: &serenity::Http,
+    channel_id: u64,
+    board: &mut Board,
+    max_buffer: usize,
+    content: &str,
+) {
+    let ch = serenity::ChannelId::new(channel_id);
+    if board.pending_deletes.len() >= max_buffer {
+        let old_id = board.pending_deletes.remove(0);
+        if let Err(e) = http.delete_message(ch, MessageId::new(old_id), None).await {
+            tracing::warn!(msg_id = old_id, err = %e, "failed to evict oldest buffered message");
+        }
+    }
+    match http.send_message(ch, vec![], &CreateMessage::new().content(content)).await {
+        Ok(msg) => board.pending_deletes.push(msg.id.get()),
+        Err(e) => tracing::warn!(err = %e, "failed to post buffered message"),
+    }
+}
+
+fn format_dm_report(
+    player_name: &str,
+    result: &crate::quest_result::QuestResult,
+    player: &crate::player::Player,
+) -> String {
+    let mut out = String::new();
+    let outcome = if result.passed { "PASSED" } else { "FAILED" };
+    out.push_str(&format!(
+        "**{}** - {}\n{}\n\n",
+        result.quest_title, result.quest_giver, result.quest_description
+    ));
+    out.push_str(&format!(
+        "STR **{}**  SMT **{}**  STH **{}**  EXP **{}**\n\n",
+        player.strength, player.smarts, player.stealth, player.experience
+    ));
+    for (i, trial) in result.trials.iter().enumerate() {
+        let pass_str = if trial.passed { "\u{2705}" } else { "\u{274c}" };
+        let brain = if trial.chose_optimal { " \u{1F9E0}" } else { "" };
+        out.push_str(&format!(
+            "**Trial {}** - {}\n  {} {} | {} rolled {} vs {}{}\n  *{}*\n",
+            i + 1,
+            trial.situation,
+            pass_str,
+            trial.stat_used.label(),
+            player_name,
+            trial.player_roll,
+            trial.trial_roll,
+            brain,
+            trial.narrative,
+        ));
+    }
+    out.push_str(&format!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n**{}**\n{}", outcome, result.summary));
+    out
+}
+
 pub(crate) async fn update_board_message(
     http: &serenity::Http,
     channel_id: u64,
@@ -104,9 +160,34 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
     if !admin_guard(ctx).await {
         return Ok(());
     }
+    let http = &ctx.serenity_context().http;
+    let channel_id = ctx.data().channel_id;
+    let max_buffer = ctx.data().max_buffer_messages;
     let mut board = ctx.data().board.lock().await;
-    engine::run_tick(&ctx.data().generator, &mut *board).await?;
-    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board).await?;
+
+    let resolved = engine::run_tick(&ctx.data().generator, &mut *board).await?;
+
+    for qr in &resolved {
+        let content = format!( "{}", qr.summary );
+        post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
+
+        let dm_content = format_dm_report(&qr.player_name, &qr.result, &qr.player);
+        let dm_map = serde_json::json!({ "recipient_id": qr.discord_user_id.to_string() });
+        match http.create_private_channel(&dm_map).await {
+            Ok(dm) => {
+                if let Err(e) = http.send_message(dm.id, vec![], &CreateMessage::new().content(&dm_content)).await {
+                    tracing::warn!(discord_user_id = qr.discord_user_id, err = %e, "failed to DM quest report");
+                }
+            }
+            Err(e) => tracing::warn!(discord_user_id = qr.discord_user_id, err = %e, "failed to open DM channel"),
+        }
+    }
+
+    if !resolved.is_empty() {
+        storage::save_board(&*board)?;
+    }
+
+    update_board_message(http, channel_id, &mut *board).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -174,9 +255,17 @@ pub async fn assign(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
     if !admin_guard(ctx).await {
         return Ok(());
     }
+    let http = &ctx.serenity_context().http;
+    let channel_id = ctx.data().channel_id;
+    let max_buffer = ctx.data().max_buffer_messages;
     let mut board = ctx.data().board.lock().await;
-    engine::assign_chud_to_quest(&mut *board, ctx.author().id.get(), quest_id)?;
-    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board).await?;
+    let info = engine::assign_chud_to_quest(&mut *board, ctx.author().id.get(), quest_id)?;
+
+    let content = format!("**{}** ripped **{}** off the board", info.player_name, info.quest_title);
+    post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
+    storage::save_board(&*board)?;
+
+    update_board_message(http, channel_id, &mut *board).await?;
     ctx.say("ok").await?;
     Ok(())
 }

@@ -10,6 +10,28 @@ mod storage;
 use commands::Data;
 use poise::serenity_prelude as serenity;
 
+async fn clear_channel_on_startup(ctx: &serenity::Context, channel_id: u64, board: &mut board::Board) {
+    let ch = serenity::ChannelId::new(channel_id);
+    match ch.messages(ctx, serenity::GetMessages::new().limit(100)).await {
+        Ok(messages) => {
+            let ids: Vec<serenity::MessageId> = messages.iter().map(|m| m.id).collect();
+            let count = ids.len();
+            for id in ids {
+                if let Err(e) = ctx.http.delete_message(ch, id, None).await {
+                    tracing::warn!(msg_id = id.get(), err = %e, "failed to delete message on startup");
+                }
+            }
+            tracing::info!(count, "channel cleared on startup");
+        }
+        Err(e) => tracing::warn!(err = %e, "failed to fetch channel messages for startup clear"),
+    }
+    board.board_message_id = None;
+    board.pending_deletes.clear();
+    if let Err(e) = storage::save_board(board) {
+        tracing::warn!(err = %e, "failed to save board after startup clear");
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -36,6 +58,10 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("GUILD_ID not set"))?
         .parse()
         .map_err(|_| anyhow::anyhow!("GUILD_ID must be a u64"))?;
+    let max_buffer_messages: usize = std::env::var("BUFFER_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4);
 
     let generator = quest_generator::QuestGenerator::new(&api_key)?;
     let mut board = storage::load_board()?;
@@ -71,12 +97,14 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?;
                 tracing::info!(guild_id, "slash commands registered");
+                clear_channel_on_startup(ctx, channel_id, &mut board).await;
                 commands::update_board_message(&ctx.http, channel_id, &mut board).await?;
                 Ok(Data {
                     generator,
                     board: tokio::sync::Mutex::new(board),
                     admin_user_id,
                     channel_id,
+                    max_buffer_messages,
                 })
             })
         })

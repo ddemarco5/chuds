@@ -38,6 +38,9 @@ pub struct Board {
     /// Discord message ID of the live job-board post in the configured channel.
     #[serde(default)]
     pub board_message_id: Option<u64>,
+    /// Discord message IDs to delete at the start of the next tick.
+    #[serde(default)]
+    pub pending_deletes: Vec<u64>,
 }
 
 impl Board {

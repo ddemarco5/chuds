@@ -8,6 +8,23 @@ use crate::storage;
 /// Number of trials resolved per tick. Tune for game balance.
 pub const TRIALS_PER_TICK: u32 = 1;
 
+/// Info returned after a quest resolves during a tick.
+pub struct QuestResolved {
+    pub discord_user_id: u64,
+    pub player_name: String,
+    pub quest_title: String,
+    pub passed: bool,
+    pub summary: String,
+    pub result: QuestResult,
+    pub player: crate::player::Player,
+}
+
+/// Info returned after a chud accepts a quest.
+pub struct AssignInfo {
+    pub player_name: String,
+    pub quest_title: String,
+}
+
 // ---------------------------------------------------------------------------
 // Board operations
 // ---------------------------------------------------------------------------
@@ -76,22 +93,22 @@ pub fn assign_chud_to_quest(
     board: &mut Board,
     discord_user_id: u64,
     quest_id: u32,
-) -> anyhow::Result<()> {
-    storage::load_player(discord_user_id)?
+) -> anyhow::Result<AssignInfo> {
+    let player = storage::load_player(discord_user_id)?
         .ok_or_else(|| anyhow::anyhow!("no chud found for user {}", discord_user_id))?;
 
     if board.active_quest_for(discord_user_id).is_some() {
         anyhow::bail!("user {} already has an active quest", discord_user_id);
     }
 
-    let trial_count = board
+    let quest = board
         .quests
         .iter()
         .find(|q| q.id == quest_id)
-        .ok_or_else(|| anyhow::anyhow!("quest {} not found", quest_id))?
-        .quest_data
-        .trials
-        .len() as u32;
+        .ok_or_else(|| anyhow::anyhow!("quest {} not found", quest_id))?;
+
+    let trial_count = quest.quest_data.trials.len() as u32;
+    let quest_title = quest.generated.quest_title.clone();
 
     let ticks_remaining = trial_count.div_ceil(TRIALS_PER_TICK);
 
@@ -101,7 +118,7 @@ pub fn assign_chud_to_quest(
 
     storage::save_board(board)?;
     tracing::info!(discord_user_id, quest_id, ticks_remaining, "chud assigned to quest");
-    Ok(())
+    Ok(AssignInfo { player_name: player.name, quest_title })
 }
 
 // ---------------------------------------------------------------------------
@@ -111,9 +128,11 @@ pub fn assign_chud_to_quest(
 /// Advance the board by one tick: decrement all active quest counters, then
 /// resolve any that have reached zero via the LLM, update player stats, and
 /// persist state.
-pub async fn tick(generator: &QuestGenerator, board: &mut Board) -> anyhow::Result<()> {
+pub async fn tick(generator: &QuestGenerator, board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
     let due = board.tick_and_take_due();
     tracing::info!(count = due.len(), "tick fired");
+
+    let mut resolved = Vec::new();
 
     for board_quest in due {
         let discord_user_id = match board_quest.assigned_to() {
@@ -174,14 +193,24 @@ pub async fn tick(generator: &QuestGenerator, board: &mut Board) -> anyhow::Resu
             passed = result.passed,
             "quest resolved and player saved"
         );
+
+        resolved.push(QuestResolved {
+            discord_user_id,
+            player_name: player.name.clone(),
+            quest_title: board_quest.generated.quest_title.clone(),
+            passed: result.passed,
+            summary: result.summary.clone(),
+            result,
+            player,
+        });
     }
 
     storage::save_board(board)?;
-    Ok(())
+    Ok(resolved)
 }
 
 /// Manually trigger a tick. Hook this up to a `tokio::interval` later.
-pub async fn run_tick(generator: &QuestGenerator, board: &mut Board) -> anyhow::Result<()> {
+pub async fn run_tick(generator: &QuestGenerator, board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
     tracing::info!("manual tick triggered");
     tick(generator, board).await
 }
