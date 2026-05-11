@@ -55,6 +55,64 @@ async fn main() -> anyhow::Result<()> {
     let generator = Arc::new(quest_generator::QuestGenerator::new(&api_key)?);
     let board = Arc::new(tokio::sync::Mutex::new(storage::load_board()?));
 
+    // -----------------------------------------------------------------------
+    // Generation worker
+    //
+    // LLM calls are decoupled from both the tick loop and the Discord command
+    // handler via an unbounded mpsc channel.  The flow is:
+    //
+    //   /take or /assign command
+    //     └─ assigns quest on board (sync, fast)
+    //     └─ sends GenerationJob { board_quest, player } down `generation_tx`
+    //
+    //   worker task (below, single sequential task — one LLM call at a time)
+    //     └─ receives job from `generation_rx`
+    //     └─ calls engine::generate_result  (the slow LLM round-trip)
+    //     └─ acquires board mutex
+    //     └─ writes result into board.completed_results and saves to disk
+    //
+    //   tick (periodic or /tick command)
+    //     └─ decrements ticks_remaining on all active quests
+    //     └─ picks up quests where ticks_remaining == 0 AND result is present
+    //     └─ applies stats, DMs player, posts to channel
+    //
+    // If generate_result errors the quest stays Active with ticks_remaining=0
+    // and is silently skipped every tick until manually removed.
+    // -----------------------------------------------------------------------
+    let (generation_tx, mut generation_rx) = tokio::sync::mpsc::unbounded_channel::<engine::GenerationJob>();
+
+    {
+        let worker_board = Arc::clone(&board);
+        let worker_generator = Arc::clone(&generator);
+        tokio::spawn(async move {
+            // Sequential: we only pick up the next job after the current one
+            // finishes. This avoids hammering the LLM API concurrently and
+            // keeps completed_results writes orderly.
+            while let Some(job) = generation_rx.recv().await {
+                match engine::generate_result(&*worker_generator, &job.board_quest, &job.player).await {
+                    Ok(result) => {
+                        let mut b = worker_board.lock().await;
+                        b.completed_results.insert(job.board_quest.id, result);
+                        if let Err(e) = storage::save_board(&*b) {
+                            tracing::error!(err = %e, "failed to save board after generation");
+                        }
+                        tracing::info!(quest_id = job.board_quest.id, "generation complete, result stored");
+                    }
+                    Err(e) => {
+                        // The quest remains Active on the board. Every subsequent
+                        // tick will skip it (no entry in completed_results) until
+                        // someone manually deletes it with /delete_quest.
+                        tracing::error!(
+                            quest_id = job.board_quest.id,
+                            err = %e,
+                            "generate_result failed; quest will remain active and be skipped each tick"
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     tracing::info!(tick_time_s, "chuds bot starting");
 
     let framework = poise::Framework::builder()
@@ -91,23 +149,21 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?;
                 tracing::info!(guild_id, "slash commands registered");
-                let guild_name = ctx.http
-                    .get_guild(serenity::GuildId::new(guild_id))
-                    .await
-                    .map(|g| g.name.clone())
-                    .unwrap_or_else(|_| "Server".to_string());
-                tracing::info!(guild_name, "fetched guild name");
                 {
                     let mut b = board.lock().await;
-                    commands::update_board_message(&ctx.http, channel_id, &mut b, &guild_name).await?;
+                    commands::update_board_message(&ctx.http, channel_id, &mut b, max_jobs).await?;
                 }
 
+                // Periodic tick task — fires every TICK_TIME_S seconds.
+                // This is separate from the generation worker above: by the
+                // time a tick fires the worker has (usually) already written
+                // the LLM result into board.completed_results. execute_tick
+                // just applies those cached results and sends Discord messages.
                 let tick_board = Arc::clone(&board);
-                let tick_generator = Arc::clone(&generator);
                 let tick_http = Arc::clone(&ctx.http);
-                let tick_guild_name = guild_name.clone();
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
+                    // Skip missed ticks instead of bursting to catch up after lag.
                     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
                     interval.tick().await;
                     loop {
@@ -115,11 +171,10 @@ async fn main() -> anyhow::Result<()> {
                         tracing::info!("background tick firing");
                         if let Err(e) = commands::execute_tick(
                             &tick_http,
-                            &tick_generator,
                             &tick_board,
                             channel_id,
                             max_buffer_messages,
-                            &tick_guild_name,
+                            max_jobs,
                         ).await {
                             tracing::error!(err = %e, "background tick failed");
                         }
@@ -133,7 +188,7 @@ async fn main() -> anyhow::Result<()> {
                     channel_id,
                     max_buffer_messages,
                     max_jobs,
-                    guild_name,
+                    generation_queue: generation_tx,
                 })
             })
         })

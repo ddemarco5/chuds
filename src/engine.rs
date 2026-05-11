@@ -5,9 +5,6 @@ use crate::quest_generator::{QuestData, QuestGenerator, QuestResults, TrialResul
 use crate::quest_result::QuestResult;
 use crate::storage;
 
-/// Number of trials resolved per tick. Tune for game balance.
-pub const TRIALS_PER_TICK: u32 = 1;
-
 /// Info returned after a quest resolves during a tick.
 pub struct QuestResolved {
     pub discord_user_id: u64,
@@ -16,12 +13,24 @@ pub struct QuestResolved {
     pub summary: String,
     pub result: QuestResult,
     pub player: crate::player::Player,
+    pub level_up: crate::player::LevelUp,
 }
 
 /// Info returned after a chud accepts a quest.
 pub struct AssignInfo {
-    pub player_name: String,
+    pub player: Player,
     pub quest_title: String,
+}
+
+/// A pending generation job sent to the background worker.
+///
+/// Cloned from the board immediately after assignment so the command handler
+/// can release its board lock without waiting for the LLM.
+pub struct GenerationJob {
+    pub board_quest: BoardQuest,
+    /// Snapshot of the player at assignment time, used as the input to the
+    /// LLM prompt. Stats are re-loaded from disk when tick applies the result.
+    pub player: Player,
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +125,7 @@ pub fn delete_chud(discord_user_id: u64) -> anyhow::Result<()> {
 /// - The player must not already have an active quest.
 /// - The quest must exist and be open.
 ///
-/// Tick duration = ceil(trial_count / TRIALS_PER_TICK).
+/// Tick duration = one tick per trial (tune via TICK_TIME_S in .env).
 pub fn assign_chud_to_quest(
     board: &mut Board,
     discord_user_id: u64,
@@ -138,7 +147,7 @@ pub fn assign_chud_to_quest(
     let trial_count = quest.quest_data.trials.len() as u32;
     let quest_title = quest.generated.quest_title.clone();
 
-    let ticks_remaining = trial_count.div_ceil(TRIALS_PER_TICK);
+    let ticks_remaining = trial_count;
 
     if !board.assign(quest_id, discord_user_id, ticks_remaining) {
         anyhow::bail!("quest {} is not available for assignment", quest_id);
@@ -146,20 +155,71 @@ pub fn assign_chud_to_quest(
 
     storage::save_board(board)?;
     tracing::info!(discord_user_id, quest_id, ticks_remaining, "chud assigned to quest");
-    Ok(AssignInfo { player_name: player.name, quest_title })
+    Ok(AssignInfo { player, quest_title })
+}
+
+// ---------------------------------------------------------------------------
+// Generation
+// ---------------------------------------------------------------------------
+
+/// Run the full LLM pipeline for a single quest and return the result.
+///
+/// Called exclusively by the background generation worker. Does **not** touch
+/// player stats or disk — the worker writes the result into
+/// `board.completed_results` and saves the board itself. Separating generation
+/// from stat application means a bot restart can survive a mid-flight LLM call:
+/// if the bot dies before generation completes, the quest simply stays Active
+/// and the worker retries nothing (operator can /delete_quest to unblock).
+pub async fn generate_result(
+    generator: &QuestGenerator,
+    board_quest: &BoardQuest,
+    player: &Player,
+) -> anyhow::Result<QuestResult> {
+    let played = play_quest(&board_quest.quest_data, &board_quest.generated, player)?;
+
+    let trial_results: Vec<TrialResult> = played
+        .outcomes
+        .iter()
+        .zip(board_quest.generated.trials.iter())
+        .map(|(o, situation)| TrialResult {
+            situation: situation.clone(),
+            stat_used: o.stat_used.label().to_string(),
+            margin: o.player_roll as i16 - o.trial_roll as i16,
+        })
+        .collect();
+
+    let QuestResults { trials, summary } = generator
+        .generate_results(
+            &board_quest.quest_data,
+            &board_quest.generated,
+            &trial_results,
+            &player.name,
+            &player.description,
+        )
+        .await?;
+
+    let result = QuestResult::build(&board_quest.generated, &played, player, trials, summary);
+    result.log();
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
 // Tick
 // ---------------------------------------------------------------------------
 
-/// Advance the board by one tick: decrement all active quest counters, then
-/// resolve any that have reached zero via the LLM, update player stats, and
-/// persist state.
-pub async fn tick(
-    generator: &QuestGenerator,
-    board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
-
+/// Advance the board by one tick.
+///
+/// Phase 1 — decrement `ticks_remaining` on every Active quest.
+/// Phase 2 — collect quests whose result is ready AND either their last tick
+///           has fired (`ticks_remaining == 0`) OR the current trial failed
+///           (early resolution). Quests still waiting on the LLM are left on
+///           the board and rechecked next tick.
+/// Phase 3 — for each due quest: remove its result, reload the player from
+///           disk, apply stat changes, save player, push to the return vec.
+///           Failed quests are re-opened on the board.
+///
+/// No LLM calls happen here.
+pub async fn tick(board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
     let due = board.tick_and_take_due();
     tracing::info!(count = due.len(), "tick fired");
 
@@ -174,12 +234,13 @@ pub async fn tick(
             }
         };
 
-        tracing::info!(
-            quest_id = board_quest.id,
-            title = %board_quest.generated.quest_title,
-            discord_user_id,
-            "resolving quest"
-        );
+        let result = match board.completed_results.remove(&board_quest.id) {
+            Some(r) => r,
+            None => {
+                tracing::warn!(quest_id = board_quest.id, "no completed result found, skipping");
+                continue;
+            }
+        };
 
         let mut player = match storage::load_player(discord_user_id)? {
             Some(p) => p,
@@ -189,50 +250,28 @@ pub async fn tick(
             }
         };
 
-        let played = play_quest(&board_quest.quest_data, &board_quest.generated, &player)?;
+        let passed = result.passed;
+        let summary = result.summary.clone();
+        let quest_title = board_quest.generated.quest_title.clone();
 
-        let trial_results: Vec<TrialResult> = played
-            .outcomes
-            .iter()
-            .zip(board_quest.generated.trials.iter())
-            .map(|(o, situation)| TrialResult {
-                situation: situation.clone(),
-                stat_used: o.stat_used.label().to_string(),
-                margin: o.player_roll as i16 - o.trial_roll as i16,
-            })
-            .collect();
-
-        let QuestResults { trials, summary } = generator
-            .generate_results(
-                &board_quest.quest_data,
-                &board_quest.generated,
-                &trial_results,
-                &player.name,
-                &player.description,
-            )
-            .await?;
-
-        let result = QuestResult::build(&board_quest.generated, &played, &player, trials, summary);
-
-        result.log();
-        player.record_quest(&result);
+        let level_up = player.record_quest(&result);
         storage::save_player(&player)?;
 
         tracing::info!(
             discord_user_id,
-            quest = %board_quest.generated.quest_title,
-            passed = result.passed,
+            quest = %quest_title,
+            passed,
             "quest resolved and player saved"
         );
 
-        let passed = result.passed;
         resolved.push(QuestResolved {
             discord_user_id,
             player_name: player.name.clone(),
-            quest_title: board_quest.generated.quest_title.clone(),
-            summary: result.summary.clone(),
+            quest_title,
+            summary,
             result,
             player,
+            level_up,
         });
 
         if !passed {
@@ -250,8 +289,8 @@ pub async fn tick(
 }
 
 /// Run a single game tick.
-pub async fn run_tick(generator: &QuestGenerator, board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
-    tick(generator, board).await
+pub async fn run_tick(board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
+    tick(board).await
 }
 
 // ---------------------------------------------------------------------------

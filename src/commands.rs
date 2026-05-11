@@ -14,7 +14,11 @@ pub struct Data {
     pub channel_id: u64,
     pub max_buffer_messages: usize,
     pub max_jobs: usize,
-    pub guild_name: String,
+    /// Sender half of the generation worker channel (see main.rs).
+    /// Commands drop a GenerationJob here after assigning a quest; the worker
+    /// task runs the LLM call in the background and writes the result to
+    /// board.completed_results. The tick loop picks it up later.
+    pub generation_queue: tokio::sync::mpsc::UnboundedSender<engine::GenerationJob>,
 }
 
 pub type Error = anyhow::Error;
@@ -41,14 +45,9 @@ async fn admin_guard(ctx: Context<'_>) -> bool {
 // Board message helpers
 // ---------------------------------------------------------------------------
 
-fn format_board(board: &Board) -> String {
-    if board.quests.is_empty() {
-        return "The job board is as empty as it's ever been.".to_string();
-    }
-    board
-        .quests
-        .iter()
-        .map(|q| {
+fn format_job_slot(board: &Board, index: usize) -> String {
+    match board.quests.get(index) {
+        Some(q) => {
             let title = &q.generated.quest_title;
             let giver = &q.generated.quest_giver;
             let desc = &q.generated.description;
@@ -58,9 +57,9 @@ fn format_board(board: &Board) -> String {
                     format!("~~**{}** - *{}*~~\n~~{}~~", title, giver, desc)
                 }
             }
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        }
+        None => "*Nothing posted here*".to_string(),
+    }
 }
 
 async fn post_buffered_message(
@@ -87,14 +86,17 @@ fn format_dm_report(
     player_name: &str,
     result: &crate::quest_result::QuestResult,
     player: &crate::player::Player,
+    level_up: &crate::player::LevelUp,
 ) -> String {
     let mut out = String::new();
     let outcome = if result.passed { "PASSED" } else { "FAILED" };
+
+    out.push_str(&format!("{}\n\n", player.format_stats()));
+
     out.push_str(&format!(
-        "**{}** - {}\n{}\n\n",
+        "**{}** - {}\n{}\n",
         result.quest_title, result.quest_giver, result.quest_description
     ));
-    out.push_str(&format!("{}\n", player.format_stats()));
 
     for (i, trial) in result.trials.iter().enumerate() {
         let pass_str = if trial.passed { "\u{2705}" } else { "\u{274c}" };
@@ -113,6 +115,24 @@ fn format_dm_report(
         ));
     }
     out.push_str(&format!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n**{}**\n{}", outcome, result.summary));
+
+    if level_up.any() {
+        fn fmt_stat(levelled: bool, val: u8) -> String {
+            if levelled {
+                format!("{} -> **{}**", val - 1, val)
+            } else {
+                val.to_string()
+            }
+        }
+        out.push_str(&format!(
+            "\n{} has improved! - Strength {}, Smarts {}, Stealth {}, Experience {}",
+            player_name,
+            fmt_stat(level_up.str_up, player.strength),
+            fmt_stat(level_up.smt_up, player.smarts),
+            fmt_stat(level_up.sth_up, player.stealth),
+            fmt_stat(level_up.exp_up, player.experience),
+        ));
+    }
     out
 }
 
@@ -204,41 +224,98 @@ pub(crate) async fn update_board_message(
     http: &serenity::Http,
     channel_id: u64,
     board: &mut Board,
-    guild_name: &str,
+    max_jobs: usize,
 ) -> anyhow::Result<()> {
-    let chudlerboard = format_chudlerboard();
-    let board_section = format_board(board);
-    let content = if chudlerboard.is_empty() {
-        format!("----- {}'s Job Board -----\n{}", guild_name, board_section)
-    } else {
-        format!("{}\n----- {}'s Job Board -----\n{}", chudlerboard, guild_name, board_section)
-    };
     let ch = serenity::ChannelId::new(channel_id);
+    let mut board_dirty = false;
 
-    if let Some(msg_id) = board.board_message_id {
-        let edit_result = http
-            .edit_message(
-                ch,
-                MessageId::new(msg_id),
-                &EditMessage::new().content(&content),
-                vec![],
-            )
-            .await;
-        if edit_result.is_ok() {
-            tracing::debug!(msg_id, "board message edited");
-            return Ok(());
+    // --- Chudlerboard message ---
+    let cb_content = {
+        let cb = format_chudlerboard();
+        if cb.is_empty() { "*No chuds yet.*".to_string() } else { cb }
+    };
+    if let Some(msg_id) = board.chudlerboard_message_id {
+        let ok = http
+            .edit_message(ch, MessageId::new(msg_id), &EditMessage::new().content(&cb_content), vec![])
+            .await
+            .is_ok();
+        if !ok {
+            tracing::warn!(msg_id, "failed to edit chudlerboard message, posting new one");
+            match http.send_message(ch, vec![], &CreateMessage::new().content(&cb_content)).await {
+                Ok(msg) => { board.chudlerboard_message_id = Some(msg.id.get()); board_dirty = true; }
+                Err(e) => tracing::warn!(err = %e, "failed to post chudlerboard message"),
+            }
+        } else {
+            tracing::debug!(msg_id, "chudlerboard message edited");
         }
-        tracing::warn!(msg_id, "failed to edit board message, posting new one");
+    } else {
+        match http.send_message(ch, vec![], &CreateMessage::new().content(&cb_content)).await {
+            Ok(msg) => {
+                tracing::info!(msg_id = msg.id.get(), "chudlerboard message posted");
+                board.chudlerboard_message_id = Some(msg.id.get());
+                board_dirty = true;
+            }
+            Err(e) => tracing::warn!(err = %e, "failed to post chudlerboard message"),
+        }
     }
 
-    let msg = http
-        .send_message(ch, vec![], &CreateMessage::new().content(&content))
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to post board message: {e}"))?;
+    // --- Job slot messages ---
+    for i in 0..max_jobs {
+        let slot_content = format_job_slot(board, i);
+        if let Some(&msg_id) = board.job_slot_message_ids.get(i) {
+            let ok = http
+                .edit_message(ch, MessageId::new(msg_id), &EditMessage::new().content(&slot_content), vec![])
+                .await
+                .is_ok();
+            if !ok {
+                tracing::warn!(msg_id, slot = i, "failed to edit job slot message, posting new one");
+                match http.send_message(ch, vec![], &CreateMessage::new().content(&slot_content)).await {
+                    Ok(msg) => { board.job_slot_message_ids[i] = msg.id.get(); board_dirty = true; }
+                    Err(e) => tracing::warn!(err = %e, slot = i, "failed to post job slot message"),
+                }
+            } else {
+                tracing::debug!(msg_id, slot = i, "job slot message edited");
+            }
+        } else {
+            match http.send_message(ch, vec![], &CreateMessage::new().content(&slot_content)).await {
+                Ok(msg) => {
+                    tracing::info!(msg_id = msg.id.get(), slot = i, "job slot message posted");
+                    board.job_slot_message_ids.push(msg.id.get());
+                    board_dirty = true;
+                }
+                Err(e) => tracing::warn!(err = %e, slot = i, "failed to post job slot message"),
+            }
+        }
+    }
 
-    board.board_message_id = Some(msg.id.get());
-    storage::save_board(board)?;
-    tracing::info!(msg_id = msg.id.get(), "board message posted");
+    // --- Divider message ---
+    const DIVIDER: &str = "\u{200B}\n\u{200B}";
+    if let Some(msg_id) = board.divider_message_id {
+        let ok = http
+            .edit_message(ch, MessageId::new(msg_id), &EditMessage::new().content(DIVIDER), vec![])
+            .await
+            .is_ok();
+        if !ok {
+            tracing::warn!(msg_id, "failed to edit divider message, posting new one");
+            match http.send_message(ch, vec![], &CreateMessage::new().content(DIVIDER)).await {
+                Ok(msg) => { board.divider_message_id = Some(msg.id.get()); board_dirty = true; }
+                Err(e) => tracing::warn!(err = %e, "failed to post divider message"),
+            }
+        }
+    } else {
+        match http.send_message(ch, vec![], &CreateMessage::new().content(DIVIDER)).await {
+            Ok(msg) => {
+                tracing::info!(msg_id = msg.id.get(), "divider message posted");
+                board.divider_message_id = Some(msg.id.get());
+                board_dirty = true;
+            }
+            Err(e) => tracing::warn!(err = %e, "failed to post divider message"),
+        }
+    }
+
+    if board_dirty {
+        storage::save_board(board)?;
+    }
     Ok(())
 }
 
@@ -246,24 +323,49 @@ pub(crate) async fn update_board_message(
 // Commands
 // ---------------------------------------------------------------------------
 
+/// Apply one game tick and post results to Discord.
+///
+/// This function does **not** call the LLM. Generation is handled by the
+/// background worker task (see main.rs). By the time a tick fires, the worker
+/// has (usually) already written each quest's result into
+/// `board.completed_results`. `engine::run_tick` reads those cached results,
+/// applies stat changes, and returns the resolved quests for us to announce.
+/// Any quest whose result isn't ready yet is silently skipped and rechecked
+/// on the next tick.
 pub async fn execute_tick(
     http: &serenity::Http,
-    generator: &QuestGenerator,
     board: &tokio::sync::Mutex<Board>,
     channel_id: u64,
     max_buffer: usize,
-    guild_name: &str,
+    max_jobs: usize,
 ) -> anyhow::Result<()> {
     let mut board = board.lock().await;
 
-    let resolved = engine::run_tick(generator, &mut *board).await?;
+    let resolved = engine::run_tick(&mut *board).await?;
 
     for qr in &resolved {
         tracing::info!(quest = %qr.quest_title, passed = qr.result.passed, player = %qr.player_name, "quest resolved");
-        let content = format!("{}", qr.summary);
+        let content = if qr.level_up.any() {
+            let mut adjs: Vec<&str> = Vec::new();
+            if qr.level_up.str_up { adjs.push("stronger"); }
+            if qr.level_up.smt_up { adjs.push("smarter"); }
+            if qr.level_up.sth_up { adjs.push("sneakier"); }
+            if qr.level_up.exp_up { adjs.push("more experienced"); }
+            let adj_str = match adjs.len() {
+                1 => adjs[0].to_string(),
+                2 => format!("{} and {}", adjs[0], adjs[1]),
+                _ => {
+                    let (last, rest) = adjs.split_last().unwrap();
+                    format!("{}, and {}", rest.join(", "), last)
+                }
+            };
+            format!("{}\n{} seems {}.", qr.summary, qr.player_name, adj_str)
+        } else {
+            qr.summary.clone()
+        };
         post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
 
-        let dm_content = format_dm_report(&qr.player_name, &qr.result, &qr.player);
+        let dm_content = format_dm_report(&qr.player_name, &qr.result, &qr.player, &qr.level_up);
         let dm_map = serde_json::json!({ "recipient_id": qr.discord_user_id.to_string() });
         match http.create_private_channel(&dm_map).await {
             Ok(dm) => {
@@ -279,7 +381,7 @@ pub async fn execute_tick(
         storage::save_board(&*board)?;
     }
 
-    update_board_message(http, channel_id, &mut *board, guild_name).await?;
+    update_board_message(http, channel_id, &mut *board, max_jobs).await?;
     Ok(())
 }
 
@@ -292,11 +394,10 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
     }
     execute_tick(
         &ctx.serenity_context().http,
-        &ctx.data().generator,
         &ctx.data().board,
         ctx.data().channel_id,
         ctx.data().max_buffer_messages,
-        &ctx.data().guild_name,
+        ctx.data().max_jobs,
     ).await?;
     ctx.say("ok").await?;
     Ok(())
@@ -319,7 +420,7 @@ pub async fn generate_job(
         return Ok(());
     }
     engine::generate_job(&ctx.data().generator, &mut *board, description, difficulty).await?;
-    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, &ctx.data().guild_name).await?;
+    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, ctx.data().max_jobs).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -344,7 +445,7 @@ pub async fn write_job(
         return Ok(());
     }
     engine::write_job(&ctx.data().generator, &mut *board, title, giver, description, goal, difficulty).await?;
-    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, &ctx.data().guild_name).await?;
+    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, ctx.data().max_jobs).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -358,7 +459,7 @@ pub async fn delete_quest(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> 
     }
     let mut board = ctx.data().board.lock().await;
     engine::delete_quest(&mut *board, quest_id)?;
-    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, &ctx.data().guild_name).await?;
+    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, ctx.data().max_jobs).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -417,11 +518,24 @@ pub async fn assign(ctx: Context<'_>, target_user_id: u64, quest_id: u32) -> Res
     let channel_id = ctx.data().channel_id;
     // let max_buffer = ctx.data().max_buffer_messages;
     let mut board = ctx.data().board.lock().await;
-    let _info = engine::assign_chud_to_quest(&mut *board, target_user_id, quest_id)?;
+    let info = engine::assign_chud_to_quest(&mut *board, target_user_id, quest_id)?;
+
+    // Clone the now-Active quest so we can send it to the worker while the
+    // board lock is still held. The worker will do the slow LLM call; the
+    // board lock is released before any of that work begins.
+    let board_quest = board.quests.iter()
+        .find(|q| q.id == quest_id)
+        .ok_or_else(|| anyhow::anyhow!("quest {} not found after assignment", quest_id))?
+        .clone();
+
+    // Fire-and-forget: the worker task owns the receiver and will process this
+    // job as soon as it finishes any preceding one.
+    ctx.data().generation_queue.send(engine::GenerationJob { board_quest, player: info.player })
+        .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
 
     storage::save_board(&*board)?;
 
-    update_board_message(http, channel_id, &mut *board, &ctx.data().guild_name).await?;
+    update_board_message(http, channel_id, &mut *board, ctx.data().max_jobs).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -443,13 +557,25 @@ pub async fn take(ctx: Context<'_>, title: String) -> Result<(), Error> {
 
     let info = engine::assign_chud_to_quest(&mut *board, ctx.author().id.get(), quest_id)?;
 
-    let first_name = info.player_name.split_whitespace().next().unwrap_or(&info.player_name);
+    // Clone the now-Active quest and hand it off to the generation worker.
+    // This command returns immediately; the LLM call happens in the background.
+    let board_quest = board.quests.iter()
+        .find(|q| q.id == quest_id)
+        .ok_or_else(|| anyhow::anyhow!("quest {} not found after assignment", quest_id))?
+        .clone();
+
+    let first_name = info.player.name.split_whitespace().next().unwrap_or(&info.player.name).to_string();
     let content = format!("**{}** ripped **{}** off the board", first_name, info.quest_title);
+
+    ctx.data().generation_queue.send(engine::GenerationJob { board_quest, player: info.player })
+        .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
+
+    ctx.say("ok").await?;
+
     post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
     storage::save_board(&*board)?;
 
-    update_board_message(http, channel_id, &mut *board, &ctx.data().guild_name).await?;
-    ctx.say("ok").await?;
+    update_board_message(http, channel_id, &mut *board, ctx.data().max_jobs).await?;
     Ok(())
 }
 

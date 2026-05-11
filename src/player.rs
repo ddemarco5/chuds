@@ -4,10 +4,46 @@ use serde::{Deserialize, Serialize};
 use crate::quest_result::QuestResult;
 
 const MAX_STAT: u8 = 10;
-/// Threshold = STAT_LEVEL_BASE * current_stat. Scales cost upward as the stat grows.
-pub const STAT_LEVEL_BASE: u32 = 8;
-/// Threshold = EXP_LEVEL_BASE * current_experience. Scales cost upward as experience grows.
-pub const EXP_LEVEL_BASE: u32 = 5;
+
+#[derive(Debug, Default)]
+pub struct LevelUp {
+    pub str_up: bool,
+    pub smt_up: bool,
+    pub sth_up: bool,
+    pub exp_up: bool,
+}
+
+impl LevelUp {
+    pub fn any(&self) -> bool {
+        self.str_up || self.smt_up || self.sth_up || self.exp_up
+    }
+}
+
+/// Wins required to advance a combat stat one level = STAT_LEVEL_BASE × current_level.
+/// A "win" is a trial passed using that specific stat.
+///
+/// Wins needed per step, and cumulative total to reach level 6:
+///
+/// base │ 1→2  2→3  3→4  4→5  5→6 │ total (1→6)
+/// ─────┼──────────────────────────┼────────────
+///   2  │   2    4    6    8   10  │     30
+///   3  │   3    6    9   12   15  │     45   ← current
+///   4  │   4    8   12   16   20  │     60
+///   5  │   5   10   15   20   25  │     75
+pub const STAT_LEVEL_BASE: u32 = 3;
+
+/// Quests passed required to advance experience one level = EXP_LEVEL_BASE × current_level.
+/// Only successful quest completions count; failures do not.
+///
+/// Quests needed per step, and cumulative total to reach level 6:
+///
+/// base │ 1→2  2→3  3→4  4→5  5→6 │ total (1→6)
+/// ─────┼──────────────────────────┼────────────
+///   1  │   1    2    3    4    5  │     15
+///   2  │   2    4    6    8   10  │     30   ← current
+///   3  │   3    6    9   12   15  │     45
+///   4  │   4    8   12   16   20  │     60
+pub const EXP_LEVEL_BASE: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Player {
@@ -21,8 +57,9 @@ pub struct Player {
     pub str_successes: u32,
     pub smt_successes: u32,
     pub sth_successes: u32,
-    pub quest_successes: u32,
-    pub quest_failures: u32,
+    pub job_successes: u32,
+    pub total_job_successes: u32,
+    pub total_job_failures: u32,
 }
 
 fn apply_wins(val: &mut u8, counter: &mut u32, wins: u32, base: u32) -> bool {
@@ -40,12 +77,13 @@ fn apply_wins(val: &mut u8, counter: &mut u32, wins: u32, base: u32) -> bool {
 impl Player {
     pub fn format_stats(&self) -> String {
         format!(
-            "{} -- *Strength {}, Smarts {}, Stealth {}, Experience {}*",
-            self.name, self.strength, self.smarts, self.stealth, self.experience
+            "{} -- *Strength {}, Smarts {}, Stealth {}, Experience {}*\n{} job completed, {} failed",
+            self.name, self.strength, self.smarts, self.stealth, self.experience,
+            self.total_job_successes, self.total_job_failures
         )
     }
 
-    pub fn record_quest(&mut self, result: &QuestResult) {
+    pub fn record_quest(&mut self, result: &QuestResult) -> LevelUp {
         let (str_wins, smt_wins, sth_wins) = result.stat_wins();
 
         let str_up = apply_wins(&mut self.strength,  &mut self.str_successes, str_wins, STAT_LEVEL_BASE);
@@ -53,9 +91,10 @@ impl Player {
         let sth_up = apply_wins(&mut self.stealth,   &mut self.sth_successes, sth_wins, STAT_LEVEL_BASE);
 
         let exp_up = if result.passed {
-            apply_wins(&mut self.experience, &mut self.quest_successes, 1, EXP_LEVEL_BASE)
+            self.total_job_successes += 1;
+            apply_wins(&mut self.experience, &mut self.job_successes, 1, EXP_LEVEL_BASE)
         } else {
-            self.quest_failures += 1;
+            self.total_job_failures += 1;
             false
         };
 
@@ -69,9 +108,11 @@ impl Player {
             str = %format!("{} ({}/{})", self.strength, self.str_successes, STAT_LEVEL_BASE * self.strength as u32),
             smt = %format!("{} ({}/{})", self.smarts, self.smt_successes, STAT_LEVEL_BASE * self.smarts as u32),
             sth = %format!("{} ({}/{})", self.stealth, self.sth_successes, STAT_LEVEL_BASE * self.stealth as u32),
-            exp = %format!("{} ({}/{})", self.experience, self.quest_successes, EXP_LEVEL_BASE * self.experience as u32),
+            exp = %format!("{} ({}/{})", self.experience, self.job_successes, EXP_LEVEL_BASE * self.experience as u32),
             "chud stats updated"
         );
+
+        LevelUp { str_up, smt_up, sth_up, exp_up }
     }
 }
 
@@ -105,7 +146,8 @@ pub fn create_chud(discord_user_id: u64, name: String, description: String) -> P
         str_successes: 0,
         smt_successes: 0,
         sth_successes: 0,
-        quest_successes: 0,
-        quest_failures: 0,
+        job_successes: 0,
+        total_job_successes: 0,
+        total_job_failures: 0,
     }
 }
