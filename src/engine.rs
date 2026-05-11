@@ -1,7 +1,7 @@
 use crate::board::{Board, BoardQuest, QuestStatus};
 use crate::player::{create_chud, Player};
-use crate::quest_builder::{build_quest, play_quest};
-use crate::quest_generator::{QuestGenerator, QuestResults, TrialResult};
+use crate::quest_builder::{roll_trials, play_quest};
+use crate::quest_generator::{QuestData, QuestGenerator, QuestResults, TrialResult};
 use crate::quest_result::QuestResult;
 use crate::storage;
 
@@ -35,8 +35,13 @@ pub async fn generate_job(
     description: String,
     difficulty: u8,
 ) -> anyhow::Result<u32> {
-    let quest_data = build_quest(description, difficulty);
-    let generated = generator.submit(&quest_data).await?;
+    let quest_data = QuestData{
+        quest_description: description,
+        quest_goal: None,
+        quest_difficulty: difficulty,
+        trials: roll_trials(difficulty)
+    };
+    let generated = generator.generate_from_description(&quest_data).await?;
     tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest generated");
     let id = board.add_quest(quest_data, generated);
     storage::save_board(board)?;
@@ -51,10 +56,16 @@ pub async fn write_job(
     title: String,
     giver: String,
     description: String,
+    goal: String,
     difficulty: u8,
 ) -> anyhow::Result<u32> {
-    let quest_data = build_quest(description.clone(), difficulty);
-    let generated = generator.submit_with_description(&quest_data, title, giver, description).await?;
+    let quest_data = QuestData{
+        quest_description: description,
+        quest_goal: Some(goal),
+        quest_difficulty: difficulty,
+        trials: roll_trials(difficulty)
+    };
+    let generated = generator.generate_from_explicit(&quest_data, title, giver).await?;
     tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest written");
     let id = board.add_quest(quest_data, generated);
     storage::save_board(board)?;
@@ -145,7 +156,10 @@ pub fn assign_chud_to_quest(
 /// Advance the board by one tick: decrement all active quest counters, then
 /// resolve any that have reached zero via the LLM, update player stats, and
 /// persist state.
-pub async fn tick(generator: &QuestGenerator, board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
+pub async fn tick(
+    generator: &QuestGenerator,
+    board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
+
     let due = board.tick_and_take_due();
     tracing::info!(count = due.len(), "tick fired");
 

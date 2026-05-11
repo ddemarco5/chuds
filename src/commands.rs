@@ -94,13 +94,13 @@ fn format_dm_report(
         "**{}** - {}\n{}\n\n",
         result.quest_title, result.quest_giver, result.quest_description
     ));
-    out.push_str(&format!("{}", player.format_stats()));
-    out.push_str("\n\n");
+    out.push_str(&format!("{}\n", player.format_stats()));
+
     for (i, trial) in result.trials.iter().enumerate() {
         let pass_str = if trial.passed { "\u{2705}" } else { "\u{274c}" };
         let brain = if trial.chose_optimal { " \u{1F9E0}" } else { "" };
         out.push_str(&format!(
-            "**Trial {}** - {}\n  {} {} | {} rolled {} vs {}{}\n  *{}*\n",
+            "\n**Trial {}** - {}\n{} {} | {} rolled {} vs {}{}\n*{}*\n",
             i + 1,
             trial.situation,
             pass_str,
@@ -331,6 +331,7 @@ pub async fn write_job(
     title: String,
     giver: String,
     description: String,
+    goal: String,
     difficulty: u8,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
@@ -342,7 +343,7 @@ pub async fn write_job(
         ctx.say(format!("Board is full ({} jobs max).", ctx.data().max_jobs)).await?;
         return Ok(());
     }
-    engine::write_job(&ctx.data().generator, &mut *board, title, giver, description, difficulty).await?;
+    engine::write_job(&ctx.data().generator, &mut *board, title, giver, description, goal, difficulty).await?;
     update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, &ctx.data().guild_name).await?;
     ctx.say("ok").await?;
     Ok(())
@@ -418,8 +419,6 @@ pub async fn assign(ctx: Context<'_>, target_user_id: u64, quest_id: u32) -> Res
     let mut board = ctx.data().board.lock().await;
     let _info = engine::assign_chud_to_quest(&mut *board, target_user_id, quest_id)?;
 
-    // let content = format!("**{}** ripped **{}** off the board", info.player_name, info.quest_title);
-    // post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
     storage::save_board(&*board)?;
 
     update_board_message(http, channel_id, &mut *board, &ctx.data().guild_name).await?;

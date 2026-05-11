@@ -6,30 +6,67 @@ use serde::{Deserialize, Serialize};
 const DESCRIPTION_SYSTEM_CONTEXT: &str = r#"You are a fantasy quest writer for a lighthearted RPG. Write in FIRST PERSON point of view.
 
 You are an NPC quest giver describing your predicament to an adventurer.
-You are writing your needs on a note that will be posted to a town job board, write your job as more of a letter requesting work and not casual conversation.
+You are writing 2 things:
+   - A note that will be posted to a town job board (first person)
+   - A description of what will be accomplished at the end of this quest (narrator voice)
 
 RULES:
+0. DON'T start the description with a command like "Look," or "Listen up,"
 1. Write in FIRST PERSON as the person giving the quest
-2. MATCH YOUR VOICE to who you are:
-   - Farmer: simple, practical, country speech, concerned about crops/weather
-   - Merchant: transactional, worried about profits/goods, professional
-   - Noble: formal, entitled, concerned with honor or reputation
-   - Peasant: humble, desperate, grateful for help
-   - Guard/Military: direct, no-nonsense, duty-focused
-   - Wizard/Scholar: intellectual, mystical, uses big words
-3. Use contractions and slang when appropriate
-4. Use vocabulary and speech patterns appropriate to your social class and occupation
-5. Describe your problem and why you need help
-6. Keep under 80 words
-7. Do not rely too heavily on adjectives
-8. Avoid emdash use
-9. Avoid repetition in phrase from one response to the next
+2. MATCH YOUR VOICE to who you are, use contractions and slang when appropriate. Use vocabulary and speech patterns appropriate to your social class and occupation
+3. Describe your problem and why you need help
+4. Keep between 20 and 80 words
+5. Do not rely too heavily on adjectives
+6. Avoid emdash use
+7. Make sure each response is varied
 10. Do not include quest names, difficulty levels, or promise rewards
 11. Create and include your character name in the 'quest_giver' field - use a fitting name for your race/class/occupation if not specified. Don't pick just pick "Barnaby" each time.
 12. Create a 'quest_title' field: 1-3 words that capture the nature of the quest (e.g. "The Missing Shipment", "Rats in the Cellar", "A Noble Errand")
-13. Output in YAML format with 'quest_title', 'quest_giver' (your name), and 'description' (your speech) fields
+13. Output in YAML format with 'quest_title', 'quest_giver' (your name), 'description' (your letter), and 'goal' (the quest goal) fields
 
 You will receive quest_description and quest_difficulty in YAML format. Infer who you are from the quest description and speak in their voice."#;
+#[derive(Serialize)]
+struct DescPrompt<'a> {
+    quest_description: &'a str,
+    quest_difficulty: u8,
+}
+#[derive(Deserialize)]
+struct DescResponse { quest_title: String, quest_giver: String, description: String, goal: String }
+
+const TRIAL_SYSTEM_CONTEXT: &str = r#"You are a fantasy quest narrator for a lighthearted RPG. Write in THIRD PERSON/OBJECTIVE narrator point of view.
+
+Given quest data, a quest-giver's description, a quest goal, and a list of trials (each defined ONLY by stat requirements), invent the situation the adventurer faces in each trial.
+The trials should follow a natural logical progression towards the quest's goal, taking into account the stat requirements of each trial (high number means harder)
+
+RULES:
+1. Write in THIRD PERSON as an objective narrator describing scenes
+2. INVENT each trial's situation so it fits the given stat requirements. The stat values represent DIFFICULTY (the required roll to succeed) - higher numbers mean a harder challenge requiring that stat, while 0 means that stat is irrelevant and should not be hinted at.
+   10 is maximum or legendary difficulty
+3. Describe the SITUATION the adventurer faces, do NOT tell them what to do, do NOT give instructions for success
+   - BAD: "Scour the woods for clues" (tells player to search)
+   - GOOD: "The forest floor is scattered with discarded merchant trinkets" (describes the scene)
+4. The trials are given in order. Make them follow a logical progression: earlier trials should naturally set up later ones (e.g., discovery before confrontation, setup before payoff). Treat the final trial as the most consequential moment.
+5. Keep each trial under 40 words
+6. Do not rely too heavily on adjectives
+7. Avoid emdash use
+8. Output in YAML format with a 'trials' field containing a list of strings (one per trial, in the same order as the input)
+   Example:
+   trials:
+     - "Rats swarm the grain sacks..."
+     - "Heavy sacks wait to be loaded..."
+9. Do not promise rewards
+
+You will receive quest data and the quest giver's description in YAML format. Match your tone to their description for consistency."#;
+#[derive(Serialize)]
+struct TrialPrompt<'a> {
+    quest_description: &'a str,
+    quest_goal: &'a str,
+    quest_difficulty: u8,
+    trials: &'a [TrialStats],
+    quest_giver_description: &'a str,
+}
+#[derive(Deserialize)]
+struct TrialsResponse { trials: Vec<String> }
 
 const RESULTS_SYSTEM_CONTEXT: &str = r#"You are a narrator for a lighthearted fantasy RPG.
 
@@ -62,32 +99,23 @@ RULES:
    summary: "..."
 
 You will receive the quest context and trial outcomes in YAML format."#;
-
-const TRIAL_SYSTEM_CONTEXT: &str = r#"You are a fantasy quest narrator for a lighthearted RPG. Write in THIRD PERSON/OBJECTIVE narrator point of view.
-
-Given quest data, a quest-giver's description, and a list of trials (each defined ONLY by stat requirements), invent the situation the adventurer faces in each trial.
-Accurately describe the trial elements with their given stat values. Low means easy, high (up to 10) means difficult.
-
-RULES:
-1. Write in THIRD PERSON as an objective narrator describing scenes
-2. INVENT each trial's situation so it fits the given stat requirements. The stat values represent DIFFICULTY (the required roll to succeed) - higher numbers mean a harder challenge requiring that stat, while 0 means that stat is irrelevant and should not be hinted at.
-   10 is maximum or legendary difficulty
-3. Describe the SITUATION the adventurer faces, do NOT tell them what to do, do NOT give instructions for success
-   - BAD: "Scour the woods for clues" (tells player to search)
-   - GOOD: "The forest floor is scattered with discarded merchant trinkets" (describes the scene)
-4. The trials are given in order. Make them follow a logical progression: earlier trials should naturally set up later ones (e.g., discovery before confrontation, setup before payoff). Treat the final trial as the most consequential moment.
-5. Keep each trial under 40 words
-6. Do not rely too heavily on adjectives
-7. Avoid emdash use
-8. Hint at which stats are needed through description, but never state them outright
-9. Output in YAML format with a 'trials' field containing a list of strings (one per trial, in the same order as the input)
-   Example:
-   trials:
-     - "Rats swarm the grain sacks..."
-     - "Heavy sacks wait to be loaded..."
-10. Do not promise rewards
-
-You will receive quest data and the quest giver's description in YAML format. Match your tone to their description for consistency."#;
+#[derive(Serialize)]
+struct TrialResultPrompt<'a> {
+    situation: &'a str,
+    stat_used: &'a str,
+    margin: i16,
+}
+#[derive(Serialize)]
+struct ResultsPrompt<'a> {
+    quest_description: &'a str,
+    quest_giver: &'a str,
+    quest_giver_description: &'a str,
+    adventurer_name: &'a str,
+    adventurer_description: &'a str,
+    trials: Vec<TrialResultPrompt<'a>>,
+}
+#[derive(Deserialize)]
+struct ResultsResponse { trials: Vec<String>, summary: String }
 
 type GeminiAgent = rig::agent::Agent<gemini::completion::CompletionModel, ()>;
 
@@ -101,6 +129,7 @@ pub struct TrialStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestData {
     pub quest_description: String,
+    pub quest_goal: Option<String>,
     pub quest_difficulty: u8,
     pub trials: Vec<TrialStats>,
 }
@@ -111,6 +140,7 @@ pub struct GeneratedQuest {
     pub quest_giver: String,
     pub description: String,
     pub trials: Vec<String>,
+    pub quest_goal: String,
 }
 
 pub struct TrialResult {
@@ -196,14 +226,7 @@ impl QuestGenerator {
         }
     }
 
-    pub async fn submit(&self, quest: &QuestData) -> anyhow::Result<GeneratedQuest> {
-        #[derive(Serialize)]
-        struct DescPrompt<'a> {
-            quest_description: &'a str,
-            quest_difficulty: u8,
-        }
-        #[derive(Deserialize)]
-        struct DescResponse { quest_title: String, quest_giver: String, description: String }
+    pub async fn generate_from_description(&self, quest: &QuestData) -> anyhow::Result<GeneratedQuest> {
 
         let desc_yaml = serde_yaml::to_string(&DescPrompt {
             quest_description: &quest.quest_description,
@@ -216,19 +239,12 @@ impl QuestGenerator {
         let quest_title = desc_response.quest_title;
         let quest_giver = desc_response.quest_giver;
         let description = desc_response.description;
-
-        #[derive(Serialize)]
-        struct TrialPrompt<'a> {
-            quest_description: &'a str,
-            quest_difficulty: u8,
-            trials: &'a [TrialStats],
-            quest_giver_description: &'a str,
-        }
-        #[derive(Deserialize)]
-        struct TrialsResponse { trials: Vec<String> }
+        let quest_goal = desc_response.goal;
+        tracing::info!("quest goal is {quest_goal}");
 
         let trial_yaml = serde_yaml::to_string(&TrialPrompt {
             quest_description: &quest.quest_description,
+            quest_goal: &quest_goal,
             quest_difficulty: quest.quest_difficulty,
             trials: &quest.trials,
             quest_giver_description: &description,
@@ -238,38 +254,35 @@ impl QuestGenerator {
         tracing::info!(chars = trials_resp.len(), "quest trials received");
         let trials = serde_yaml::from_str::<TrialsResponse>(Self::strip_code_fences(&trials_resp))?.trials;
 
-        Ok(GeneratedQuest { quest_title, quest_giver, description, trials })
+        Ok(GeneratedQuest { quest_title, quest_giver, description, trials, quest_goal })
     }
 
-    pub async fn submit_with_description(
+    pub async fn generate_from_explicit(
         &self,
         quest: &QuestData,
         title: String,
         giver: String,
-        description: String,
     ) -> anyhow::Result<GeneratedQuest> {
-        #[derive(Serialize)]
-        struct TrialPrompt<'a> {
-            quest_description: &'a str,
-            quest_difficulty: u8,
-            trials: &'a [TrialStats],
-            quest_giver_description: &'a str,
-        }
-        #[derive(Deserialize)]
-        struct TrialsResponse { trials: Vec<String> }
 
         let trial_yaml = serde_yaml::to_string(&TrialPrompt {
             quest_description: &quest.quest_description,
+            quest_goal: &quest.quest_goal.as_ref().unwrap(),
             quest_difficulty: quest.quest_difficulty,
             trials: &quest.trials,
-            quest_giver_description: &description,
+            quest_giver_description: &quest.quest_description,
         })?;
         tracing::info!("generating quest trials (description provided)");
         let trials_resp = Self::prompt_with_retry(&self.trial_agent, &trial_yaml).await?;
         tracing::info!(chars = trials_resp.len(), "quest trials received");
         let trials = serde_yaml::from_str::<TrialsResponse>(Self::strip_code_fences(&trials_resp))?.trials;
 
-        Ok(GeneratedQuest { quest_title: title, quest_giver: giver, description, trials })
+        Ok(GeneratedQuest {
+            quest_title: title,
+            quest_giver: giver,
+            description: quest.quest_description.clone(),
+            trials,
+            quest_goal: quest.quest_goal.as_ref().unwrap().clone()
+        })
     }
 
     pub async fn generate_results(
@@ -280,23 +293,6 @@ impl QuestGenerator {
         chud_name: &str,
         chud_description: &str,
     ) -> anyhow::Result<QuestResults> {
-        #[derive(Serialize)]
-        struct TrialResultPrompt<'a> {
-            situation: &'a str,
-            stat_used: &'a str,
-            margin: i16,
-        }
-        #[derive(Serialize)]
-        struct ResultsPrompt<'a> {
-            quest_description: &'a str,
-            quest_giver: &'a str,
-            quest_giver_description: &'a str,
-            adventurer_name: &'a str,
-            adventurer_description: &'a str,
-            trials: Vec<TrialResultPrompt<'a>>,
-        }
-        #[derive(Deserialize)]
-        struct ResultsResponse { trials: Vec<String>, summary: String }
 
         let results_yaml = serde_yaml::to_string(&ResultsPrompt {
             quest_description: &quest.quest_description,

@@ -153,13 +153,8 @@ pub fn play_quest(quest: &QuestData, generated: &GeneratedQuest, player: &Player
     Ok(PlayedQuest { outcomes })
 }
 
-pub fn build_quest(description: String, difficulty: u8) -> QuestData {
+pub fn roll_trials(difficulty: u8) -> Vec<TrialStats> {
     let mut rng = rand::thread_rng();
     let trial_count = roll_trial_count(difficulty, &mut rng);
-    let trials = (0..trial_count).map(|_| roll_stats(difficulty, &mut rng)).collect();
-    QuestData {
-        quest_description: description,
-        quest_difficulty: difficulty,
-        trials,
-    }
+    (0..trial_count).map(|_| roll_stats(difficulty, &mut rng)).collect()
 }
