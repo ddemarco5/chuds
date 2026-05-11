@@ -259,6 +259,7 @@ pub async fn execute_tick(
     let resolved = engine::run_tick(generator, &mut *board).await?;
 
     for qr in &resolved {
+        tracing::info!(quest = %qr.quest_title, passed = qr.result.passed, player = %qr.player_name, "quest resolved");
         let content = format!("{}", qr.summary);
         post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
 
@@ -378,11 +379,17 @@ pub async fn add_chud(ctx: Context<'_>, target_user_id: u64, name: String, descr
 pub async fn chud(ctx: Context<'_>, name: String, description: String) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let player = engine::add_chud(ctx.author().id.get(), name, description)?;
-    let msg = format!(
-        "A chudly **{}** sautners through the door.\n{}",
+    let content = format!(
+        "A chudly **{}** saunters through the door.\n{}",
         player.name, player.description
     );
-    ctx.say(msg).await?;
+    let http = &ctx.serenity_context().http;
+    let channel_id = ctx.data().channel_id;
+    let max_buffer = ctx.data().max_buffer_messages;
+    let mut board = ctx.data().board.lock().await;
+    post_buffered_message(http, channel_id, &mut *board, max_buffer, &content).await;
+    storage::save_board(&*board)?;
+    ctx.say("ok").await?;
     Ok(())
 }
 
@@ -430,12 +437,8 @@ pub async fn take(ctx: Context<'_>, title: String) -> Result<(), Error> {
     let mut board = ctx.data().board.lock().await;
 
     let quest_id = board
-        .quests
-        .iter()
-        .find(|q| {
-            matches!(&q.status, crate::board::QuestStatus::Open)
-                && q.generated.quest_title.to_lowercase() == title.to_lowercase()
-        })
+        .open_quests()
+        .find(|q| q.generated.quest_title.to_lowercase() == title.to_lowercase())
         .map(|q| q.id)
         .ok_or_else(|| anyhow::anyhow!("No open quest found with that title"))?;
 

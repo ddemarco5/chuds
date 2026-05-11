@@ -1,4 +1,4 @@
-use crate::board::Board;
+use crate::board::{Board, BoardQuest, QuestStatus};
 use crate::player::{create_chud, Player};
 use crate::quest_builder::{build_quest, play_quest};
 use crate::quest_generator::{QuestGenerator, QuestResults, TrialResult};
@@ -13,7 +13,6 @@ pub struct QuestResolved {
     pub discord_user_id: u64,
     pub player_name: String,
     pub quest_title: String,
-    pub passed: bool,
     pub summary: String,
     pub result: QuestResult,
     pub player: crate::player::Player,
@@ -212,15 +211,24 @@ pub async fn tick(generator: &QuestGenerator, board: &mut Board) -> anyhow::Resu
             "quest resolved and player saved"
         );
 
+        let passed = result.passed;
         resolved.push(QuestResolved {
             discord_user_id,
             player_name: player.name.clone(),
             quest_title: board_quest.generated.quest_title.clone(),
-            passed: result.passed,
             summary: result.summary.clone(),
             result,
             player,
         });
+
+        if !passed {
+            board.quests.push(BoardQuest {
+                id: board_quest.id,
+                quest_data: board_quest.quest_data,
+                generated: board_quest.generated,
+                status: QuestStatus::Open,
+            });
+        }
     }
 
     storage::save_board(board)?;

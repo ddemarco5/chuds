@@ -22,6 +22,7 @@ pub struct Player {
     pub smt_successes: u32,
     pub sth_successes: u32,
     pub quest_successes: u32,
+    pub quest_failures: u32,
 }
 
 fn apply_wins(val: &mut u8, counter: &mut u32, wins: u32, base: u32) -> bool {
@@ -44,17 +45,6 @@ impl Player {
         )
     }
 
-    pub fn log_stats(&self) {
-        tracing::info!(
-            name = %self.name,
-            strength = self.strength,
-            smarts = self.smarts,
-            stealth = self.stealth,
-            experience = self.experience,
-            "chud stats"
-        );
-    }
-
     pub fn record_quest(&mut self, result: &QuestResult) {
         let (str_wins, smt_wins, sth_wins) = result.stat_wins();
 
@@ -64,7 +54,10 @@ impl Player {
 
         let exp_up = if result.passed {
             apply_wins(&mut self.experience, &mut self.quest_successes, 1, EXP_LEVEL_BASE)
-        } else { false };
+        } else {
+            self.quest_failures += 1;
+            false
+        };
 
         if str_up { tracing::info!(name = %self.name, stat = "strength", value = self.strength, "[LEVEL UP]"); }
         if smt_up { tracing::info!(name = %self.name, stat = "smarts",   value = self.smarts,   "[LEVEL UP]"); }
@@ -113,5 +106,6 @@ pub fn create_chud(discord_user_id: u64, name: String, description: String) -> P
         smt_successes: 0,
         sth_successes: 0,
         quest_successes: 0,
+        quest_failures: 0,
     }
 }

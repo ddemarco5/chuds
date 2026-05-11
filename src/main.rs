@@ -13,28 +13,6 @@ use commands::Data;
 use poise::serenity_prelude as serenity;
 use tokio::time::MissedTickBehavior;
 
-async fn clear_channel_on_startup(ctx: &serenity::Context, channel_id: u64, board: &mut board::Board) {
-    let ch = serenity::ChannelId::new(channel_id);
-    match ch.messages(ctx, serenity::GetMessages::new().limit(100)).await {
-        Ok(messages) => {
-            let ids: Vec<serenity::MessageId> = messages.iter().map(|m| m.id).collect();
-            let count = ids.len();
-            for id in ids {
-                if let Err(e) = ctx.http.delete_message(ch, id, None).await {
-                    tracing::warn!(msg_id = id.get(), err = %e, "failed to delete message on startup");
-                }
-            }
-            tracing::info!(count, "channel cleared on startup");
-        }
-        Err(e) => tracing::warn!(err = %e, "failed to fetch channel messages for startup clear"),
-    }
-    board.board_message_id = None;
-    board.pending_deletes.clear();
-    if let Err(e) = storage::save_board(board) {
-        tracing::warn!(err = %e, "failed to save board after startup clear");
-    }
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -121,7 +99,6 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!(guild_name, "fetched guild name");
                 {
                     let mut b = board.lock().await;
-                    clear_channel_on_startup(ctx, channel_id, &mut b).await;
                     commands::update_board_message(&ctx.http, channel_id, &mut b, &guild_name).await?;
                 }
 

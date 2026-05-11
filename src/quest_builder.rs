@@ -89,22 +89,36 @@ pub struct PlayedQuest {
 }
 
 fn choose_stat(stats: &TrialStats, player: &Player, rng: &mut impl Rng) -> StatChoice {
+    // Pair each stat choice with the trial's requirement and the player's value for it.
     let candidates = [
         (StatChoice::Strength, stats.strength, player.strength),
         (StatChoice::Smarts,   stats.smarts,   player.smarts),
         (StatChoice::Stealth,  stats.stealth,  player.stealth),
     ];
+
+    // Drop any stat the trial doesn't require (requirement = 0), then compute
+    // each remaining stat's margin: positive means the player exceeds the requirement.
     let valid: Vec<(StatChoice, i16)> = candidates.iter()
         .filter(|&&(_, req, _)| req > 0)
         .map(|&(s, req, ps)| (s, ps as i16 - req as i16))
         .collect();
+
+    // Find the highest margin among valid stats — this is the "optimal" choice.
     let best_margin = valid.iter().map(|&(_, m)| m).max().unwrap_or(0);
+
+    // Dropout probability scales linearly with experience:
+    // low exp → near EXP_DROPOUT_MIN (mostly random), high exp → near EXP_DROPOUT_MAX (focused).
     let t = (player.experience - 1) as f64 / 9.0;
     let dropout_prob = EXP_DROPOUT_MIN + t * (EXP_DROPOUT_MAX - EXP_DROPOUT_MIN);
+
+    // Keep the best-margin stat(s) unconditionally; randomly drop sub-optimal stats
+    // based on dropout_prob — higher experience makes sub-optimal stats less likely to survive.
     let considered: Vec<StatChoice> = valid.iter()
         .filter(|&&(_, m)| m == best_margin || !rng.gen_bool(dropout_prob))
         .map(|&(s, _)| s)
         .collect();
+
+    // Fall back to all valid stats if dropout eliminated everything, then pick randomly.
     let pool = if considered.is_empty() { valid.iter().map(|&(s, _)| s).collect() } else { considered };
     pool[rng.gen_range(0..pool.len())]
 }
@@ -113,7 +127,7 @@ pub fn play_quest(quest: &QuestData, generated: &GeneratedQuest, player: &Player
     let mut rng = rand::thread_rng();
     let mut outcomes = Vec::new();
 
-    for (stats, situation) in quest.trials.iter().zip(generated.trials.iter()) {
+    for (stats, _situation) in quest.trials.iter().zip(generated.trials.iter()) {
         let stat_used = choose_stat(stats, player, &mut rng);
         let player_stat = stat_used.player_stat(player);
         let required = stat_used.trial_required(stats);
