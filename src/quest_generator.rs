@@ -21,7 +21,7 @@ RULES:
 7. Make sure each response is varied
 10. Do not include quest names, difficulty levels, or promise rewards
 11. Create and include your character name in the 'quest_giver' field - use a fitting name for your race/class/occupation if not specified. Don't pick just pick "Barnaby" each time.
-12. Create a 'quest_title' field: 1-3 words that capture the nature of the quest (e.g. "The Missing Shipment", "Rats in the Cellar", "A Noble Errand")
+12. Create a 'quest_title' field: 1-4 words that capture the writer's request (e.g. "Help with Missing Shipment", "Rats in the Cellar", "A Beggar in Need")
 13. Output in YAML format with 'quest_title', 'quest_giver' (your name), 'description' (your letter), and 'goal' (the quest goal) fields
 
 You will receive quest_description and quest_difficulty in YAML format. Infer who you are from the quest description and speak in their voice."#;
