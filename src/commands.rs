@@ -43,6 +43,24 @@ async fn admin_guard(ctx: Context<'_>) -> bool {
     ok
 }
 
+/// Returns true if the invoking user is admin or a Chudmaster and is in the configured channel.
+async fn chudmaster_guard(ctx: Context<'_>) -> bool {
+    let data = ctx.data();
+    let user_id = ctx.author().id.get();
+    let is_admin = user_id == data.admin_user_id;
+    let is_chudmaster = storage::is_chudmaster(user_id).unwrap_or(false);
+    let ok = (is_admin || is_chudmaster) && ctx.channel_id().get() == data.channel_id;
+    if !ok {
+        tracing::warn!(
+            user = user_id,
+            channel = ctx.channel_id().get(),
+            "unauthorized or off-channel command ignored"
+        );
+        ctx.say("you don't have permission for this command (sorry bud)").await.ok();
+    }
+    ok
+}
+
 // ---------------------------------------------------------------------------
 // Channel cleanup
 // ---------------------------------------------------------------------------
@@ -451,6 +469,53 @@ pub async fn execute_tick(
     Ok(())
 }
 
+/// Grant a Discord user Chudmaster status, allowing them to post and generate jobs.
+#[poise::command(slash_command)]
+pub async fn add_cm(ctx: Context<'_>, discord_user_id: String) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let discord_user_id: u64 = match discord_user_id.trim().parse() {
+        Ok(id) => id,
+        Err(_) => { ctx.say("invalid Discord user ID").await?; return Ok(()); }
+    };
+    let added = storage::add_chudmaster(discord_user_id)?;
+    if !added {
+        ctx.say("that user is already a Chudmaster™").await?;
+        return Ok(());
+    }
+    let http = &ctx.serenity_context().http;
+    let display_name = match http.get_user(serenity::UserId::new(discord_user_id)).await {
+        Ok(user) => user.global_name.unwrap_or(user.name),
+        Err(_) => discord_user_id.to_string(),
+    };
+    let content = format!("{} is now a Chudmaster™", display_name);
+    post_buffered_message(http, ctx.data().channel_id, ctx.data().max_buffer_messages, &content).await;
+    ctx.say("ok").await?;
+    Ok(())
+}
+
+/// Revoke a Discord user's Chudmaster status.
+#[poise::command(slash_command)]
+pub async fn delete_cm(ctx: Context<'_>, discord_user_id: String) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let discord_user_id: u64 = match discord_user_id.trim().parse() {
+        Ok(id) => id,
+        Err(_) => { ctx.say("invalid Discord user ID").await?; return Ok(()); }
+    };
+    let removed = storage::remove_chudmaster(discord_user_id)?;
+    if !removed {
+        ctx.say("that user is not a Chudmaster™").await?;
+        return Ok(());
+    }
+    ctx.say("ok").await?;
+    Ok(())
+}
+
 /// Advance the board by one tick, resolving any due quests via the LLM.
 #[poise::command(slash_command)]
 pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
@@ -479,7 +544,7 @@ pub async fn generate_job(
     difficulty: u8,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !chudmaster_guard(ctx).await {
         return Ok(());
     }
     let mut board = ctx.data().board.lock().await;
@@ -504,7 +569,7 @@ pub async fn write_job(
     difficulty: u8,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !chudmaster_guard(ctx).await {
         return Ok(());
     }
     let mut board = ctx.data().board.lock().await;
@@ -520,7 +585,7 @@ pub async fn write_job(
 
 /// Remove a quest from the board by its ID.
 #[poise::command(slash_command)]
-pub async fn delete_quest(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
+pub async fn delete_job(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     if !admin_guard(ctx).await {
         return Ok(());
@@ -534,11 +599,15 @@ pub async fn delete_quest(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> 
 
 /// Admin: create a chud for a specific Discord user.
 #[poise::command(slash_command)]
-pub async fn add_chud(ctx: Context<'_>, target_user_id: u64, name: String, description: String) -> Result<(), Error> {
+pub async fn add_chud(ctx: Context<'_>, target_user_id: String, name: String, description: String) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     if !admin_guard(ctx).await {
         return Ok(());
     }
+    let target_user_id: u64 = match target_user_id.trim().parse() {
+        Ok(id) => id,
+        Err(_) => { ctx.say("invalid Discord user ID").await?; return Ok(()); }
+    };
     engine::add_chud(target_user_id, name, description)?;
     ctx.say("ok").await?;
     Ok(())
@@ -579,11 +648,15 @@ pub async fn delete_chud(ctx: Context<'_>) -> Result<(), Error> {
 
 /// Force-assign any user's chud to a quest by Discord user ID and quest ID.
 #[poise::command(slash_command)]
-pub async fn assign(ctx: Context<'_>, target_user_id: u64, quest_id: u32) -> Result<(), Error> {
+pub async fn assign(ctx: Context<'_>, target_user_id: String, quest_id: u32) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     if !admin_guard(ctx).await {
         return Ok(());
     }
+    let target_user_id: u64 = match target_user_id.trim().parse() {
+        Ok(id) => id,
+        Err(_) => { ctx.say("invalid Discord user ID").await?; return Ok(()); }
+    };
     let http = &ctx.serenity_context().http;
     let channel_id = ctx.data().channel_id;
     // let max_buffer = ctx.data().max_buffer_messages;

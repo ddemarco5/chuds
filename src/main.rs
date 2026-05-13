@@ -1,4 +1,5 @@
 mod board;
+mod chudmasters;
 mod commands;
 mod engine;
 mod message_cache;
@@ -106,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
                     Err(e) => {
                         // The quest remains Active on the board. Every subsequent
                         // tick will skip it (no entry in completed_results) until
-                        // someone manually deletes it with /delete_quest.
+                        // someone manually deletes it with /delete_job.
                         tracing::error!(
                             quest_id = job.board_quest.id,
                             err = %e,
@@ -126,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
                 commands::tick(),
                 commands::generate_job(),
                 commands::write_job(),
-                commands::delete_quest(),
+                commands::delete_job(),
                 commands::chud(),
                 commands::add_chud(),
                 commands::delete_chud(),
@@ -136,6 +137,8 @@ async fn main() -> anyhow::Result<()> {
                 commands::job(),
                 commands::save(),
                 commands::load(),
+                commands::add_cm(),
+                commands::delete_cm(),
             ],
             ..Default::default()
         })
