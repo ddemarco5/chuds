@@ -7,12 +7,14 @@ use crate::quest_result::QuestResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
-pub enum QuestStatus {
-    Open,
+pub enum QuestState {
     Active {
         discord_user_id: u64,
         /// Ticks remaining until this quest resolves. Decremented once per tick.
         ticks_remaining: u32,
+    },
+    Scouting {
+        discord_user_id: u64,
     },
 }
 
@@ -21,16 +23,26 @@ pub struct BoardQuest {
     pub id: u32,
     pub quest_data: QuestData,
     pub generated: GeneratedQuest,
-    pub status: QuestStatus,
+    /// Empty = open/available. One or more entries = actively being run by those players.
+    #[serde(default)]
+    pub states: Vec<QuestState>,
 }
 
 impl BoardQuest {
-    /// Returns the Discord user ID assigned to this quest, if any.
+    pub fn is_open(&self) -> bool {
+        self.states.is_empty()
+    }
+
+    pub fn has_active(&self) -> bool {
+        self.states.iter().any(|s| matches!(s, QuestState::Active { .. }))
+    }
+
+    /// Returns the Discord user ID of the first (or only) active player, if any.
     pub fn assigned_to(&self) -> Option<u64> {
-        match &self.status {
-            QuestStatus::Active { discord_user_id, .. } => Some(*discord_user_id),
-            QuestStatus::Open => None,
-        }
+        self.states.iter().find_map(|s| match s {
+            QuestState::Active { discord_user_id, .. } => Some(*discord_user_id),
+            QuestState::Scouting { .. } => None,
+        })
     }
 }
 
@@ -56,22 +68,34 @@ impl Board {
             id,
             quest_data,
             generated,
-            status: QuestStatus::Open,
+            states: Vec::new(),
         });
         id
     }
 
     /// All quests currently available for assignment.
     pub fn open_quests(&self) -> impl Iterator<Item = &BoardQuest> {
-        self.quests.iter().filter(|q| matches!(q.status, QuestStatus::Open))
+        self.quests.iter().filter(|q| q.is_open())
     }
 
     /// Assign an open quest to a player with a tick countdown.
     /// Returns `false` if the quest doesn't exist or is already taken.
     pub fn assign(&mut self, quest_id: u32, discord_user_id: u64, ticks_remaining: u32) -> bool {
-        match self.quests.iter_mut().find(|q| q.id == quest_id && matches!(q.status, QuestStatus::Open)) {
+        match self.quests.iter_mut().find(|q| q.id == quest_id && q.is_open()) {
             Some(q) => {
-                q.status = QuestStatus::Active { discord_user_id, ticks_remaining };
+                q.states.push(QuestState::Active { discord_user_id, ticks_remaining });
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Add a Scouting state for a player on any open quest.
+    /// Returns `false` if the quest doesn't exist or is not open.
+    pub fn scout(&mut self, quest_id: u32, discord_user_id: u64) -> bool {
+        match self.quests.iter_mut().find(|q| q.id == quest_id && q.is_open()) {
+            Some(q) => {
+                q.states.push(QuestState::Scouting { discord_user_id });
                 true
             }
             None => false,
@@ -81,7 +105,17 @@ impl Board {
     /// The active quest for a given player, if any.
     pub fn active_quest_for(&self, discord_user_id: u64) -> Option<&BoardQuest> {
         self.quests.iter().find(|q| {
-            matches!(&q.status, QuestStatus::Active { discord_user_id: uid, .. } if *uid == discord_user_id)
+            q.states.iter().any(|s| matches!(s, QuestState::Active { discord_user_id: uid, .. } if *uid == discord_user_id))
+        })
+    }
+
+    /// True if the player has any Active or Scouting state on any quest.
+    pub fn is_player_busy(&self, discord_user_id: u64) -> bool {
+        self.quests.iter().any(|q| {
+            q.states.iter().any(|s| match s {
+                QuestState::Active { discord_user_id: uid, .. } => *uid == discord_user_id,
+                QuestState::Scouting { discord_user_id: uid } => *uid == discord_user_id,
+            })
         })
     }
 
@@ -107,8 +141,10 @@ impl Board {
     pub fn tick_and_take_due(&mut self) -> Vec<BoardQuest> {
         // Phase 1: decrement every active quest's counter.
         for q in &mut self.quests {
-            if let QuestStatus::Active { ticks_remaining, .. } = &mut q.status {
-                *ticks_remaining = ticks_remaining.saturating_sub(1);
+            for s in &mut q.states {
+                if let QuestState::Active { ticks_remaining, .. } = s {
+                    *ticks_remaining = ticks_remaining.saturating_sub(1);
+                }
             }
         }
 
@@ -117,7 +153,7 @@ impl Board {
         // to borrow self.completed_results at the same time as self.quests.
         let mut due_ids = std::collections::HashSet::new();
         for q in &self.quests {
-            if let QuestStatus::Active { ticks_remaining, .. } = &q.status {
+            if let Some(QuestState::Active { ticks_remaining, .. }) = q.states.first() {
                 if let Some(result) = self.completed_results.get(&q.id) {
                     let total_trials = q.quest_data.trials.len() as u32;
                     if *ticks_remaining == 0 {

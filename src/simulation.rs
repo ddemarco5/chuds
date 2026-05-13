@@ -1,6 +1,6 @@
 use rand::Rng;
 
-use crate::board::{Board, BoardQuest, QuestStatus};
+use crate::board::{Board, BoardQuest, QuestState};
 use crate::player::Player;
 use crate::quest_builder::{StatChoice, TrialOutcome, PlayedQuest};
 use crate::quest_generator::{GeneratedQuest, QuestData, TrialStats};
@@ -11,6 +11,16 @@ use crate::storage;
 const EXP_DROPOUT_MAX: f64 = 0.70;
 /// Probability (0.0-1.0) that a non-optimal valid stat is dropped at minimum experience (1).
 const EXP_DROPOUT_MIN: f64 = 0.05;
+
+/// Info returned after a scouting action resolves during a tick.
+pub struct ScoutResult {
+    pub discord_user_id: u64,
+    pub player_name: String,
+    pub quest_title: String,
+    pub chance: f64,
+    /// Discord user ID of the player currently active on this quest, if any.
+    pub active_discord_user_id: Option<u64>,
+}
 
 /// Info returned after a quest resolves during a tick.
 pub struct QuestResolved {
@@ -76,7 +86,7 @@ fn choose_stat(stats: &TrialStats, player: &Player, rng: &mut impl Rng) -> StatC
     pool[rng.gen_range(0..pool.len())]
 }
 
-pub fn play_quest(quest: &QuestData, generated: &GeneratedQuest, player: &Player) -> anyhow::Result<PlayedQuest> {
+pub fn try_quest(quest: &QuestData, generated: &GeneratedQuest, player: &Player) -> anyhow::Result<PlayedQuest> {
     let mut rng = rand::thread_rng();
     let mut outcomes = Vec::new();
 
@@ -106,6 +116,24 @@ pub fn play_quest(quest: &QuestData, generated: &GeneratedQuest, player: &Player
     Ok(PlayedQuest { outcomes })
 }
 
+pub fn play_quest(quest: &QuestData, generated: &GeneratedQuest, player: &Player) -> anyhow::Result<PlayedQuest> {
+    try_quest(quest, generated, player)
+}
+
+/// Run `trials` simulations of the quest for `player` and return the fraction
+/// of runs in which the player succeeded (0.0 = never, 1.0 = always).
+pub fn check_job(quest: &QuestData, generated: &GeneratedQuest, player: &Player, trials: u32) -> anyhow::Result<f64> {
+    let count = trials.max(1);
+    let mut successes = 0u32;
+    for _ in 0..count {
+        let played = try_quest(quest, generated, player)?;
+        if played.outcomes.last().map_or(false, |o| o.passed) {
+            successes += 1;
+        }
+    }
+    Ok(successes as f64 / count as f64)
+}
+
 // ---------------------------------------------------------------------------
 // Tick
 // ---------------------------------------------------------------------------
@@ -122,7 +150,54 @@ pub fn play_quest(quest: &QuestData, generated: &GeneratedQuest, player: &Player
 ///           Failed quests are re-opened on the board.
 ///
 /// No LLM calls happen here.
-pub async fn tick(board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
+pub async fn tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<ScoutResult>)> {
+    // ---------------------------------------------------------------------------
+    // Scouting pass — single-tick action, resolved before Active quest processing.
+    // Collect every (quest_id, discord_user_id) pair that is currently Scouting,
+    // strip those states from the board, then handle each one.
+    // ---------------------------------------------------------------------------
+    let mut scout_results: Vec<ScoutResult> = Vec::new();
+    let scouting: Vec<(u32, u64)> = board.quests.iter_mut().flat_map(|q| {
+        let quest_id = q.id;
+        let scouts: Vec<(u32, u64)> = q.states.iter().filter_map(|s| {
+            if let QuestState::Scouting { discord_user_id } = s {
+                Some((quest_id, *discord_user_id))
+            } else {
+                None
+            }
+        }).collect();
+        q.states.retain(|s| !matches!(s, QuestState::Scouting { .. }));
+        scouts
+    }).collect();
+
+    for (quest_id, discord_user_id) in scouting {
+        let player = match storage::load_player(discord_user_id)? {
+            Some(p) => p,
+            None => {
+                tracing::warn!(discord_user_id, quest_id, "scouting player not found, skipping");
+                continue;
+            }
+        };
+        let quest = match board.quests.iter().find(|q| q.id == quest_id) {
+            Some(q) => q,
+            None => {
+                tracing::warn!(quest_id, "scouted quest not found on board, skipping");
+                continue;
+            }
+        };
+        let chance = check_job(&quest.quest_data, &quest.generated, &player, 20)?;
+        tracing::info!("{} checked job {} and sees a {:.2}% chance of success.", discord_user_id, quest_id, chance*100.0);
+        let active_discord_user_id = quest.assigned_to();
+        let quest_title = quest.generated.quest_title.clone();
+        scout_results.push(ScoutResult {
+            discord_user_id,
+            player_name: player.name.clone(),
+            quest_title,
+            chance,
+            active_discord_user_id,
+        });
+    }
+
     let due = board.tick_and_take_due();
     tracing::info!(count = due.len(), "tick fired");
 
@@ -182,16 +257,16 @@ pub async fn tick(board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
                 id: board_quest.id,
                 quest_data: board_quest.quest_data,
                 generated: board_quest.generated,
-                status: QuestStatus::Open,
+                states: Vec::new(),
             });
         }
     }
 
     storage::save_board(board)?;
-    Ok(resolved)
+    Ok((resolved, scout_results))
 }
 
 /// Run a single game tick.
-pub async fn run_tick(board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
+pub async fn run_tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<ScoutResult>)> {
     tick(board).await
 }

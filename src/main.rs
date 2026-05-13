@@ -134,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
                 commands::delete_chud(),
                 commands::assign(),
                 commands::take(),
+                commands::scout(),
                 commands::stats(),
                 commands::job(),
                 commands::save(),

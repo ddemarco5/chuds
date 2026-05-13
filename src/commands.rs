@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use poise::serenity_prelude::{self as serenity, CreateMessage, EditMessage, GetMessages, MessageId};
 
-use crate::board::{Board, QuestStatus};
+use crate::board::Board;
 use crate::engine;
 use crate::quest_generator::QuestGenerator;
 use crate::simulation;
@@ -106,11 +106,10 @@ fn format_job_slot(board: &Board, index: usize) -> String {
             let title = &q.generated.quest_title;
             let giver = &q.generated.quest_giver;
             let desc = &q.generated.description;
-            match &q.status {
-                QuestStatus::Open => format!("**{}** - *{}*\n{}", title, giver, desc),
-                QuestStatus::Active { .. } => {
-                    format!("~~**{}** - *{}*~~\n~~{}~~", title, giver, desc)
-                }
+            if q.has_active() {
+                format!("~~**{}** - *{}*~~\n~~{}~~", title, giver, desc)
+            } else {
+                format!("**{}** - *{}*\n{}", title, giver, desc)
             }
         }
         None => "*Nothing posted here*".to_string(),
@@ -140,60 +139,6 @@ async fn post_buffered_message(
         }
         Err(e) => tracing::warn!(err = %e, "failed to post buffered message"),
     }
-}
-
-fn format_dm_report(
-    player_name: &str,
-    result: &crate::quest_result::QuestResult,
-    player: &crate::player::Player,
-    level_up: &crate::player::LevelUp,
-) -> String {
-    let mut out = String::new();
-    let outcome = if result.passed { "PASSED" } else { "FAILED" };
-
-    out.push_str(&format!("{}\n\n", player.format_stats()));
-
-    out.push_str(&format!(
-        "**{}** - {}\n{}\n",
-        result.quest_title, result.quest_giver, result.quest_description
-    ));
-
-    for (i, trial) in result.trials.iter().enumerate() {
-        let pass_str = if trial.passed { "\u{2705}" } else { "\u{274c}" };
-        let brain = if trial.chose_optimal { " \u{1F9E0}" } else { "" };
-        out.push_str(&format!(
-            "\n**Trial {}** - {}\n{} {} | {} rolled {} vs {}{}\n*{}*\n",
-            i + 1,
-            trial.situation,
-            pass_str,
-            trial.stat_used.label(),
-            player_name,
-            trial.player_roll,
-            trial.trial_roll,
-            brain,
-            trial.narrative,
-        ));
-    }
-    out.push_str(&format!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n**{}**\n{}", outcome, result.summary));
-
-    if level_up.any() {
-        fn fmt_stat(levelled: bool, val: u8) -> String {
-            if levelled {
-                format!("{} -> **{}**", val - 1, val)
-            } else {
-                val.to_string()
-            }
-        }
-        out.push_str(&format!(
-            "\n{} has improved! - Strength {}, Smarts {}, Stealth {}, Experience {}",
-            player_name,
-            fmt_stat(level_up.str_up, player.strength),
-            fmt_stat(level_up.smt_up, player.smarts),
-            fmt_stat(level_up.sth_up, player.stealth),
-            fmt_stat(level_up.exp_up, player.experience),
-        ));
-    }
-    out
 }
 
 fn format_chudlerboard() -> String {
@@ -427,7 +372,7 @@ pub async fn execute_tick(
 
     let mut board = board.lock().await;
 
-    let resolved = simulation::run_tick(&mut *board).await?;
+    let (resolved, scouted) = simulation::run_tick(&mut *board).await?;
 
     for qr in &resolved {
         tracing::info!(quest = %qr.quest_title, passed = qr.result.passed, player = %qr.player_name, "quest resolved");
@@ -451,7 +396,7 @@ pub async fn execute_tick(
         };
         post_buffered_message(http, channel_id, max_buffer, &content).await;
 
-        let dm_content = format_dm_report(&qr.player_name, &qr.result, &qr.player, &qr.level_up);
+        let dm_content = engine::format_dm_completion_report(&qr.player_name, &qr.result, &qr.player, &qr.level_up);
         let dm_map = serde_json::json!({ "recipient_id": qr.discord_user_id.to_string() });
         match http.create_private_channel(&dm_map).await {
             Ok(dm) => {
@@ -463,7 +408,40 @@ pub async fn execute_tick(
         }
     }
 
-    if !resolved.is_empty() {
+    for sr in &scouted {
+        let first_name = sr.player_name.split_whitespace().next().unwrap_or(&sr.player_name).to_string();
+        let flavour = if sr.chance == 0.0 {
+            " with poop in their pants"
+        } else if sr.chance <= 0.20 {
+            " white as a ghost"
+        } else if sr.chance >= 0.80 {
+            " with a shit-eating grin"
+        } else {
+            ""
+        };
+        post_buffered_message(http, channel_id, max_buffer, &format!("**{}** saunters back in{}.", first_name, flavour)).await;
+
+        let active_player_name: Option<String> = sr.active_discord_user_id
+            .and_then(|id| storage::load_player(id).ok().flatten())
+            .map(|p| p.name);
+        let dm_content = engine::format_dm_scouting_report(
+            &sr.player_name,
+            &sr.quest_title,
+            sr.chance,
+            active_player_name.as_deref(),
+        );
+        let dm_map = serde_json::json!({ "recipient_id": sr.discord_user_id.to_string() });
+        match http.create_private_channel(&dm_map).await {
+            Ok(dm) => {
+                if let Err(e) = http.send_message(dm.id, vec![], &CreateMessage::new().content(&dm_content)).await {
+                    tracing::warn!(discord_user_id = sr.discord_user_id, err = %e, "failed to DM scouting report");
+                }
+            }
+            Err(e) => tracing::warn!(discord_user_id = sr.discord_user_id, err = %e, "failed to open DM channel for scouting report"),
+        }
+    }
+
+    if !resolved.is_empty() || !scouted.is_empty() {
         storage::save_board(&*board)?;
         update_board_message(http, channel_id, &mut *board, max_jobs).await?;
     }
@@ -697,8 +675,8 @@ pub async fn take(ctx: Context<'_>, title: String) -> Result<(), Error> {
     let channel_id = ctx.data().channel_id;
     let max_buffer = ctx.data().max_buffer_messages;
     let mut board = ctx.data().board.lock().await;
-    if board.active_quest_for(user_id).is_some() {
-        ctx.say("you're already on a job").await?;
+    if board.is_player_busy(user_id) {
+        ctx.say("your chud is busy").await?;
         return Ok(());
     }
 
@@ -728,6 +706,42 @@ pub async fn take(ctx: Context<'_>, title: String) -> Result<(), Error> {
     post_buffered_message(http, channel_id, max_buffer, &content).await;
 
     update_board_message(http, channel_id, &mut *board, ctx.data().max_jobs).await?;
+    Ok(())
+}
+
+/// Scout an open quest to assess your chances without committing to it.
+#[poise::command(slash_command)]
+pub async fn scout(ctx: Context<'_>, title: String) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let user_id = ctx.author().id.get();
+    let player = match storage::load_player(user_id)? {
+        Some(p) => p,
+        None => { ctx.say("you don't have a chud").await?; return Ok(()); }
+    };
+    let http = &ctx.serenity_context().http;
+    let channel_id = ctx.data().channel_id;
+    let max_buffer = ctx.data().max_buffer_messages;
+    let mut board = ctx.data().board.lock().await;
+
+    let quest_id = board
+        .open_quests()
+        .find(|q| q.generated.quest_title.to_lowercase() == title.to_lowercase())
+        .map(|q| q.id)
+        .ok_or_else(|| anyhow::anyhow!("No open quest found with that title"))?;
+
+    if !board.scout(quest_id, user_id) {
+        ctx.say("that quest is not available to scout").await?;
+        return Ok(());
+    }
+
+    storage::save_board(&*board)?;
+
+    let first_name = player.name.split_whitespace().next().unwrap_or(&player.name).to_string();
+    let content = format!("**{}** stumbled out the door", first_name);
+
+    ctx.say("ok").await?;
+
+    post_buffered_message(http, channel_id, max_buffer, &content).await;
     Ok(())
 }
 

@@ -124,8 +124,8 @@ pub fn assign_chud_to_quest(
     let player = storage::load_player(discord_user_id)?
         .ok_or_else(|| anyhow::anyhow!("no chud found for user {}", discord_user_id))?;
 
-    if board.active_quest_for(discord_user_id).is_some() {
-        anyhow::bail!("user {} already has an active quest", discord_user_id);
+    if board.is_player_busy(discord_user_id) {
+        anyhow::bail!("user {} is already on or scouting a quest", discord_user_id);
     }
 
     let quest = board
@@ -191,6 +191,91 @@ pub async fn generate_result(
     let result = QuestResult::build(&board_quest.generated, &played, player, trials, summary);
     result.log();
     Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
+
+pub fn format_dm_completion_report(
+    player_name: &str,
+    result: &crate::quest_result::QuestResult,
+    player: &crate::player::Player,
+    level_up: &crate::player::LevelUp,
+) -> String {
+    let mut out = String::new();
+    let outcome = if result.passed { "PASSED" } else { "FAILED" };
+
+    out.push_str(&format!("{}\n\n", player.format_stats()));
+
+    out.push_str(&format!(
+        "**{}** - {}\n{}\n",
+        result.quest_title, result.quest_giver, result.quest_description
+    ));
+
+    for (i, trial) in result.trials.iter().enumerate() {
+        let pass_str = if trial.passed { "\u{2705}" } else { "\u{274c}" };
+        let brain = if trial.chose_optimal { " \u{1F9E0}" } else { "" };
+        out.push_str(&format!(
+            "\n**Trial {}** - {}\n{} {} | {} rolled {} vs {}{}\n*{}*\n",
+            i + 1,
+            trial.situation,
+            pass_str,
+            trial.stat_used.label(),
+            player_name,
+            trial.player_roll,
+            trial.trial_roll,
+            brain,
+            trial.narrative,
+        ));
+    }
+    out.push_str(&format!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n**{}**\n{}", outcome, result.summary));
+
+    if level_up.any() {
+        fn fmt_stat(levelled: bool, val: u8) -> String {
+            if levelled {
+                format!("{} -> **{}**", val - 1, val)
+            } else {
+                val.to_string()
+            }
+        }
+        out.push_str(&format!(
+            "\n{} has improved! - Strength {}, Smarts {}, Stealth {}, Experience {}",
+            player_name,
+            fmt_stat(level_up.str_up, player.strength),
+            fmt_stat(level_up.smt_up, player.smarts),
+            fmt_stat(level_up.sth_up, player.stealth),
+            fmt_stat(level_up.exp_up, player.experience),
+        ));
+    }
+    out
+}
+
+pub fn format_dm_scouting_report(
+    player_name: &str,
+    quest_title: &str,
+    chance: f64,
+    active_player_name: Option<&str>,
+) -> String {
+    let feeling = if chance == 0.0 {
+        "don't want to talk about"
+    } else if chance <= 0.25 {
+        "are scared of"
+    } else if chance <= 0.50 {
+        "feel apprehensive about"
+    } else if chance <= 0.75 {
+        "think they can do"
+    } else {
+        "say they'll fuckin demolish"
+    };
+
+    let mut out = format!("**{}** checked \"{}\", they {} it.", player_name, quest_title, feeling);
+
+    if let Some(name) = active_player_name {
+        out.push_str(&format!("\nOh, and they also saw **{}** there.", name));
+    }
+
+    out
 }
 
 // ---------------------------------------------------------------------------

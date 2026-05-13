@@ -199,11 +199,17 @@ impl QuestGenerator {
     fn parse_retry_delay(msg: &str) -> Option<u64> {
         let json_str = &msg[msg.find("with message: ")? + "with message: ".len()..];
         let body: serde_json::Value = serde_json::from_str(json_str).ok()?;
-        let details = body["error"]["details"].as_array()?;
-        for detail in details {
-            if let Some(delay) = detail["retryDelay"].as_str() {
-                return delay.trim_end_matches('s').parse::<f64>().ok().map(|s| s.ceil() as u64);
+        // Gemini
+        if let Some(details) = body["error"]["details"].as_array() {
+            for detail in details {
+                if let Some(delay) = detail["retryDelay"].as_str() {
+                    return delay.trim_end_matches('s').parse::<f64>().ok().map(|s| s.ceil() as u64);
+                }
             }
+        }
+        // Meta llama
+        if let Some(secs) = body["error"]["metadata"]["retry_after_seconds"].as_u64() {
+            return Some(secs);
         }
         None
     }
@@ -252,7 +258,7 @@ impl QuestGenerator {
     }
 
     async fn prompt_with_retry(agent: &OpenRouterAgent, prompt: &str) -> anyhow::Result<String> {
-        const MAX_RETRIES: u32 = 3;
+        const MAX_RETRIES: u32 = 6;
         let mut retries = 0;
         loop {
             match agent.prompt(prompt).await {
@@ -264,7 +270,7 @@ impl QuestGenerator {
                     } else if msg.contains("500") {
                         (5, "500 internal server error")
                     } else if msg.contains("429") {
-                        (Self::parse_retry_delay(&msg).unwrap_or(5) + 1, "429 quota exceeded")
+                        (Self::parse_retry_delay(&msg).unwrap_or(5) * 2, "429 quota exceeded")
                     } else {
                         return Err(e.into());
                     };
