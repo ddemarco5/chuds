@@ -1,3 +1,5 @@
+use std::ops::{Deref, DerefMut};
+
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -46,8 +48,7 @@ pub const STAT_LEVEL_BASE: u32 = 3;
 pub const EXP_LEVEL_BASE: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Player {
-    pub discord_user_id: u64,
+pub struct Chud {
     pub name: String,
     pub description: String,
     pub strength: u8,
@@ -60,6 +61,26 @@ pub struct Player {
     pub job_successes: u32,
     pub total_job_successes: u32,
     pub total_job_failures: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Player {
+    pub discord_user_id: u64,
+    pub cash: u32,
+    pub chud: Chud,
+}
+
+impl Deref for Player {
+    type Target = Chud;
+    fn deref(&self) -> &Self::Target {
+        &self.chud
+    }
+}
+
+impl DerefMut for Player {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.chud
+    }
 }
 
 fn apply_wins(val: &mut u8, counter: &mut u32, wins: u32, base: u32) -> bool {
@@ -86,15 +107,15 @@ impl Player {
     pub fn record_quest(&mut self, result: &QuestResult) -> LevelUp {
         let (str_wins, smt_wins, sth_wins) = result.stat_wins();
 
-        let str_up = apply_wins(&mut self.strength,  &mut self.str_successes, str_wins, STAT_LEVEL_BASE);
-        let smt_up = apply_wins(&mut self.smarts,    &mut self.smt_successes, smt_wins, STAT_LEVEL_BASE);
-        let sth_up = apply_wins(&mut self.stealth,   &mut self.sth_successes, sth_wins, STAT_LEVEL_BASE);
+        let str_up = apply_wins(&mut self.chud.strength,  &mut self.chud.str_successes, str_wins, STAT_LEVEL_BASE);
+        let smt_up = apply_wins(&mut self.chud.smarts,    &mut self.chud.smt_successes, smt_wins, STAT_LEVEL_BASE);
+        let sth_up = apply_wins(&mut self.chud.stealth,   &mut self.chud.sth_successes, sth_wins, STAT_LEVEL_BASE);
 
         let exp_up = if result.passed {
-            self.total_job_successes += 1;
-            apply_wins(&mut self.experience, &mut self.job_successes, 1, EXP_LEVEL_BASE)
+            self.chud.total_job_successes += 1;
+            apply_wins(&mut self.chud.experience, &mut self.chud.job_successes, 1, EXP_LEVEL_BASE)
         } else {
-            self.total_job_failures += 1;
+            self.chud.total_job_failures += 1;
             false
         };
 
@@ -137,17 +158,20 @@ pub fn create_chud(discord_user_id: u64, name: String, description: String) -> P
 
     Player {
         discord_user_id,
-        name,
-        description,
-        strength,
-        smarts,
-        stealth,
-        experience: 1,
-        str_successes: 0,
-        smt_successes: 0,
-        sth_successes: 0,
-        job_successes: 0,
-        total_job_successes: 0,
-        total_job_failures: 0,
+        cash: 0,
+        chud: Chud {
+            name,
+            description,
+            strength,
+            smarts,
+            stealth,
+            experience: 1,
+            str_successes: 0,
+            smt_successes: 0,
+            sth_successes: 0,
+            job_successes: 0,
+            total_job_successes: 0,
+            total_job_failures: 0,
+        },
     }
 }

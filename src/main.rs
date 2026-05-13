@@ -136,6 +136,7 @@ async fn main() -> anyhow::Result<()> {
                 commands::take(),
                 commands::scout(),
                 commands::stats(),
+                commands::cash(),
                 commands::job(),
                 commands::save(),
                 commands::load(),

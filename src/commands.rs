@@ -423,7 +423,7 @@ pub async fn execute_tick(
 
         let active_player_name: Option<String> = sr.active_discord_user_id
             .and_then(|id| storage::load_player(id).ok().flatten())
-            .map(|p| p.name);
+            .map(|p| p.chud.name);
         let dm_content = engine::format_dm_scouting_report(
             &sr.player_name,
             &sr.quest_title,
@@ -757,6 +757,19 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
             let msg = format!("**{}**\n{}\n{}", p.name, p.description, p.format_stats());
             ctx.say(msg).await?
         }
+    };
+    Ok(())
+}
+
+/// Show how much money you've made from your lucrative chud delegation career.
+#[poise::command(slash_command)]
+pub async fn cash(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let user_id = ctx.author().id.get();
+    match storage::load_player(user_id)? {
+        None => ctx.say("You don't have a chud.").await?,
+        Some(p) if p.cash == 0 => ctx.say("https://tenor.com/view/poor-no-money-gif-24226168").await?,
+        Some(p) => ctx.say(format!("You've got {} buckeroos", p.cash)).await?,
     };
     Ok(())
 }
