@@ -1,3 +1,4 @@
+use rand_distr::{Distribution, Normal};
 use rig::client::CompletionClient;
 use rig::completion::Prompt;
 use rig::providers::openrouter;
@@ -114,6 +115,15 @@ struct ResultsPrompt<'a> {
 #[derive(Deserialize)]
 struct ResultsResponse { trials: Vec<String>, summary: String }
 
+// Reward formula: REWARD_QUADRATIC * cumulative^2 + REWARD_LINEAR * cumulative
+// Increasing REWARD_QUADRATIC steepens the curve so high-difficulty quests pay out much more relative to easy ones.
+// Increasing REWARD_LINEAR raises the baseline payout across all difficulties.
+const REWARD_QUADRATIC: f64 = 0.3;
+const REWARD_LINEAR: f64 = 3.0;
+// Reward jitter: multiplier sampled from Normal(mean=1.0, stddev=REWARD_JITTER_STDDEV).
+// 0.10 means ~68% of jobs pay within ±10% of base, ~95% within ±20%. Raise to widen the spread.
+const REWARD_JITTER_STDDEV: f64 = 0.10;
+
 type OpenRouterAgent = rig::agent::Agent<openrouter::completion::CompletionModel, ()>;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -138,6 +148,8 @@ pub struct GeneratedQuest {
     pub description: String,
     pub trials: Vec<String>,
     pub quest_goal: String,
+    #[serde(default)]
+    pub reward: u32,
 }
 
 pub struct TrialResult {
@@ -215,7 +227,7 @@ impl QuestGenerator {
     }
 
     async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(agent: &OpenRouterAgent, prompt: &str, expected_trials: Option<usize>) -> anyhow::Result<T> {
-        const MAX_RETRIES: u32 = 5;
+        const MAX_RETRIES: u32 = 10;
         let mut retries = 0;
         loop {
             let raw = Self::prompt_with_retry(agent, prompt).await?;
@@ -266,9 +278,9 @@ impl QuestGenerator {
                 Err(e) if retries < MAX_RETRIES => {
                     let msg = e.to_string();
                     let (wait_secs, label) = if msg.contains("503") {
-                        (5, "503 model overloaded")
+                        (10, "503 model overloaded")
                     } else if msg.contains("500") {
-                        (5, "500 internal server error")
+                        (15, "500 internal server error")
                     } else if msg.contains("429") {
                         (Self::parse_retry_delay(&msg).unwrap_or(5) * 2, "429 quota exceeded")
                     } else {
@@ -314,7 +326,8 @@ impl QuestGenerator {
         let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &trial_yaml, Some(quest.trials.len())).await?.trials;
         tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
 
-        Ok(GeneratedQuest { quest_title, quest_giver, description, trials, quest_goal })
+        let reward = Self::calculate_reward(&quest.trials);
+        Ok(GeneratedQuest { quest_title, quest_giver, description, trials, quest_goal, reward })
     }
 
     pub async fn generate_from_explicit(
@@ -339,13 +352,28 @@ impl QuestGenerator {
         let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &trial_yaml, Some(quest.trials.len())).await?.trials;
         tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
 
+        let reward = Self::calculate_reward(&quest.trials);
         Ok(GeneratedQuest {
             quest_title: title,
             quest_giver: giver,
             description: quest.quest_description.clone(),
             trials,
-            quest_goal: quest.quest_goal.as_ref().unwrap().clone()
+            quest_goal: quest.quest_goal.as_ref().unwrap().clone(),
+            reward,
         })
+    }
+
+    fn calculate_reward(trials: &[TrialStats]) -> u32 {
+        let cumulative: f64 = trials.iter().map(|t| {
+            let vals = [t.strength, t.smarts, t.stealth];
+            let nonzero: Vec<f64> = vals.iter().filter(|&&v| v != 0).map(|&v| v as f64).collect();
+            if nonzero.is_empty() { 0.0 } else { nonzero.iter().sum::<f64>() / nonzero.len() as f64 }
+        }).sum();
+        let base = REWARD_QUADRATIC * cumulative * cumulative + REWARD_LINEAR * cumulative;
+        let mut rng = rand::thread_rng();
+        let normal = Normal::new(1.0, REWARD_JITTER_STDDEV).expect("valid normal distribution");
+        let multiplier = normal.sample(&mut rng).max(0.0);
+        (base * multiplier).round() as u32
     }
 
     pub async fn generate_results(

@@ -31,6 +31,7 @@ pub struct QuestResolved {
     pub result: QuestResult,
     pub player: crate::player::Player,
     pub level_up: crate::player::LevelUp,
+    pub reward: u32,
 }
 
 // P(optimal stat chosen) by experience level.
@@ -233,6 +234,10 @@ pub async fn tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<
         let quest_title = board_quest.generated.quest_title.clone();
 
         let level_up = player.record_quest(&result);
+        if passed {
+            tracing::info!("{} made {}", discord_user_id, board_quest.generated.reward);
+            player.cash += board_quest.generated.reward;
+        }
         storage::save_player(&player)?;
 
         tracing::info!(
@@ -250,6 +255,7 @@ pub async fn tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<
             result,
             player,
             level_up,
+            reward: board_quest.generated.reward,
         });
 
         if !passed {

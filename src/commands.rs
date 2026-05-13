@@ -106,10 +106,11 @@ fn format_job_slot(board: &Board, index: usize) -> String {
             let title = &q.generated.quest_title;
             let giver = &q.generated.quest_giver;
             let desc = &q.generated.description;
+            let reward = q.generated.reward;
             if q.has_active() {
-                format!("~~**{}** - *{}*~~\n~~{}~~", title, giver, desc)
+                format!("~~**{}** - *{}* | ${}~~\n~~{}~~", title, giver, reward, desc)
             } else {
-                format!("**{}** - *{}*\n{}", title, giver, desc)
+                format!("**{}** - *{}* | ${}\n{}", title, giver, reward, desc)
             }
         }
         None => "*Nothing posted here*".to_string(),
@@ -141,7 +142,7 @@ async fn post_buffered_message(
     }
 }
 
-fn format_chudlerboard() -> String {
+async fn format_chudlerboard(http: &serenity::Http) -> String {
     let ids = match storage::list_player_ids() {
         Ok(ids) => ids,
         Err(e) => {
@@ -169,57 +170,45 @@ fn format_chudlerboard() -> String {
         return String::new();
     }
 
-    fn leaders_for(
+    fn sole_leader(
         players: &[crate::player::Player],
         accessor: fn(&crate::player::Player) -> u8,
-    ) -> Vec<String> {
+    ) -> Option<String> {
         let max_val = players.iter().map(|p| accessor(p)).max().unwrap_or(0);
-        let mut names: Vec<String> = players
-            .iter()
-            .filter(|p| accessor(p) == max_val)
-            .map(|p| p.name.clone())
-            .collect();
-        names.sort();
-        names
-    }
-
-    let stat_defs: [(&str, Vec<String>); 4] = [
-        ("strongest", leaders_for(&players, |p| p.strength)),
-        ("smartest",  leaders_for(&players, |p| p.smarts)),
-        ("sneakiest", leaders_for(&players, |p| p.stealth)),
-        ("pro",       leaders_for(&players, |p| p.experience)),
-    ];
-
-    let mut groups: Vec<(Vec<String>, Vec<&str>)> = Vec::new();
-    for (adjective, names) in &stat_defs {
-        if let Some(group) = groups.iter_mut().find(|(n, _)| n == names) {
-            group.1.push(adjective);
-        } else {
-            groups.push((names.clone(), vec![adjective]));
-        }
+        let mut leaders = players.iter().filter(|p| accessor(p) == max_val);
+        let first = leaders.next()?;
+        if leaders.next().is_some() { return None; }
+        Some(first.name.clone())
     }
 
     let mut lines = Vec::new();
-    for (names, titles) in &groups {
-        let name_str = match names.len() {
-            1 => names[0].clone(),
-            2 => format!("{} and {}", names[0], names[1]),
-            _ => {
-                let (last, rest) = names.split_last().unwrap();
-                format!("{}, and {}", rest.join(", "), last)
-            }
+
+    if let Some(richest) = players.iter().max_by_key(|p| p.cash).filter(|_| {
+        let max_cash = players.iter().map(|p| p.cash).max().unwrap_or(0);
+        players.iter().filter(|p| p.cash == max_cash).count() == 1
+    }) {
+        let discord_name = match http.get_user(serenity::UserId::new(richest.discord_user_id)).await {
+            Ok(user) => user.global_name.unwrap_or(user.name),
+            Err(_) => richest.discord_user_id.to_string(),
         };
-        let verb = if names.len() == 1 { "is" } else { "are" };
-        let title_str = match titles.len() {
-            1 => format!("the {}", titles[0]),
-            2 => format!("the {} and the {}", titles[0], titles[1]),
-            _ => {
-                let (last, rest) = titles.split_last().unwrap();
-                let parts: Vec<String> = rest.iter().map(|t| format!("the {}", t)).collect();
-                format!("{}, and the {}", parts.join(", "), last)
-            }
-        };
-        lines.push(format!("{} {} {}", name_str, verb, title_str));
+        lines.push(format!("{} is the richest chudlord", discord_name));
+    }
+
+    let stat_defs: [(&str, fn(&crate::player::Player) -> u8); 4] = [
+        ("strongest", |p| p.strength),
+        ("smartest",  |p| p.smarts),
+        ("sneakiest", |p| p.stealth),
+        ("expert",       |p| p.experience),
+    ];
+
+    for (adjective, accessor) in &stat_defs {
+        if let Some(name) = sole_leader(&players, *accessor) {
+            lines.push(format!("{} is the {}", name, adjective));
+        }
+    }
+
+    if lines.is_empty() {
+        return String::new();
     }
 
     format!("```\n----- Chudlerboard -----\n{}\n```", lines.join("\n"))
@@ -239,7 +228,7 @@ pub(crate) async fn update_board_message(
 
     // --- Chudlerboard message ---
     let cb_content = {
-        let cb = format_chudlerboard();
+        let cb = format_chudlerboard(http).await;
         if cb.is_empty() { "*No chuds yet.*".to_string() } else { cb }
     };
     if cb_content != cache.chudlerboard {
@@ -396,7 +385,7 @@ pub async fn execute_tick(
         };
         post_buffered_message(http, channel_id, max_buffer, &content).await;
 
-        let dm_content = engine::format_dm_completion_report(&qr.player_name, &qr.result, &qr.player, &qr.level_up);
+        let dm_content = engine::format_dm_completion_report(&qr.player_name, &qr.result, &qr.player, &qr.level_up, qr.reward);
         let dm_map = serde_json::json!({ "recipient_id": qr.discord_user_id.to_string() });
         match http.create_private_channel(&dm_map).await {
             Ok(dm) => {

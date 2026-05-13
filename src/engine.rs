@@ -202,6 +202,7 @@ pub fn format_dm_completion_report(
     result: &crate::quest_result::QuestResult,
     player: &crate::player::Player,
     level_up: &crate::player::LevelUp,
+    reward: u32,
 ) -> String {
     let mut out = String::new();
     let outcome = if result.passed { "PASSED" } else { "FAILED" };
@@ -229,7 +230,10 @@ pub fn format_dm_completion_report(
             trial.narrative,
         ));
     }
-    out.push_str(&format!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n**{}**\n{}", outcome, result.summary));
+    out.push_str(&format!("──────────\n**{}**\n{}", outcome, result.summary));
+    if result.passed && reward > 0 {
+        out.push_str(&format!("\nYou're ${} richer!", reward));
+    }
 
     if level_up.any() {
         fn fmt_stat(levelled: bool, val: u8) -> String {
