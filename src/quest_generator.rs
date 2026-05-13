@@ -261,6 +261,8 @@ impl QuestGenerator {
                     let msg = e.to_string();
                     let (wait_secs, label) = if msg.contains("503") {
                         (5, "503 model overloaded")
+                    } else if msg.contains("500") {
+                        (5, "500 internal server error")
                     } else if msg.contains("429") {
                         (Self::parse_retry_delay(&msg).unwrap_or(5) + 1, "429 quota exceeded")
                     } else {

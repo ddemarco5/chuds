@@ -3,20 +3,13 @@ use serde::{Deserialize, Serialize};
 use rand_distr::{Distribution, Normal};
 
 use crate::player::Player;
-use crate::quest_generator::{GeneratedQuest, QuestData, TrialStats};
+use crate::quest_generator::TrialStats;
 
 /// Standard deviation for the trial-count normal distribution. Tweak to taste.
 pub const TRIAL_COUNT_STDDEV: f64 = 1.0;
 const MIN_TRIALS: usize = 1;
 /// Probability (0.0-1.0) that any given stat is irrelevant (set to 0) for a trial.
 const STAT_ZERO_CHANCE: f64 = 0.10;
-/// Probability a non-optimal valid stat is dropped from consideration at maximum experience (10).
-/// Higher experience → higher dropout → chud focuses more consistently on the optimal stat.
-const EXP_DROPOUT_MAX: f64 = 0.70;
-/// Probability a non-optimal valid stat is dropped from consideration at minimum experience (1).
-/// Lower experience → lower dropout → more random / exploratory stat selection.
-const EXP_DROPOUT_MIN: f64 = 0.05;
-
 pub fn roll_trial_count(difficulty: u8, rng: &mut impl Rng) -> usize {
     let mean = difficulty as f64 / 2.0;
     let normal = Normal::new(mean, TRIAL_COUNT_STDDEV).expect("valid normal distribution");
@@ -57,7 +50,7 @@ impl StatChoice {
         }
     }
 
-    fn player_stat(&self, player: &Player) -> u8 {
+    pub fn player_stat(&self, player: &Player) -> u8 {
         match self {
             Self::Strength => player.strength,
             Self::Smarts => player.smarts,
@@ -65,7 +58,7 @@ impl StatChoice {
         }
     }
 
-    fn trial_required(&self, stats: &TrialStats) -> u8 {
+    pub fn trial_required(&self, stats: &TrialStats) -> u8 {
         match self {
             Self::Strength => stats.strength,
             Self::Smarts => stats.smarts,
@@ -86,89 +79,6 @@ pub struct TrialOutcome {
 
 pub struct PlayedQuest {
     pub outcomes: Vec<TrialOutcome>,
-}
-
-// P(optimal stat chosen) by experience level.
-// dropout_prob = EXP_DROPOUT_MIN + ((exp - 1) / 9) * (EXP_DROPOUT_MAX - EXP_DROPOUT_MIN)
-// Non-optimal valid stats are each dropped independently with `dropout_prob`; the optimal stat
-// is always kept. The surviving pool is then sampled uniformly at random.
-// Closed forms (d = dropout_prob): 2 valid → (1 + d) / 2,  3 valid → (1 + d + d²) / 3
-//
-// | Exp | dropout | 2 valid stats | 3 valid stats |
-// |-----|---------|---------------|---------------|
-// |   1 |   5.0%  |       52.5%   |       35.1%   |
-// |   2 |  12.2%  |       56.1%   |       37.9%   |
-// |   3 |  19.4%  |       59.7%   |       41.1%   |
-// |   4 |  26.7%  |       63.3%   |       44.6%   |
-// |   5 |  33.9%  |       66.9%   |       48.5%   |
-// |   6 |  41.1%  |       70.6%   |       52.7%   |
-// |   7 |  48.3%  |       74.2%   |       57.2%   |
-// |   8 |  55.6%  |       77.8%   |       62.1%   |
-// |   9 |  62.8%  |       81.4%   |       67.4%   |
-// |  10 |  70.0%  |       85.0%   |       73.0%   |
-fn choose_stat(stats: &TrialStats, player: &Player, rng: &mut impl Rng) -> StatChoice {
-    // Pair each stat choice with the trial's requirement and the player's value for it.
-    let candidates = [
-        (StatChoice::Strength, stats.strength, player.strength),
-        (StatChoice::Smarts,   stats.smarts,   player.smarts),
-        (StatChoice::Stealth,  stats.stealth,  player.stealth),
-    ];
-
-    // Drop any stat the trial doesn't require (requirement = 0), then compute
-    // each remaining stat's margin: positive means the player exceeds the requirement.
-    let valid: Vec<(StatChoice, i16)> = candidates.iter()
-        .filter(|&&(_, req, _)| req > 0)
-        .map(|&(s, req, ps)| (s, ps as i16 - req as i16))
-        .collect();
-
-    // Find the highest margin among valid stats — this is the "optimal" choice.
-    let best_margin = valid.iter().map(|&(_, m)| m).max().unwrap_or(0);
-
-    // Dropout probability scales linearly with experience:
-    // low exp → near EXP_DROPOUT_MIN (mostly random), high exp → near EXP_DROPOUT_MAX (focused).
-    let t = (player.experience - 1) as f64 / 9.0;
-    let dropout_prob = EXP_DROPOUT_MIN + t * (EXP_DROPOUT_MAX - EXP_DROPOUT_MIN);
-
-    // Keep the best-margin stat(s) unconditionally; randomly drop sub-optimal stats
-    // based on dropout_prob — higher experience makes sub-optimal stats less likely to survive.
-    let considered: Vec<StatChoice> = valid.iter()
-        .filter(|&&(_, m)| m == best_margin || !rng.gen_bool(dropout_prob))
-        .map(|&(s, _)| s)
-        .collect();
-
-    // Fall back to all valid stats if dropout eliminated everything, then pick randomly.
-    let pool = if considered.is_empty() { valid.iter().map(|&(s, _)| s).collect() } else { considered };
-    pool[rng.gen_range(0..pool.len())]
-}
-
-pub fn play_quest(quest: &QuestData, generated: &GeneratedQuest, player: &Player) -> anyhow::Result<PlayedQuest> {
-    let mut rng = rand::thread_rng();
-    let mut outcomes = Vec::new();
-
-    for (stats, _situation) in quest.trials.iter().zip(generated.trials.iter()) {
-        let stat_used = choose_stat(stats, player, &mut rng);
-        let player_stat = stat_used.player_stat(player);
-        let required = stat_used.trial_required(stats);
-        let player_roll: u8 = rng.gen_range(1..=player_stat);
-        let trial_roll: u8  = rng.gen_range(1..=required + 1);
-        let passed = player_roll >= trial_roll;
-
-        outcomes.push(TrialOutcome {
-            stats: stats.clone(),
-            stat_used,
-            player_roll,
-            trial_roll,
-            player_stat,
-            required,
-            passed,
-        });
-
-        if !passed {
-            break;
-        }
-    }
-
-    Ok(PlayedQuest { outcomes })
 }
 
 pub fn roll_trials(difficulty: u8) -> Vec<TrialStats> {

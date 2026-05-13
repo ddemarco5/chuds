@@ -7,6 +7,7 @@ mod player;
 mod quest_builder;
 mod quest_generator;
 mod quest_result;
+mod simulation;
 mod storage;
 
 use std::{sync::Arc, time::Duration};

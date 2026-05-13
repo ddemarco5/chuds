@@ -1,20 +1,10 @@
-use crate::board::{Board, BoardQuest, QuestStatus};
+use crate::board::{Board, BoardQuest};
 use crate::player::{create_chud, Player};
-use crate::quest_builder::{roll_trials, play_quest};
+use crate::quest_builder::roll_trials;
+use crate::simulation::play_quest;
 use crate::quest_generator::{QuestData, QuestGenerator, QuestResults, TrialResult};
 use crate::quest_result::QuestResult;
 use crate::storage;
-
-/// Info returned after a quest resolves during a tick.
-pub struct QuestResolved {
-    pub discord_user_id: u64,
-    pub player_name: String,
-    pub quest_title: String,
-    pub summary: String,
-    pub result: QuestResult,
-    pub player: crate::player::Player,
-    pub level_up: crate::player::LevelUp,
-}
 
 /// Info returned after a chud accepts a quest.
 pub struct AssignInfo {
@@ -201,96 +191,6 @@ pub async fn generate_result(
     let result = QuestResult::build(&board_quest.generated, &played, player, trials, summary);
     result.log();
     Ok(result)
-}
-
-// ---------------------------------------------------------------------------
-// Tick
-// ---------------------------------------------------------------------------
-
-/// Advance the board by one tick.
-///
-/// Phase 1 — decrement `ticks_remaining` on every Active quest.
-/// Phase 2 — collect quests whose result is ready AND either their last tick
-///           has fired (`ticks_remaining == 0`) OR the current trial failed
-///           (early resolution). Quests still waiting on the LLM are left on
-///           the board and rechecked next tick.
-/// Phase 3 — for each due quest: remove its result, reload the player from
-///           disk, apply stat changes, save player, push to the return vec.
-///           Failed quests are re-opened on the board.
-///
-/// No LLM calls happen here.
-pub async fn tick(board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
-    let due = board.tick_and_take_due();
-    tracing::info!(count = due.len(), "tick fired");
-
-    let mut resolved = Vec::new();
-
-    for board_quest in due {
-        let discord_user_id = match board_quest.assigned_to() {
-            Some(id) => id,
-            None => {
-                tracing::warn!(quest_id = board_quest.id, "due quest has no assigned player, skipping");
-                continue;
-            }
-        };
-
-        let result = match board.completed_results.remove(&board_quest.id) {
-            Some(r) => r,
-            None => {
-                tracing::warn!(quest_id = board_quest.id, "no completed result found, skipping");
-                continue;
-            }
-        };
-
-        let mut player = match storage::load_player(discord_user_id)? {
-            Some(p) => p,
-            None => {
-                tracing::warn!(discord_user_id, quest_id = board_quest.id, "player not found, skipping quest resolution");
-                continue;
-            }
-        };
-
-        let passed = result.passed;
-        let summary = result.summary.clone();
-        let quest_title = board_quest.generated.quest_title.clone();
-
-        let level_up = player.record_quest(&result);
-        storage::save_player(&player)?;
-
-        tracing::info!(
-            discord_user_id,
-            quest = %quest_title,
-            passed,
-            "quest resolved and player saved"
-        );
-
-        resolved.push(QuestResolved {
-            discord_user_id,
-            player_name: player.name.clone(),
-            quest_title,
-            summary,
-            result,
-            player,
-            level_up,
-        });
-
-        if !passed {
-            board.quests.push(BoardQuest {
-                id: board_quest.id,
-                quest_data: board_quest.quest_data,
-                generated: board_quest.generated,
-                status: QuestStatus::Open,
-            });
-        }
-    }
-
-    storage::save_board(board)?;
-    Ok(resolved)
-}
-
-/// Run a single game tick.
-pub async fn run_tick(board: &mut Board) -> anyhow::Result<Vec<QuestResolved>> {
-    tick(board).await
 }
 
 // ---------------------------------------------------------------------------

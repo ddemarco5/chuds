@@ -5,6 +5,7 @@ use poise::serenity_prelude::{self as serenity, CreateMessage, EditMessage, GetM
 use crate::board::{Board, QuestStatus};
 use crate::engine;
 use crate::quest_generator::QuestGenerator;
+use crate::simulation;
 use crate::storage;
 
 pub struct Data {
@@ -426,7 +427,7 @@ pub async fn execute_tick(
 
     let mut board = board.lock().await;
 
-    let resolved = engine::run_tick(&mut *board).await?;
+    let resolved = simulation::run_tick(&mut *board).await?;
 
     for qr in &resolved {
         tracing::info!(quest = %qr.quest_title, passed = qr.result.passed, player = %qr.player_name, "quest resolved");
