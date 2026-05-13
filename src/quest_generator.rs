@@ -74,14 +74,15 @@ You will receive a quest's context, the adventurer's name and description, and a
 
 Use the adventurer's name and description when referring to them throughout the narrative.
 
-MARGIN SCALE:
-  margin >= 1   : success with varying ease (higher = more effortless)
-  margin = 0    : barely scraped through by luck or desperation
-  margin = -1   : fell just short, a near miss
-  margin <= -2  : clear or disastrous failure
-
 Your task is TWO things:
-1. Rewrite each trial situation as a short narrative sentence or two that incorporates how the adventurer performed. Show the outcome through action and consequence, not by stating pass or fail.
+1. Rewrite each trial situation as a short narrative sentence or two that incorporates how the adventurer performed.
+   Show the outcome through action and consequence, not by stating pass or fail.
+   Use this margin scale to gauge the severity of the narrative.
+   MARGIN SCALE:
+     margin >= 1   : success with varying ease (higher = more effortless, up to 10)
+     margin = 0    : barely scraped through by luck or desperation
+     margin = -1   : fell just short, a near miss
+     margin <= -2  : clear or disastrous failure
 2. Write a short final summary (1-3 sentences) about the overall outcome of the quest. Note it's success or failure. The adventurer fleeing upon failure, or returning from the quest successful.
 
 RULES:

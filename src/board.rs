@@ -41,15 +41,6 @@ pub struct Board {
     /// Discord message ID of the persistent chudlerboard post.
     #[serde(default)]
     pub chudlerboard_message_id: Option<u64>,
-    /// Discord message IDs for each job slot (index == slot position, length ≤ MAX_JOBS).
-    #[serde(default)]
-    pub job_slot_message_ids: Vec<u64>,
-    /// Discord message ID of the persistent divider posted between job slots and buffered messages.
-    #[serde(default)]
-    pub divider_message_id: Option<u64>,
-    /// Discord message IDs to delete at the start of the next tick.
-    #[serde(default)]
-    pub pending_deletes: Vec<u64>,
     /// Completed quest results written by the background worker, keyed by quest id.
     /// Tick applies a result only when ticks_remaining reaches zero AND an entry is present here.
     #[serde(default)]

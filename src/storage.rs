@@ -3,10 +3,12 @@ use std::path::Path;
 use anyhow::Context;
 
 use crate::board::Board;
+use crate::message_cache::MessageCache;
 use crate::player::Player;
 
 const PLAYERS_DIR: &str = "data/players";
 const BOARD_PATH: &str = "data/board.yaml";
+const MESSAGE_CACHE_PATH: &str = "data/message_cache.yaml";
 
 /// Persist a player to `data/players/<discord_user_id>.yaml`.
 pub fn save_player(player: &Player) -> anyhow::Result<()> {
@@ -62,6 +64,22 @@ pub fn delete_player(discord_user_id: u64) -> anyhow::Result<()> {
     }
     std::fs::remove_file(&path)
         .with_context(|| format!("deleting player {}", discord_user_id))
+}
+
+/// Persist the message cache to `data/message_cache.yaml`.
+pub fn save_message_cache(cache: &MessageCache) -> anyhow::Result<()> {
+    std::fs::create_dir_all("data")?;
+    let yaml = serde_yaml::to_string(cache).context("serializing message cache")?;
+    std::fs::write(MESSAGE_CACHE_PATH, yaml).context("writing message cache")
+}
+
+/// Load the message cache, returning an empty cache if no file exists yet.
+pub fn load_message_cache() -> anyhow::Result<MessageCache> {
+    if !Path::new(MESSAGE_CACHE_PATH).exists() {
+        return Ok(MessageCache::default());
+    }
+    let yaml = std::fs::read_to_string(MESSAGE_CACHE_PATH).context("reading message cache")?;
+    serde_yaml::from_str(&yaml).context("parsing message cache")
 }
 
 /// Load the quest board, returning an empty board if no file exists yet.

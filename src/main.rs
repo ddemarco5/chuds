@@ -1,6 +1,7 @@
 mod board;
 mod commands;
 mod engine;
+mod message_cache;
 mod player;
 mod quest_builder;
 mod quest_generator;
@@ -47,6 +48,10 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("MAX_JOBS not set"))?
         .parse()
         .map_err(|_| anyhow::anyhow!("MAX_JOBS must be a positive integer"))?;
+    let max_non_bot_messages: usize = std::env::var("MAX_NON_BOT_MESSAGES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
     let tick_time_s: u64 = std::env::var("TICK_TIME_S")
         .map_err(|_| anyhow::anyhow!("TICK_TIME_S not set"))?
         .parse()
@@ -149,6 +154,8 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?;
                 tracing::info!(guild_id, "slash commands registered");
+                let bot_user_id = ready.user.id.get();
+                commands::cleanup_non_bot_messages(&ctx.http, channel_id, bot_user_id, max_non_bot_messages).await;
                 {
                     let mut b = board.lock().await;
                     commands::update_board_message(&ctx.http, channel_id, &mut b, max_jobs).await?;
@@ -175,6 +182,8 @@ async fn main() -> anyhow::Result<()> {
                             channel_id,
                             max_buffer_messages,
                             max_jobs,
+                            bot_user_id,
+                            max_non_bot_messages,
                         ).await {
                             tracing::error!(err = %e, "background tick failed");
                         }
@@ -185,9 +194,11 @@ async fn main() -> anyhow::Result<()> {
                     generator,
                     board,
                     admin_user_id,
+                    bot_user_id,
                     channel_id,
                     max_buffer_messages,
                     max_jobs,
+                    max_non_bot_messages,
                     generation_queue: generation_tx,
                 })
             })
