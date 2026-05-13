@@ -1,6 +1,6 @@
 use rig::client::CompletionClient;
 use rig::completion::Prompt;
-use rig::providers::gemini;
+use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
 
 const DESCRIPTION_SYSTEM_CONTEXT: &str = r#"You are a fantasy quest writer for a lighthearted RPG. Write in FIRST PERSON point of view.
@@ -11,7 +11,7 @@ You are writing 2 things:
    - A description of what will be accomplished at the end of this quest (narrator voice)
 
 RULES:
-0. DON'T start the description with a command like "Look," or "Listen up,"
+0. DON'T start the description with an introduction.
 1. Write in FIRST PERSON as the person giving the quest
 2. MATCH YOUR VOICE to who you are, use contractions and slang when appropriate. Use vocabulary and speech patterns appropriate to your social class and occupation
 3. Describe your problem and why you need help
@@ -50,13 +50,11 @@ RULES:
 6. Do not rely too heavily on adjectives
 7. Avoid emdash use
 8. Output in YAML format with a 'trials' field containing a list of strings (one per trial, in the same order as the input)
-   Example:
-   trials:
-     - "Rats swarm the grain sacks..."
-     - "Heavy sacks wait to be loaded..."
 9. Do not promise rewards
 
-You will receive quest data and the quest giver's description in YAML format. Match your tone to their description for consistency."#;
+You will receive quest data and the quest giver's description in YAML format. Match your tone to their description for consistency.
+Generate output in yaml following the exact format below
+"#;
 #[derive(Serialize)]
 struct TrialPrompt<'a> {
     quest_description: &'a str,
@@ -94,12 +92,10 @@ RULES:
 6. Avoid emdash use
 7. If events seem to conflict, fudge details to make the narrative flow
 8. Match the tone set by the quest giver's description
-9. Output in YAML format:
-   trials:
-     - "..."
-   summary: "..."
 
-You will receive the quest context and trial outcomes in YAML format."#;
+You will receive the quest context and trial outcomes in YAML format.
+Generate output in yaml following the exact format below
+"#;
 #[derive(Serialize)]
 struct TrialResultPrompt<'a> {
     situation: &'a str,
@@ -118,7 +114,7 @@ struct ResultsPrompt<'a> {
 #[derive(Deserialize)]
 struct ResultsResponse { trials: Vec<String>, summary: String }
 
-type GeminiAgent = rig::agent::Agent<gemini::completion::CompletionModel, ()>;
+type OpenRouterAgent = rig::agent::Agent<openrouter::completion::CompletionModel, ()>;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TrialStats {
@@ -156,39 +152,48 @@ pub struct QuestResults {
 }
 
 pub struct QuestGenerator {
-    description_agent: GeminiAgent,
-    trial_agent: GeminiAgent,
-    results_agent: GeminiAgent,
+    description_agent: OpenRouterAgent,
+    trial_agent: OpenRouterAgent,
+    results_agent: OpenRouterAgent,
 }
 
 impl QuestGenerator {
     pub fn new(api_key: &str) -> anyhow::Result<Self> {
-        let client = gemini::Client::new(api_key)?;
+        let client = openrouter::Client::new(api_key)?;
         let description_agent = client
-            // .agent("gemini-3-flash-preview")
-            .agent("gemini-3.1-flash-lite")
+            // .agent("openrouter/free:arcee-ai")
+            // .agent("openrouter/free:Nous Research")
+            .agent("openrouter/free:")
             .preamble(DESCRIPTION_SYSTEM_CONTEXT)
             .build();
         let trial_agent = client
-            .agent("gemini-3.1-flash-lite")
+            // .agent("openrouter/free:arcee-ai")
+            // .agent("openrouter/free:Nous Research")
+            .agent("openrouter/free")
             .preamble(TRIAL_SYSTEM_CONTEXT)
             .build();
         let results_agent = client
-            .agent("gemini-3.1-flash-lite")
+            // .agent("openrouter/free:arcee-ai")
+            // .agent("openrouter/free:Nous Research")
+            .agent("openrouter/free")
             .preamble(RESULTS_SYSTEM_CONTEXT)
             .build();
         Ok(Self { description_agent, trial_agent, results_agent })
     }
 
-    fn strip_code_fences(s: &str) -> &str {
+    fn sanitize(s: &str) -> String {
         let s = s.trim();
         let inner = s.strip_prefix("```yaml").or_else(|| s.strip_prefix("```")).unwrap_or(s);
-        if inner != s {
+        let stripped = if inner != s {
             if let Some(end) = inner.rfind("```") {
-                return inner[..end].trim();
+                inner[..end].trim()
+            } else {
+                s
             }
-        }
-        s
+        } else {
+            s
+        };
+        stripped.replace('\u{2019}', "'")
     }
 
     fn parse_retry_delay(msg: &str) -> Option<u64> {
@@ -203,12 +208,55 @@ impl QuestGenerator {
         None
     }
 
-    async fn prompt_with_retry(agent: &GeminiAgent, prompt: &str) -> anyhow::Result<String> {
+    async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(agent: &OpenRouterAgent, prompt: &str, expected_trials: Option<usize>) -> anyhow::Result<T> {
+        const MAX_RETRIES: u32 = 5;
+        let mut retries = 0;
+        loop {
+            let raw = Self::prompt_with_retry(agent, prompt).await?;
+            let parsed = serde_yaml::from_str::<serde_yaml::Value>(&raw);
+            match parsed {
+                Err(e) => {
+                    if retries < MAX_RETRIES {
+                        retries += 1;
+                        tracing::warn!(error = %e, retries, MAX_RETRIES, "malformed YAML from LLM, retrying");
+                        continue;
+                    }
+                    return Err(anyhow::anyhow!("LLM returned malformed YAML after {} retries: {}", MAX_RETRIES, e));
+                }
+                Ok(value) => {
+                    if let Some(expected) = expected_trials {
+                        let actual = value.get("trials").and_then(|t| t.as_sequence()).map(|s| s.len());
+                        if actual != Some(expected) {
+                            if retries < MAX_RETRIES {
+                                retries += 1;
+                                tracing::warn!(expected, actual = ?actual, retries, MAX_RETRIES, "wrong trial count from LLM, retrying");
+                                continue;
+                            }
+                            return Err(anyhow::anyhow!("LLM returned wrong trial count after {} retries: expected {}, got {:?}", MAX_RETRIES, expected, actual));
+                        }
+                    }
+                    match serde_yaml::from_value(value) {
+                        Ok(result) => return Ok(result),
+                        Err(e) => {
+                            if retries < MAX_RETRIES {
+                                retries += 1;
+                                tracing::warn!(error = %e, retries, MAX_RETRIES, "unexpected YAML structure from LLM, retrying");
+                                continue;
+                            }
+                            return Err(anyhow::anyhow!("LLM returned unexpected YAML structure after {} retries: {}", MAX_RETRIES, e));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn prompt_with_retry(agent: &OpenRouterAgent, prompt: &str) -> anyhow::Result<String> {
         const MAX_RETRIES: u32 = 3;
         let mut retries = 0;
         loop {
             match agent.prompt(prompt).await {
-                Ok(response) => return Ok(response),
+                Ok(response) => return Ok(Self::sanitize(&response)),
                 Err(e) if retries < MAX_RETRIES => {
                     let msg = e.to_string();
                     let (wait_secs, label) = if msg.contains("503") {
@@ -218,6 +266,7 @@ impl QuestGenerator {
                     } else {
                         return Err(e.into());
                     };
+                    tracing::warn!(msg);
                     retries += 1;
                     tracing::warn!(error = label, wait_secs, retries, MAX_RETRIES, "retryable error, waiting before retry");
                     tokio::time::sleep(tokio::time::Duration::from_secs(wait_secs)).await;
@@ -234,26 +283,28 @@ impl QuestGenerator {
             quest_difficulty: quest.quest_difficulty,
         })?;
         tracing::info!("generating quest description");
-        let desc_resp = Self::prompt_with_retry(&self.description_agent, &desc_yaml).await?;
-        tracing::info!(chars = desc_resp.len(), "quest description received");
-        let desc_response = serde_yaml::from_str::<DescResponse>(Self::strip_code_fences(&desc_resp))?;
+        let desc_response = Self::prompt_parse_retry::<DescResponse>(&self.description_agent, &desc_yaml, None).await?;
+        tracing::info!("quest description received");
         let quest_title = desc_response.quest_title;
         let quest_giver = desc_response.quest_giver;
         let description = desc_response.description;
         let quest_goal = desc_response.goal;
         tracing::info!("quest goal is {quest_goal}");
 
-        let trial_yaml = serde_yaml::to_string(&TrialPrompt {
+        let trial_scaffold = {
+            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - \"<Trial {} Description>\"", i + 1)).collect::<Vec<_>>().join("\n");
+            format!("\ntrials:\n{}", slots)
+        };
+        let trial_yaml = format!("{}{trial_scaffold}", serde_yaml::to_string(&TrialPrompt {
             quest_description: &quest.quest_description,
             quest_goal: &quest_goal,
             quest_difficulty: quest.quest_difficulty,
             trials: &quest.trials,
             quest_giver_description: &description,
-        })?;
+        })?);
         tracing::info!("generating quest trials");
-        let trials_resp = Self::prompt_with_retry(&self.trial_agent, &trial_yaml).await?;
-        tracing::info!(chars = trials_resp.len(), "quest trials received");
-        let trials = serde_yaml::from_str::<TrialsResponse>(Self::strip_code_fences(&trials_resp))?.trials;
+        let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &trial_yaml, Some(quest.trials.len())).await?.trials;
+        tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
 
         Ok(GeneratedQuest { quest_title, quest_giver, description, trials, quest_goal })
     }
@@ -265,17 +316,20 @@ impl QuestGenerator {
         giver: String,
     ) -> anyhow::Result<GeneratedQuest> {
 
-        let trial_yaml = serde_yaml::to_string(&TrialPrompt {
+        let trial_scaffold = {
+            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - \"<Trial {} Description>\"", i + 1)).collect::<Vec<_>>().join("\n");
+            format!("\ntrials:\n{}", slots)
+        };
+        let trial_yaml = format!("{}{trial_scaffold}", serde_yaml::to_string(&TrialPrompt {
             quest_description: &quest.quest_description,
             quest_goal: &quest.quest_goal.as_ref().unwrap(),
             quest_difficulty: quest.quest_difficulty,
             trials: &quest.trials,
             quest_giver_description: &quest.quest_description,
-        })?;
+        })?);
         tracing::info!("generating quest trials (description provided)");
-        let trials_resp = Self::prompt_with_retry(&self.trial_agent, &trial_yaml).await?;
-        tracing::info!(chars = trials_resp.len(), "quest trials received");
-        let trials = serde_yaml::from_str::<TrialsResponse>(Self::strip_code_fences(&trials_resp))?.trials;
+        let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &trial_yaml, Some(quest.trials.len())).await?.trials;
+        tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
 
         Ok(GeneratedQuest {
             quest_title: title,
@@ -295,6 +349,10 @@ impl QuestGenerator {
         chud_description: &str,
     ) -> anyhow::Result<QuestResults> {
 
+        let scaffold = {
+            let slots = outcomes.iter().enumerate().map(|(i, _)| format!("  - \"<Trial {} Narrative>\"", i + 1)).collect::<Vec<_>>().join("\n");
+            format!("\nRespond using exactly this structure:\ntrials:\n{}\nsummary: \"<Quest Summary>\"", slots)
+        };
         let results_yaml = serde_yaml::to_string(&ResultsPrompt {
             quest_description: &quest.quest_description,
             quest_giver: &generated.quest_giver,
@@ -307,10 +365,11 @@ impl QuestGenerator {
                 margin: o.margin,
             }).collect(),
         })?;
+        let results_prompt = format!("{results_yaml}{scaffold}");
+
         tracing::info!("generating quest results");
-        let results_resp = Self::prompt_with_retry(&self.results_agent, &results_yaml).await?;
-        tracing::info!(chars = results_resp.len(), "quest results received");
-        let r = serde_yaml::from_str::<ResultsResponse>(Self::strip_code_fences(&results_resp))?;
+        let r = Self::prompt_parse_retry::<ResultsResponse>(&self.results_agent, &results_prompt, Some(outcomes.len())).await?;
+        tracing::info!(count = r.trials.len(), "quest results received");
 
         Ok(QuestResults { trials: r.trials, summary: r.summary })
     }

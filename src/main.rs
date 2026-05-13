@@ -24,8 +24,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let api_key = std::env::var("GEMINI_API_KEY")
-        .map_err(|_| anyhow::anyhow!("GEMINI_API_KEY not set"))?;
+    let api_key = std::env::var("LLM_API_KEY")
+        .map_err(|_| anyhow::anyhow!("LLM_API_KEY not set"))?;
     let token = std::env::var("DISCORD_TOKEN")
         .map_err(|_| anyhow::anyhow!("DISCORD_TOKEN not set"))?;
     let admin_user_id: u64 = std::env::var("ADMIN_USER_ID")
