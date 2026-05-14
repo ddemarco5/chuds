@@ -255,11 +255,24 @@ pub fn format_dm_completion_report(
     out
 }
 
+fn oxford_join(names: &[&str]) -> String {
+    match names.len() {
+        0 => String::new(),
+        1 => names[0].to_string(),
+        2 => format!("{} and {}", names[0], names[1]),
+        _ => {
+            let (last, rest) = names.split_last().unwrap();
+            format!("{}, and {}", rest.join(", "), last)
+        }
+    }
+}
+
 pub fn format_dm_scouting_report(
     player_name: &str,
     quest_title: &str,
     chance: f64,
     active_player_name: Option<&str>,
+    scouting_player_names: &[&str],
 ) -> String {
     let feeling = if chance == 0.0 {
         "don't want to talk about"
@@ -276,7 +289,12 @@ pub fn format_dm_scouting_report(
     let mut out = format!("**{}** checked \"{}\", they {} it.", player_name, quest_title, feeling);
 
     if let Some(name) = active_player_name {
-        out.push_str(&format!("\nOh, and they also saw **{}** there.", name));
+        out.push_str(&format!("\nOh, and they also saw {} on the job there.", name));
+    }
+
+    if !scouting_player_names.is_empty() {
+        let names_str = oxford_join(scouting_player_names);
+        out.push_str(&format!("\nThey also spotted {} checking it out.", names_str));
     }
 
     out

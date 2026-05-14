@@ -413,11 +413,17 @@ pub async fn execute_tick(
         let active_player_name: Option<String> = sr.active_discord_user_id
             .and_then(|id| storage::load_player(id).ok().flatten())
             .map(|p| p.chud.name);
+        let scouting_player_names: Vec<String> = sr.other_scouting_discord_user_ids.iter()
+            .filter_map(|&id| storage::load_player(id).ok().flatten())
+            .map(|p| p.chud.name)
+            .collect();
+        let scouting_name_refs: Vec<&str> = scouting_player_names.iter().map(String::as_str).collect();
         let dm_content = engine::format_dm_scouting_report(
             &sr.player_name,
             &sr.quest_title,
             sr.chance,
             active_player_name.as_deref(),
+            &scouting_name_refs,
         );
         let dm_map = serde_json::json!({ "recipient_id": sr.discord_user_id.to_string() });
         match http.create_private_channel(&dm_map).await {
@@ -670,7 +676,9 @@ pub async fn take(ctx: Context<'_>, title: String) -> Result<(), Error> {
     }
 
     let quest_id = board
-        .open_quests()
+        .quests
+        .iter()
+        .filter(|q| !q.has_active())
         .find(|q| q.generated.quest_title.to_lowercase() == title.to_lowercase())
         .map(|q| q.id)
         .ok_or_else(|| anyhow::anyhow!("No open quest found with that title"))?;
@@ -713,10 +721,11 @@ pub async fn scout(ctx: Context<'_>, title: String) -> Result<(), Error> {
     let mut board = ctx.data().board.lock().await;
 
     let quest_id = board
-        .open_quests()
+        .quests
+        .iter()
         .find(|q| q.generated.quest_title.to_lowercase() == title.to_lowercase())
         .map(|q| q.id)
-        .ok_or_else(|| anyhow::anyhow!("No open quest found with that title"))?;
+        .ok_or_else(|| anyhow::anyhow!("No quest found with that title"))?;
 
     if !board.scout(quest_id, user_id) {
         ctx.say("that quest is not available to scout").await?;

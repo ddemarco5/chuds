@@ -29,9 +29,6 @@ pub struct BoardQuest {
 }
 
 impl BoardQuest {
-    pub fn is_open(&self) -> bool {
-        self.states.is_empty()
-    }
 
     pub fn has_active(&self) -> bool {
         self.states.iter().any(|s| matches!(s, QuestState::Active { .. }))
@@ -73,15 +70,11 @@ impl Board {
         id
     }
 
-    /// All quests currently available for assignment.
-    pub fn open_quests(&self) -> impl Iterator<Item = &BoardQuest> {
-        self.quests.iter().filter(|q| q.is_open())
-    }
 
     /// Assign an open quest to a player with a tick countdown.
     /// Returns `false` if the quest doesn't exist or is already taken.
     pub fn assign(&mut self, quest_id: u32, discord_user_id: u64, ticks_remaining: u32) -> bool {
-        match self.quests.iter_mut().find(|q| q.id == quest_id && q.is_open()) {
+        match self.quests.iter_mut().find(|q| q.id == quest_id && !q.has_active()) {
             Some(q) => {
                 q.states.push(QuestState::Active { discord_user_id, ticks_remaining });
                 true
@@ -90,10 +83,10 @@ impl Board {
         }
     }
 
-    /// Add a Scouting state for a player on any open quest.
-    /// Returns `false` if the quest doesn't exist or is not open.
+    /// Add a Scouting state for a player on any quest.
+    /// Returns `false` if the quest doesn't exist.
     pub fn scout(&mut self, quest_id: u32, discord_user_id: u64) -> bool {
-        match self.quests.iter_mut().find(|q| q.id == quest_id && q.is_open()) {
+        match self.quests.iter_mut().find(|q| q.id == quest_id) {
             Some(q) => {
                 q.states.push(QuestState::Scouting { discord_user_id });
                 true

@@ -20,6 +20,8 @@ pub struct ScoutResult {
     pub chance: f64,
     /// Discord user ID of the player currently active on this quest, if any.
     pub active_discord_user_id: Option<u64>,
+    /// Discord user IDs of other players who were also scouting this quest this tick.
+    pub other_scouting_discord_user_ids: Vec<u64>,
 }
 
 /// Info returned after a quest resolves during a tick.
@@ -171,7 +173,7 @@ pub async fn tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<
         scouts
     }).collect();
 
-    for (quest_id, discord_user_id) in scouting {
+    for &(quest_id, discord_user_id) in &scouting {
         let player = match storage::load_player(discord_user_id)? {
             Some(p) => p,
             None => {
@@ -190,12 +192,17 @@ pub async fn tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<
         tracing::info!("{} checked job {} and sees a {:.2}% chance of success.", discord_user_id, quest_id, chance*100.0);
         let active_discord_user_id = quest.assigned_to();
         let quest_title = quest.generated.quest_title.clone();
+        let other_scouting_discord_user_ids: Vec<u64> = scouting.iter()
+            .filter(|&&(qid, uid)| qid == quest_id && uid != discord_user_id)
+            .map(|&(_, uid)| uid)
+            .collect();
         scout_results.push(ScoutResult {
             discord_user_id,
             player_name: player.name.clone(),
             quest_title,
             chance,
             active_discord_user_id,
+            other_scouting_discord_user_ids,
         });
     }
 
