@@ -242,7 +242,7 @@ pub async fn tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<
 
         let level_up = player.record_quest(&result);
         if passed {
-            tracing::info!("{} made {}", discord_user_id, board_quest.generated.reward);
+            tracing::info!("{} made ${}", player.name, board_quest.generated.reward);
             player.cash += board_quest.generated.reward;
         }
         storage::save_player(&player)?;
