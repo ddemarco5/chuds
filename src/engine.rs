@@ -13,19 +13,37 @@ pub struct AssignInfo {
 }
 
 /// A pending generation job sent to the background worker.
-///
-/// Cloned from the board immediately after assignment so the command handler
-/// can release its board lock without waiting for the LLM.
-pub struct GenerationJob {
-    pub board_quest: BoardQuest,
-    /// Snapshot of the player at assignment time, used as the input to the
-    /// LLM prompt. Stats are re-loaded from disk when tick applies the result.
-    pub player: Player,
+pub enum GenerationJob {
+    /// Generate the LLM result narrative for an already-assigned quest.
+    ///
+    /// Cloned from the board immediately after assignment so the command handler
+    /// can release its board lock without waiting for the LLM.
+    QuestResult {
+        board_quest: BoardQuest,
+        /// Snapshot of the player at assignment time, used as the input to the
+        /// LLM prompt. Stats are re-loaded from disk when tick applies the result.
+        player: Player,
+    },
+    /// Fully generate a new quest from a description and add it to the board.
+    QuestCreation {
+        quest_data: QuestData,
+    },
 }
 
 // ---------------------------------------------------------------------------
 // Board operations
 // ---------------------------------------------------------------------------
+
+/// Build a [`GenerationJob::QuestCreation`] from a raw description and difficulty.
+pub fn make_quest_creation_job(description: String, difficulty: u8) -> GenerationJob {
+    let quest_data = QuestData {
+        quest_description: description,
+        quest_goal: None,
+        quest_difficulty: difficulty,
+        trials: roll_trials(difficulty),
+    };
+    GenerationJob::QuestCreation { quest_data }
+}
 
 /// Fully generate a quest via the LLM and add it to the board. Returns the new quest id.
 pub async fn generate_job(

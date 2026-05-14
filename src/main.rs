@@ -62,64 +62,6 @@ async fn main() -> anyhow::Result<()> {
     let generator = Arc::new(quest_generator::QuestGenerator::new(&api_key)?);
     let board = Arc::new(tokio::sync::Mutex::new(storage::load_board()?));
 
-    // -----------------------------------------------------------------------
-    // Generation worker
-    //
-    // LLM calls are decoupled from both the tick loop and the Discord command
-    // handler via an unbounded mpsc channel.  The flow is:
-    //
-    //   /take or /assign command
-    //     └─ assigns quest on board (sync, fast)
-    //     └─ sends GenerationJob { board_quest, player } down `generation_tx`
-    //
-    //   worker task (below, single sequential task — one LLM call at a time)
-    //     └─ receives job from `generation_rx`
-    //     └─ calls engine::generate_result  (the slow LLM round-trip)
-    //     └─ acquires board mutex
-    //     └─ writes result into board.completed_results and saves to disk
-    //
-    //   tick (periodic or /tick command)
-    //     └─ decrements ticks_remaining on all active quests
-    //     └─ picks up quests where ticks_remaining == 0 AND result is present
-    //     └─ applies stats, DMs player, posts to channel
-    //
-    // If generate_result errors the quest stays Active with ticks_remaining=0
-    // and is silently skipped every tick until manually removed.
-    // -----------------------------------------------------------------------
-    let (generation_tx, mut generation_rx) = tokio::sync::mpsc::unbounded_channel::<engine::GenerationJob>();
-
-    {
-        let worker_board = Arc::clone(&board);
-        let worker_generator = Arc::clone(&generator);
-        tokio::spawn(async move {
-            // Sequential: we only pick up the next job after the current one
-            // finishes. This avoids hammering the LLM API concurrently and
-            // keeps completed_results writes orderly.
-            while let Some(job) = generation_rx.recv().await {
-                match engine::generate_result(&*worker_generator, &job.board_quest, &job.player).await {
-                    Ok(result) => {
-                        let mut b = worker_board.lock().await;
-                        b.completed_results.insert(job.board_quest.id, result);
-                        if let Err(e) = storage::save_board(&*b) {
-                            tracing::error!(err = %e, "failed to save board after generation");
-                        }
-                        tracing::info!(quest_id = job.board_quest.id, "generation complete, result stored");
-                    }
-                    Err(e) => {
-                        // The quest remains Active on the board. Every subsequent
-                        // tick will skip it (no entry in completed_results) until
-                        // someone manually deletes it with /delete_job.
-                        tracing::error!(
-                            quest_id = job.board_quest.id,
-                            err = %e,
-                            "generate_result failed; quest will remain active and be skipped each tick"
-                        );
-                    }
-                }
-            }
-        });
-    }
-
     tracing::info!(tick_time_s, "chuds bot starting");
 
     let framework = poise::Framework::builder()
@@ -165,6 +107,91 @@ async fn main() -> anyhow::Result<()> {
                 {
                     let mut b = board.lock().await;
                     commands::update_board_message(&ctx.http, channel_id, &mut b, max_jobs).await?;
+                }
+
+                // -----------------------------------------------------------------------
+                // Generation worker
+                //
+                // LLM calls are decoupled from both the tick loop and the Discord command
+                // handler via an unbounded mpsc channel.  The flow is:
+                //
+                //   /generate_job command
+                //     └─ validates board capacity (sync, fast)
+                //     └─ sends GenerationJob::QuestCreation { quest_data } down `generation_tx`
+                //
+                //   /take or /assign command
+                //     └─ assigns quest on board (sync, fast)
+                //     └─ sends GenerationJob::QuestResult { board_quest, player } down `generation_tx`
+                //
+                //   worker task (single sequential task — one LLM call at a time)
+                //     └─ QuestResult: calls engine::generate_result, stores in board.completed_results
+                //     └─ QuestCreation: calls generate_from_description, adds quest to board,
+                //        updates the board message
+                //
+                //   tick (periodic or /tick command)
+                //     └─ decrements ticks_remaining on all active quests
+                //     └─ picks up quests where ticks_remaining == 0 AND result is present
+                //     └─ applies stats, DMs player, posts to channel
+                //
+                // If generate_result errors the quest stays Active with ticks_remaining=0
+                // and is silently skipped every tick until manually removed.
+                // -----------------------------------------------------------------------
+                let (generation_tx, mut generation_rx) = tokio::sync::mpsc::unbounded_channel::<engine::GenerationJob>();
+
+                {
+                    let worker_board = Arc::clone(&board);
+                    let worker_generator = Arc::clone(&generator);
+                    let worker_http = Arc::clone(&ctx.http);
+                    tokio::spawn(async move {
+                        // Sequential: we only pick up the next job after the current one
+                        // finishes. This avoids hammering the LLM API concurrently and
+                        // keeps completed_results writes orderly.
+                        while let Some(job) = generation_rx.recv().await {
+                            match job {
+                                engine::GenerationJob::QuestResult { board_quest, player } => {
+                                    match engine::generate_result(&*worker_generator, &board_quest, &player).await {
+                                        Ok(result) => {
+                                            let mut b = worker_board.lock().await;
+                                            b.completed_results.insert(board_quest.id, result);
+                                            if let Err(e) = storage::save_board(&*b) {
+                                                tracing::error!(err = %e, "failed to save board after generation");
+                                            }
+                                            tracing::info!(quest_id = board_quest.id, "generation complete, result stored");
+                                        }
+                                        Err(e) => {
+                                            // The quest remains Active on the board. Every subsequent
+                                            // tick will skip it (no entry in completed_results) until
+                                            // someone manually deletes it with /delete_job.
+                                            tracing::error!(
+                                                quest_id = board_quest.id,
+                                                err = %e,
+                                                "generate_result failed; quest will remain active and be skipped each tick"
+                                            );
+                                        }
+                                    }
+                                }
+                                engine::GenerationJob::QuestCreation { quest_data } => {
+                                    match worker_generator.generate_from_description(&quest_data).await {
+                                        Ok(generated) => {
+                                            tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest generated");
+                                            let mut b = worker_board.lock().await;
+                                            let id = b.add_quest(quest_data, generated);
+                                            if let Err(e) = storage::save_board(&*b) {
+                                                tracing::error!(err = %e, "failed to save board after quest creation");
+                                            }
+                                            tracing::info!(quest_id = id, "quest added to board");
+                                            if let Err(e) = commands::update_board_message(&worker_http, channel_id, &mut *b, max_jobs).await {
+                                                tracing::warn!(err = %e, "failed to update board message after quest creation");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(err = %e, "quest creation failed");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
                 }
 
                 // Periodic tick task — fires every TICK_TIME_S seconds.

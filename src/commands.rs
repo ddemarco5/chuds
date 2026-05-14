@@ -408,7 +408,7 @@ pub async fn execute_tick(
         } else {
             ""
         };
-        post_buffered_message(http, channel_id, max_buffer, &format!("**{}** saunters back in{}.", first_name, flavour)).await;
+        post_buffered_message(http, channel_id, max_buffer, &format!("{} saunters back in{}.", first_name, flavour)).await;
 
         let active_player_name: Option<String> = sr.active_discord_user_id
             .and_then(|id| storage::load_player(id).ok().flatten())
@@ -521,13 +521,15 @@ pub async fn generate_job(
     if !chudmaster_guard(ctx).await {
         return Ok(());
     }
-    let mut board = ctx.data().board.lock().await;
-    if board.quests.len() >= ctx.data().max_jobs {
-        ctx.say(format!("Board is full ({} jobs max).", ctx.data().max_jobs)).await?;
-        return Ok(());
+    {
+        let board = ctx.data().board.lock().await;
+        if board.quests.len() >= ctx.data().max_jobs {
+            ctx.say(format!("Board is full ({} jobs max).", ctx.data().max_jobs)).await?;
+            return Ok(());
+        }
     }
-    engine::generate_job(&ctx.data().generator, &mut *board, description, difficulty).await?;
-    update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, ctx.data().max_jobs).await?;
+    ctx.data().generation_queue.send(engine::make_quest_creation_job(description, difficulty))
+        .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -647,7 +649,7 @@ pub async fn assign(ctx: Context<'_>, target_user_id: String, quest_id: u32) -> 
 
     // Fire-and-forget: the worker task owns the receiver and will process this
     // job as soon as it finishes any preceding one.
-    ctx.data().generation_queue.send(engine::GenerationJob { board_quest, player: info.player })
+    ctx.data().generation_queue.send(engine::GenerationJob::QuestResult { board_quest, player: info.player })
         .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
 
     storage::save_board(&*board)?;
@@ -695,7 +697,7 @@ pub async fn take(ctx: Context<'_>, title: String) -> Result<(), Error> {
     let first_name = info.player.name.split_whitespace().next().unwrap_or(&info.player.name).to_string();
     let content = format!("**{}** ripped **{}** off the board", first_name, info.quest_title);
 
-    ctx.data().generation_queue.send(engine::GenerationJob { board_quest, player: info.player })
+    ctx.data().generation_queue.send(engine::GenerationJob::QuestResult { board_quest, player: info.player })
         .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
 
     ctx.say("ok").await?;
