@@ -227,7 +227,7 @@ impl QuestGenerator {
     }
 
     async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(agent: &OpenRouterAgent, prompt: &str, expected_trials: Option<usize>) -> anyhow::Result<T> {
-        const MAX_RETRIES: u32 = 10;
+        const MAX_RETRIES: u32 = 5;
         let mut retries = 0;
         loop {
             let raw = Self::prompt_with_retry(agent, prompt).await?;
@@ -270,7 +270,7 @@ impl QuestGenerator {
     }
 
     async fn prompt_with_retry(agent: &OpenRouterAgent, prompt: &str) -> anyhow::Result<String> {
-        const MAX_RETRIES: u32 = 6;
+        const MAX_RETRIES: u32 = 12;
         let mut retries = 0;
         loop {
             match agent.prompt(prompt).await {
