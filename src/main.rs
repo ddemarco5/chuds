@@ -10,7 +10,7 @@ mod quest_result;
 mod simulation;
 mod storage;
 
-use std::{sync::Arc, time::Duration};
+use std::{sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::Duration};
 
 use commands::Data;
 use poise::serenity_prelude as serenity;
@@ -61,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
 
     let generator = Arc::new(quest_generator::QuestGenerator::new(&api_key)?);
     let board = Arc::new(tokio::sync::Mutex::new(storage::load_board()?));
+    let pending_quests = Arc::new(AtomicUsize::new(0));
 
     tracing::info!(tick_time_s, "chuds bot starting");
 
@@ -142,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
                     let worker_board = Arc::clone(&board);
                     let worker_generator = Arc::clone(&generator);
                     let worker_http = Arc::clone(&ctx.http);
+                    let worker_pending = Arc::clone(&pending_quests);
                     tokio::spawn(async move {
                         // Sequential: we only pick up the next job after the current one
                         // finishes. This avoids hammering the LLM API concurrently and
@@ -176,6 +178,7 @@ async fn main() -> anyhow::Result<()> {
                                             tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest generated");
                                             let mut b = worker_board.lock().await;
                                             let id = b.add_quest(quest_data, generated);
+                                            worker_pending.fetch_sub(1, Ordering::SeqCst);
                                             if let Err(e) = storage::save_board(&*b) {
                                                 tracing::error!(err = %e, "failed to save board after quest creation");
                                             }
@@ -185,6 +188,7 @@ async fn main() -> anyhow::Result<()> {
                                             }
                                         }
                                         Err(e) => {
+                                            worker_pending.fetch_sub(1, Ordering::SeqCst);
                                             tracing::error!(err = %e, "quest creation failed");
                                         }
                                     }
@@ -233,6 +237,7 @@ async fn main() -> anyhow::Result<()> {
                     max_jobs,
                     max_non_bot_messages,
                     generation_queue: generation_tx,
+                    pending_quests,
                 })
             })
         })

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 
 use poise::serenity_prelude::{self as serenity, CreateMessage, EditMessage, GetMessages, MessageId};
 
@@ -22,6 +22,11 @@ pub struct Data {
     /// task runs the LLM call in the background and writes the result to
     /// board.completed_results. The tick loop picks it up later.
     pub generation_queue: tokio::sync::mpsc::UnboundedSender<engine::GenerationJob>,
+    /// Number of QuestCreation jobs currently in-flight (queued but not yet
+    /// written to the board). Checked alongside board.quests.len() under the
+    /// board lock in /generate_job to prevent concurrent requests from
+    /// overflowing MAX_JOBS.
+    pub pending_quests: Arc<AtomicUsize>,
 }
 
 pub type Error = anyhow::Error;
@@ -523,10 +528,12 @@ pub async fn generate_job(
     }
     {
         let board = ctx.data().board.lock().await;
-        if board.quests.len() >= ctx.data().max_jobs {
+        let pending = ctx.data().pending_quests.load(Ordering::SeqCst);
+        if board.quests.len() + pending >= ctx.data().max_jobs {
             ctx.say(format!("Board is full ({} jobs max).", ctx.data().max_jobs)).await?;
             return Ok(());
         }
+        ctx.data().pending_quests.fetch_add(1, Ordering::SeqCst);
     }
     ctx.data().generation_queue.send(engine::make_quest_creation_job(description, difficulty))
         .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
