@@ -774,6 +774,10 @@ pub async fn scout(ctx: Context<'_>, title: String) -> Result<(), Error> {
     let channel_id = ctx.data().channel_id;
     let max_buffer = ctx.data().max_buffer_messages;
     let mut board = ctx.data().board.lock().await;
+    if board.is_player_busy(user_id) {
+        ctx.say("your chud is busy").await?;
+        return Ok(());
+    }
 
     let quest_id = board
         .quests
