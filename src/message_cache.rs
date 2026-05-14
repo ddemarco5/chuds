@@ -1,16 +1,27 @@
 use serde::{Deserialize, Serialize};
 
+/// State for a single persistent job-slot Discord message.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct JobSlot {
+    /// Discord message ID for this slot's persistent post (None until first posted).
+    pub message_id: Option<u64>,
+    /// Last content string sent to this slot's Discord message.
+    #[serde(default)]
+    pub content: String,
+    /// The quest ID currently shown in this slot (None = empty / "Nothing posted here").
+    pub job_id: Option<u32>,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MessageCache {
     /// Last content string sent to the chudlerboard Discord message.
     #[serde(default)]
     pub chudlerboard: String,
-    /// Last content string sent to each job slot Discord message (indexed by slot).
+    /// Persistent job-slot state: one entry per slot, length ≤ MAX_JOBS.
+    /// Each slot tracks its Discord message ID, last-sent content, and the
+    /// quest ID currently assigned to it (None = empty).
     #[serde(default)]
-    pub job_slots: Vec<String>,
-    /// Discord message IDs for each job slot (index == slot position, length ≤ MAX_JOBS).
-    #[serde(default)]
-    pub job_slot_message_ids: Vec<u64>,
+    pub slots: Vec<JobSlot>,
     /// Discord message ID of the persistent divider posted between job slots and buffered messages.
     #[serde(default)]
     pub divider_message_id: Option<u64>,

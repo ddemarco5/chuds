@@ -2,7 +2,8 @@ use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 
 use poise::serenity_prelude::{self as serenity, CreateMessage, EditMessage, GetMessages, MessageId};
 
-use crate::board::Board;
+use crate::board::{Board, BoardQuest};
+use crate::message_cache::JobSlot;
 use crate::engine;
 use crate::quest_generator::QuestGenerator;
 use crate::simulation;
@@ -105,8 +106,8 @@ pub async fn cleanup_non_bot_messages(
 // Board message helpers
 // ---------------------------------------------------------------------------
 
-fn format_job_slot(board: &Board, index: usize) -> String {
-    match board.quests.get(index) {
+fn format_job_slot(quest: Option<&BoardQuest>) -> String {
+    match quest {
         Some(q) => {
             let title = &q.generated.quest_title;
             let giver = &q.generated.quest_giver;
@@ -273,41 +274,66 @@ pub(crate) async fn update_board_message(
     }
 
     // --- Job slot messages ---
-    for i in 0..max_jobs {
-        let slot_content = format_job_slot(board, i);
-        let cached_matches = cache.job_slots.get(i).map_or(false, |c| *c == slot_content);
-        if cached_matches {
+    // Grow the slot list to max_jobs if needed (new slots start empty).
+    while cache.slots.len() < max_jobs {
+        cache.slots.push(JobSlot::default());
+        cache_dirty = true;
+    }
+
+    // Step 1: Clear slots whose quest is no longer on the board.
+    for slot in &mut cache.slots {
+        if let Some(jid) = slot.job_id {
+            if !board.quests.iter().any(|q| q.id == jid) {
+                slot.job_id = None;
+                cache_dirty = true;
+            }
+        }
+    }
+
+    // Step 2: Assign board quests that don't yet have a slot to the first empty slot.
+    for quest in &board.quests {
+        let already_slotted = cache.slots.iter().any(|s| s.job_id == Some(quest.id));
+        if !already_slotted {
+            if let Some(slot) = cache.slots.iter_mut().find(|s| s.job_id.is_none()) {
+                slot.job_id = Some(quest.id);
+                cache_dirty = true;
+            }
+        }
+    }
+
+    // Step 3: Edit or post each slot's Discord message when content has changed.
+    for (i, slot) in cache.slots.iter_mut().enumerate() {
+        let quest = slot.job_id.and_then(|jid| board.quests.iter().find(|q| q.id == jid));
+        let expected = format_job_slot(quest);
+        if expected == slot.content && slot.message_id.is_some() {
             continue;
         }
-        if let Some(&msg_id) = cache.job_slot_message_ids.get(i) {
+        if let Some(msg_id) = slot.message_id {
             let ok = http
-                .edit_message(ch, MessageId::new(msg_id), &EditMessage::new().content(&slot_content), vec![])
+                .edit_message(ch, MessageId::new(msg_id), &EditMessage::new().content(&expected), vec![])
                 .await
                 .is_ok();
             if !ok {
                 tracing::warn!(msg_id, slot = i, "failed to edit job slot message, posting new one");
-                match http.send_message(ch, vec![], &CreateMessage::new().content(&slot_content)).await {
+                match http.send_message(ch, vec![], &CreateMessage::new().content(&expected)).await {
                     Ok(msg) => {
-                        cache.job_slot_message_ids[i] = msg.id.get();
-                        if cache.job_slots.len() <= i { cache.job_slots.resize(i + 1, String::new()); }
-                        cache.job_slots[i] = slot_content;
+                        slot.message_id = Some(msg.id.get());
+                        slot.content = expected;
                         cache_dirty = true;
                     }
-                    Err(e) => tracing::warn!(err = %e, slot = i, "failed to post job slot message"),
+                    Err(e) => tracing::warn!(err = %e, slot = i, "failed to post replacement job slot message"),
                 }
             } else {
-                if cache.job_slots.len() <= i { cache.job_slots.resize(i + 1, String::new()); }
-                cache.job_slots[i] = slot_content;
+                slot.content = expected;
                 cache_dirty = true;
                 tracing::debug!(msg_id, slot = i, "job slot message edited");
             }
         } else {
-            match http.send_message(ch, vec![], &CreateMessage::new().content(&slot_content)).await {
+            match http.send_message(ch, vec![], &CreateMessage::new().content(&expected)).await {
                 Ok(msg) => {
                     tracing::info!(msg_id = msg.id.get(), slot = i, "job slot message posted");
-                    cache.job_slot_message_ids.push(msg.id.get());
-                    if cache.job_slots.len() <= i { cache.job_slots.resize(i + 1, String::new()); }
-                    cache.job_slots[i] = slot_content;
+                    slot.message_id = Some(msg.id.get());
+                    slot.content = expected;
                     cache_dirty = true;
                 }
                 Err(e) => tracing::warn!(err = %e, slot = i, "failed to post job slot message"),
