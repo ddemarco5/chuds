@@ -45,27 +45,6 @@ pub fn make_quest_creation_job(description: String, difficulty: u8) -> Generatio
     GenerationJob::QuestCreation { quest_data }
 }
 
-/// Fully generate a quest via the LLM and add it to the board. Returns the new quest id.
-pub async fn generate_job(
-    generator: &QuestGenerator,
-    board: &mut Board,
-    description: String,
-    difficulty: u8,
-) -> anyhow::Result<u32> {
-    let quest_data = QuestData{
-        quest_description: description,
-        quest_goal: None,
-        quest_difficulty: difficulty,
-        trials: roll_trials(difficulty)
-    };
-    let generated = generator.generate_from_description(&quest_data).await?;
-    tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest generated");
-    let id = board.add_quest(quest_data, generated);
-    storage::save_board(board)?;
-    tracing::info!(id, "quest added to board");
-    Ok(id)
-}
-
 /// Add a user-authored quest; only trial situations are LLM-generated. Returns the new quest id.
 pub async fn write_job(
     generator: &QuestGenerator,
