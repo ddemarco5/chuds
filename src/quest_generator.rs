@@ -1,6 +1,6 @@
 use rand_distr::{Distribution, Normal};
 use rig::client::CompletionClient;
-use rig::completion::Prompt;
+use rig::completion::{CompletionError, Prompt, PromptError};
 use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
 
@@ -284,6 +284,8 @@ impl QuestGenerator {
                         (15, "500 internal server error")
                     } else if msg.contains("429") {
                         (Self::parse_retry_delay(&msg).unwrap_or(5) * 2, "429 quota exceeded")
+                    } else if matches!(e, PromptError::CompletionError(CompletionError::ResponseError(_))) {
+                        (5, "malformed OpenRouter response")
                     } else {
                         return Err(e.into());
                     };
