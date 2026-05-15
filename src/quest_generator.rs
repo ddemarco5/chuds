@@ -205,7 +205,8 @@ impl QuestGenerator {
         } else {
             s
         };
-        stripped.replace('\u{2019}', "'")
+        // TODO: use a crate like text_sanitizer to clean this more comprehensively https://docs.rs/text-sanitizer/latest/text_sanitizer/
+        stripped.replace('\u{2019}', "'").replace('\u{2011}', "-")
     }
 
     fn parse_retry_delay(msg: &str) -> Option<u64> {

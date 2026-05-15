@@ -189,7 +189,7 @@ pub async fn tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<
             }
         };
         let chance = check_job(&quest.quest_data, &quest.generated, &player, 20)?;
-        tracing::info!("{} checked job {} and sees a {:.2}% chance of success.", discord_user_id, quest_id, chance*100.0);
+        tracing::info!("{} checked job {} and sees a {:.2}% chance of success.", player.name, quest_id, chance*100.0);
         let active_discord_user_id = quest.assigned_to();
         let quest_title = quest.generated.quest_title.clone();
         let other_scouting_discord_user_ids: Vec<u64> = scouting.iter()

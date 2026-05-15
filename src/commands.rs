@@ -1,6 +1,6 @@
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 
-use poise::serenity_prelude::{self as serenity, CreateMessage, EditMessage, GetMessages, MessageId};
+use poise::serenity_prelude::{self as serenity, CreateAttachment, CreateMessage, EditMessage, GetMessages, MessageId};
 
 use crate::board::{Board, BoardQuest};
 use crate::message_cache::JobSlot;
@@ -440,7 +440,16 @@ pub async fn execute_tick(
         let dm_map = serde_json::json!({ "recipient_id": qr.discord_user_id.to_string() });
         match http.create_private_channel(&dm_map).await {
             Ok(dm) => {
-                if let Err(e) = http.send_message(dm.id, vec![], &CreateMessage::new().content(&dm_content)).await {
+                const DM_LIMIT: usize = 2000;
+                let (attachments, msg) = if dm_content.len() > DM_LIMIT {
+                    let attachment = CreateAttachment::bytes(dm_content.into_bytes(), "job_report.txt");
+                    let msg = CreateMessage::new()
+                        .content(format!("{}'s attempt at {} was too epic for discords character limit", qr.player_name, qr.quest_title));
+                    (vec![attachment], msg)
+                } else {
+                    (vec![], CreateMessage::new().content(dm_content))
+                };
+                if let Err(e) = http.send_message(dm.id, attachments, &msg).await {
                     tracing::warn!(discord_user_id = qr.discord_user_id, err = %e, "failed to DM quest report");
                 }
             }
