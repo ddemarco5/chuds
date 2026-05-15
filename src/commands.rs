@@ -820,7 +820,11 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     match player {
         None => ctx.say("You don't have a chud.").await?,
         Some(p) => {
-            let msg = format!("**{}**\n{}\n{}", p.name, p.description, p.format_stats());
+            let msg = format!("**{}**\n{}\n{}\n\nYou've got ${} worth of loose change.",
+                p.name, p.description,
+                p.format_stats(),
+                p.cash,
+            );
             ctx.say(msg).await?
         }
     };
