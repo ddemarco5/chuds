@@ -579,6 +579,7 @@ pub async fn generate_job(
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     if !chudmaster_guard(ctx).await {
+        tracing::info!("Non-CM tried to submit a generate job");
         return Ok(());
     }
     {
@@ -590,6 +591,7 @@ pub async fn generate_job(
         }
         ctx.data().pending_quests.fetch_add(1, Ordering::SeqCst);
     }
+    tracing::info!("{} submitted generate_job with description '{}'", ctx.author().name, description);
     ctx.data().generation_queue.send(engine::make_quest_creation_job(description, difficulty))
         .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
     ctx.say("ok").await?;
@@ -608,6 +610,7 @@ pub async fn write_job(
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     if !chudmaster_guard(ctx).await {
+        tracing::info!("Non-CM tried to submit a write job");
         return Ok(());
     }
     let mut board = ctx.data().board.lock().await;
@@ -615,6 +618,7 @@ pub async fn write_job(
         ctx.say(format!("Board is full ({} jobs max).", ctx.data().max_jobs)).await?;
         return Ok(());
     }
+    tracing::info!("{} submitted write_job with description '{}'", ctx.author().name, description);
     engine::write_job(&ctx.data().generator, &mut *board, title, giver, description, goal, difficulty).await?;
     update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, ctx.data().max_jobs).await?;
     ctx.say("ok").await?;

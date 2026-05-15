@@ -172,6 +172,7 @@ pub async fn generate_result(
             situation: situation.clone(),
             stat_used: o.stat_used.label().to_string(),
             margin: o.player_roll as i16 - o.trial_roll as i16,
+            passed: o.passed,
         })
         .collect();
 

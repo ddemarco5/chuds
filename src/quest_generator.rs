@@ -4,28 +4,25 @@ use rig::completion::{CompletionError, Prompt, PromptError};
 use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
 
-const DESCRIPTION_SYSTEM_CONTEXT: &str = r#"You are a fantasy quest writer for a lighthearted RPG. Write in FIRST PERSON point of view.
+const DESCRIPTION_SYSTEM_CONTEXT: &str = r#"You are a character in a lighthearted and sometimes crude adult RPG that is writing a job listing to be posted on the town's job board.
+You will pretend the be the person described in the prompts that follow.
 
-You are an NPC quest giver describing your predicament to an adventurer.
 You are writing 2 things:
    - A note that will be posted to a town job board (first person)
    - A description of what will be accomplished at the end of this quest (narrator voice)
 
 RULES:
-0. DON'T start the description with an introduction.
-1. Write in FIRST PERSON as the person giving the quest
-2. MATCH YOUR VOICE to who you are, use contractions and slang when appropriate. Use vocabulary and speech patterns appropriate to your social class and occupation
-3. Describe your problem and why you need help
-4. Keep between 20 and 80 words
-5. Do not rely too heavily on adjectives
-6. Avoid emdash use
-7. Make sure each response is varied
-10. Do not include quest names, difficulty levels, or promise rewards
-11. Create and include your character name in the 'quest_giver' field - use a fitting name for your race/class/occupation if not specified. Don't pick just pick "Barnaby" each time.
-12. Create a 'quest_title' field: 1-4 words that capture the writer's request (e.g. "Help with Missing Shipment", "Rats in the Cellar", "A Beggar in Need")
-13. Output in YAML format with 'quest_title', 'quest_giver' (your name), 'description' (your letter), and 'goal' (the quest goal) fields
+- Don't introduce yourself or start off with a hook ("Listen up!", "Hey!", "I ain't gonna sugar coat it,", etc) this is a job posting.
+- MATCH YOUR VOICE to the character writing the job. Be creative with vocabulary and slang.
+- Describe your problem and why you need help
+- Keep between 20 and 100 words
+- Avoid emdash use
+- Do not include quest names, difficulty levels, or promise rewards
+- Create and include your character name in the 'quest_giver' field - use a fitting name for your race/class/occupation if not specified.
+- Create a 'quest_title' field: 1-4 words that will title the job posting paper to be posted on a wall.
+- Output in YAML format with 'quest_title', 'quest_giver' (your name), 'description' (your letter), and 'goal' (the quest goal) fields
 
-You will receive quest_description and quest_difficulty in YAML format. Infer who you are from the quest description and speak in their voice."#;
+You will receive quest_description and quest_difficulty in YAML format."#;
 #[derive(Serialize)]
 struct DescPrompt<'a> {
     quest_description: &'a str,
@@ -34,27 +31,23 @@ struct DescPrompt<'a> {
 #[derive(Deserialize)]
 struct DescResponse { quest_title: String, quest_giver: String, description: String, goal: String }
 
-const TRIAL_SYSTEM_CONTEXT: &str = r#"You are a fantasy quest narrator for a lighthearted RPG. Write in THIRD PERSON/OBJECTIVE narrator point of view.
-
-Given quest data, a quest-giver's description, a quest goal, and a list of trials (each defined ONLY by stat requirements), invent the situation the adventurer faces in each trial.
-The trials should follow a natural logical progression towards the quest's goal, taking into account the stat requirements of each trial (high number means harder)
+const TRIAL_SYSTEM_CONTEXT: &str = r#"You are a fantasy quest generator for a lighthearted and sometimes crude adult RPG. Write in THIRD PERSON/OBJECTIVE narrator point of view.
 
 RULES:
-1. Write in THIRD PERSON as an objective narrator describing scenes
-2. INVENT each trial's situation so it fits the given stat requirements. The stat values represent DIFFICULTY (the required roll to succeed) - higher numbers mean a harder challenge requiring that stat, while 0 means that stat is irrelevant and should not be hinted at.
-   10 is maximum or legendary difficulty
-3. Describe the SITUATION the adventurer faces, do NOT tell them what to do, do NOT give instructions for success
+- Write in THIRD PERSON as an objective narrator describing scenes
+- use 'quest_difficulty' (value of 1-10) to set the overall tone of danger
+- the yaml provided has a list of 'trials' that contain strength,smarts, and stealth numbers. These are the difficulty (1-10) of each trial you will generate.
+- Describe the SITUATION the adventurer faces, do NOT say what needs to be done. DO describe what needs to be overcome.
    - BAD: "Scour the woods for clues" (tells player to search)
    - GOOD: "The forest floor is scattered with discarded merchant trinkets" (describes the scene)
-4. The trials are given in order. Make them follow a logical progression: earlier trials should naturally set up later ones (e.g., discovery before confrontation, setup before payoff). Treat the final trial as the most consequential moment.
-5. Keep each trial under 40 words
-6. Do not rely too heavily on adjectives
-7. Avoid emdash use
-8. Output in YAML format with a 'trials' field containing a list of strings (one per trial, in the same order as the input)
-9. Do not promise rewards
+- The trials are given in order. Make them follow a logical progression: earlier trials should naturally set up later ones (e.g., discovery before confrontation, setup before payoff). Treat the final trial as the most consequential moment.
+- Keep each trial under 80 words
+- Avoid emdash use. 
+- Do not promise rewards
 
-You will receive quest data and the quest giver's description in YAML format. Match your tone to their description for consistency.
-Generate output in yaml following the exact format below
+You will receive quest data and the quest description in YAML format. Keep the tone of the trials consistent with the description.
+If there is only one trial, ensure it encapsulates the whole adventure.
+Respond with the exact yaml template below, text surrounded with * is for you to replace
 "#;
 #[derive(Serialize)]
 struct TrialPrompt<'a> {
@@ -67,49 +60,58 @@ struct TrialPrompt<'a> {
 #[derive(Deserialize)]
 struct TrialsResponse { trials: Vec<String> }
 
-const RESULTS_SYSTEM_CONTEXT: &str = r#"You are a narrator for a lighthearted fantasy RPG.
+const RESULTS_SYSTEM_CONTEXT: &str = r#"The setting is a lighthearted and sometimes crude adult fantasy RPG.
 
-You will receive a quest's context, the adventurer's name and description, and an ordered list of played trials. Each trial has the situation the adventurer faced, the ability they relied on, and a margin score.
+You will be narrating an adventurer's attempt to overcome this job and its trials. 
 
-Use the adventurer's name and description when referring to them throughout the narrative.
+You will receive a job's context, the adventurer's name and description, and an ordered list of trials.
+Rolls have already been made to determine the success rate, these are stored in 'margin'
+Each trial has the situation the adventurer faced, the ability they relied on, and a margin score.
 
 Your task is TWO things:
 1. Rewrite each trial situation as a short narrative sentence or two that incorporates how the adventurer performed.
+   Use their description to narrate interesting attempts at each trial.
    Show the outcome through action and consequence, not by stating pass or fail.
+   Use the 'passed: <bool>' value in the template to detemine if the trail was passed or failed.
+   Use 'stat_used' to describe how the adventurer attempted this trial
    Use this margin scale to gauge the severity of the narrative.
    MARGIN SCALE:
      margin >= 1   : success with varying ease (higher = more effortless, up to 10)
      margin = 0    : barely scraped through by luck or desperation
      margin = -1   : fell just short, a near miss
      margin <= -2  : clear or disastrous failure
-2. Write a short final summary (1-3 sentences) about the overall outcome of the quest. Note it's success or failure. The adventurer fleeing upon failure, or returning from the quest successful.
+
+2. Write a short final summary (1-3 sentences) about the overall outcome of the job and the adventurer's return
+   If ANY trial has passed: false, the entire job is FAILED; if not, the job has resulted in success.
+   Ensure the summary generally follows (a passed or failed version) of the goal provided in 'quest goal:'
 
 RULES:
-1. Write in THIRD PERSON
-2. Never name the ability directly — show it through the character's actions
-3. Avoid excess adjective use and cliche description. Use effective words, but less is more.
-4. Keep each rewritten trial under 50 words
-5. Keep the final summary under 30 words
-6. Avoid emdash use
-7. If events seem to conflict, fudge details to make the narrative flow
-8. Match the tone set by the quest giver's description
+- Write in THIRD PERSON
+- Never name the ability directly — show it through the character's actions
+- Avoid excess adjective use and cliche description. Use effective words, but less is more.
+- Keep each rewritten trial under 80 words
+- Keep the final summary under 30 words
+- Avoid emdash use
+- Match the tone set by the job giver's description
 
-You will receive the quest context and trial outcomes in YAML format.
-Generate output in yaml following the exact format below
+You will receive the job context and trial roll outcomes in YAML format.
+Text surrounded with * in the template is for you to replace
 "#;
 #[derive(Serialize)]
 struct TrialResultPrompt<'a> {
     situation: &'a str,
     stat_used: &'a str,
     margin: i16,
+    passed: bool,
 }
 #[derive(Serialize)]
 struct ResultsPrompt<'a> {
+    adventurer_name: &'a str,
+    adventurer_description: &'a str,
     quest_description: &'a str,
     quest_giver: &'a str,
     quest_giver_description: &'a str,
-    adventurer_name: &'a str,
-    adventurer_description: &'a str,
+    quest_goal: &'a str,
     trials: Vec<TrialResultPrompt<'a>>,
 }
 #[derive(Deserialize)]
@@ -156,6 +158,7 @@ pub struct TrialResult {
     pub situation: String,
     pub stat_used: String,
     pub margin: i16,
+    pub passed: bool,
 }
 
 pub struct QuestResults {
@@ -231,7 +234,9 @@ impl QuestGenerator {
         const MAX_RETRIES: u32 = 5;
         let mut retries = 0;
         loop {
+            // tracing::info!("PROMPT:\n{}", prompt);
             let raw = Self::prompt_with_retry(agent, prompt).await?;
+            // tracing::info!("RESPONSE:\n{}", raw);
             let parsed = serde_yaml::from_str::<serde_yaml::Value>(&raw);
             match parsed {
                 Err(e) => {
@@ -315,15 +320,15 @@ impl QuestGenerator {
         tracing::info!("quest goal is {quest_goal}");
 
         let trial_scaffold = {
-            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - \"<Trial {} Description>\"", i + 1)).collect::<Vec<_>>().join("\n");
-            format!("\ntrials:\n{}", slots)
+            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - *Trial {} Description Here*", i + 1)).collect::<Vec<_>>().join("\n");
+            format!("\nThe response should only contain a yaml of this structure:\n```\ntrials:\n{}\n```", slots)
         };
         let trial_yaml = format!("{}{trial_scaffold}", serde_yaml::to_string(&TrialPrompt {
             quest_description: &quest.quest_description,
             quest_goal: &quest_goal,
             quest_difficulty: quest.quest_difficulty,
-            trials: &quest.trials,
             quest_giver_description: &description,
+            trials: &quest.trials,      
         })?);
         tracing::info!("generating quest trials");
         let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &trial_yaml, Some(quest.trials.len())).await?.trials;
@@ -341,15 +346,15 @@ impl QuestGenerator {
     ) -> anyhow::Result<GeneratedQuest> {
 
         let trial_scaffold = {
-            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - \"<Trial {} Description>\"", i + 1)).collect::<Vec<_>>().join("\n");
-            format!("\ntrials:\n{}", slots)
+            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - *Trial {} Description Here*", i + 1)).collect::<Vec<_>>().join("\n");
+            format!("\nThe response should only contain a yaml of this structure:\n```\ntrials:\n{}\n```", slots)
         };
         let trial_yaml = format!("{}{trial_scaffold}", serde_yaml::to_string(&TrialPrompt {
             quest_description: &quest.quest_description,
             quest_goal: &quest.quest_goal.as_ref().unwrap(),
             quest_difficulty: quest.quest_difficulty,
-            trials: &quest.trials,
             quest_giver_description: &quest.quest_description,
+            trials: &quest.trials,
         })?);
         tracing::info!("generating quest trials (description provided)");
         let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &trial_yaml, Some(quest.trials.len())).await?.trials;
@@ -389,19 +394,21 @@ impl QuestGenerator {
     ) -> anyhow::Result<QuestResults> {
 
         let scaffold = {
-            let slots = outcomes.iter().enumerate().map(|(i, _)| format!("  - \"<Trial {} Narrative>\"", i + 1)).collect::<Vec<_>>().join("\n");
-            format!("\nRespond using exactly this structure:\ntrials:\n{}\nsummary: \"<Quest Summary>\"", slots)
+            let slots = outcomes.iter().enumerate().map(|(i, _)| format!("  - *Trial {} Narrative Here*", i + 1)).collect::<Vec<_>>().join("\n");
+            format!("\nThe response should only contain a yaml of this structure:\n```\ntrials:\n{}\nsummary: *Quest Summary Here*\n```", slots)
         };
         let results_yaml = serde_yaml::to_string(&ResultsPrompt {
+            adventurer_name: chud_name,
+            adventurer_description: chud_description,
             quest_description: &quest.quest_description,
             quest_giver: &generated.quest_giver,
             quest_giver_description: &generated.description,
-            adventurer_name: chud_name,
-            adventurer_description: chud_description,
+            quest_goal: &generated.quest_goal,
             trials: outcomes.iter().map(|o| TrialResultPrompt {
                 situation: &o.situation,
                 stat_used: &o.stat_used,
                 margin: o.margin,
+                passed: o.passed,
             }).collect(),
         })?;
         let results_prompt = format!("{results_yaml}{scaffold}");
