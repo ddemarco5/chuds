@@ -114,9 +114,9 @@ fn format_job_slot(quest: Option<&BoardQuest>) -> String {
             let desc = &q.generated.description;
             let reward = q.generated.reward;
             if q.has_active() {
-                format!("~~**{}** - *{}* | ${}~~\n~~{}~~", title, giver, reward, desc)
+                format!("~~**{}** - *{}* | ${}~~\n~~{}~~\n─────────────────", title, giver, reward, desc)
             } else {
-                format!("**{}** - *{}* | ${}\n{}", title, giver, reward, desc)
+                format!("**{}** - *{}* | ${}\n{}\n─────────────────", title, giver, reward, desc)
             }
         }
         None => "*Nothing posted here*".to_string(),
@@ -270,6 +270,34 @@ pub(crate) async fn update_board_message(
                 }
                 Err(e) => tracing::warn!(err = %e, "failed to post chudlerboard message"),
             }
+        }
+    }
+
+    // --- Job board header message ---
+    let filled = board.quests.len();
+    let header_content = format!("\u{200B}\n\u{200B}\t\u{200B}\t**CHUD GUILD JOB BOARD** *{}/{} posted*\n\u{200B}", filled, max_jobs);
+    if cache.header_message_id.is_none() {
+        match http.send_message(ch, vec![], &CreateMessage::new().content(&header_content)).await {
+            Ok(msg) => {
+                tracing::info!(msg_id = msg.id.get(), "job board header message posted");
+                cache.header_message_id = Some(msg.id.get());
+                cache.job_board_header = header_content;
+                cache_dirty = true;
+            }
+            Err(e) => tracing::warn!(err = %e, "failed to post job board header message"),
+        }
+    } else if header_content != cache.job_board_header {
+        let msg_id = cache.header_message_id.unwrap();
+        let ok = http
+            .edit_message(ch, MessageId::new(msg_id), &EditMessage::new().content(&header_content), vec![])
+            .await
+            .is_ok();
+        if ok {
+            cache.job_board_header = header_content;
+            cache_dirty = true;
+            tracing::debug!(msg_id, "job board header message edited");
+        } else {
+            tracing::warn!(msg_id, "failed to edit job board header message");
         }
     }
 

@@ -1,24 +1,28 @@
 use rand_distr::{Distribution, Normal};
 use rig::client::CompletionClient;
 use rig::completion::{CompletionError, Prompt, PromptError};
+use rig::completion::message::Message;
+use rig::memory::{ConversationMemory, InMemoryConversationMemory};
 use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
 
-const DESCRIPTION_SYSTEM_CONTEXT: &str = r#"You are a character in a lighthearted and sometimes crude adult RPG that is writing a job listing to be posted on the town's job board.
-You will pretend the be the person described in the prompts that follow.
+const WORLD_BUILDING_CONTEXT: &str = "You are operating in a fantasy world that is lighthearted, full of satire, and often crude. Adventurers are known as 'Chuds' and are often exceptionally bizarre";
+
+const DESCRIPTION_SYSTEM_CONTEXT: &str = r#"You will be the be the person described in the prompts that follow writing a job for the town job board.
 
 You are writing 2 things:
    - A note that will be posted to a town job board (first person)
    - A description of what will be accomplished at the end of this quest (narrator voice)
 
 RULES:
+- Ensure use of recurring characters even if specified by only first name
+- Keep recurring character stories consistent
 - Don't introduce yourself or start off with a hook ("Listen up!", "Hey!", "I ain't gonna sugar coat it,", etc) this is a job posting.
-- MATCH YOUR VOICE to the character writing the job. Be creative with vocabulary and slang.
 - Describe your problem and why you need help
 - Keep between 20 and 100 words
 - Avoid emdash use
 - Do not include quest names, difficulty levels, or promise rewards
-- Create and include your character name in the 'quest_giver' field - use a fitting name for your race/class/occupation if not specified.
+- Include your character name in the 'quest_giver' field - Create one if not provided. Use a first and last name
 - Create a 'quest_title' field: 1-4 words that will title the job posting paper to be posted on a wall.
 - Output in YAML format with 'quest_title', 'quest_giver' (your name), 'description' (your letter), and 'goal' (the quest goal) fields
 
@@ -31,7 +35,7 @@ struct DescPrompt<'a> {
 #[derive(Deserialize)]
 struct DescResponse { quest_title: String, quest_giver: String, description: String, goal: String }
 
-const TRIAL_SYSTEM_CONTEXT: &str = r#"You are a fantasy quest generator for a lighthearted and sometimes crude adult RPG. Write in THIRD PERSON/OBJECTIVE narrator point of view.
+const TRIAL_SYSTEM_CONTEXT: &str = r#"You are a fantasy quest generator. Write in THIRD PERSON/OBJECTIVE narrator point of view.
 
 RULES:
 - Write in THIRD PERSON as an objective narrator describing scenes
@@ -60,9 +64,7 @@ struct TrialPrompt<'a> {
 #[derive(Deserialize)]
 struct TrialsResponse { trials: Vec<String> }
 
-const RESULTS_SYSTEM_CONTEXT: &str = r#"The setting is a lighthearted and sometimes crude adult fantasy RPG.
-
-You will be narrating an adventurer's attempt to overcome this job and its trials. 
+const RESULTS_SYSTEM_CONTEXT: &str = r#"You will be narrating a Chud's attempt to overcome this job and its trials. 
 
 You will receive a job's context, the adventurer's name and description, and an ordered list of trials.
 Rolls have already been made to determine the success rate, these are stored in 'margin'
@@ -87,8 +89,8 @@ Your task is TWO things:
 
 RULES:
 - Write in THIRD PERSON
-- Never name the ability directly — show it through the character's actions
-- Avoid excess adjective use and cliche description. Use effective words, but less is more.
+- Never name the ability directly - show it through the character's actions
+- Ensure diverse word use, don't often repeat verbs used previously, especially pertaining to character actions
 - Keep each rewritten trial under 80 words
 - Keep the final summary under 30 words
 - Avoid emdash use
@@ -117,6 +119,10 @@ struct ResultsPrompt<'a> {
 #[derive(Deserialize)]
 struct ResultsResponse { trials: Vec<String>, summary: String }
 
+// Token budget for each agent's in-memory conversation history (approximate; 1 token ≈ 4 chars).
+// Raise to give agents more context; lower to reduce prompt size.
+const MEMORY_TOKEN_BUDGET: usize = 50_000;
+
 // Reward formula: REWARD_QUADRATIC * cumulative^2 + REWARD_LINEAR * cumulative
 // Increasing REWARD_QUADRATIC steepens the curve so high-difficulty quests pay out much more relative to easy ones.
 // Increasing REWARD_LINEAR raises the baseline payout across all difficulties.
@@ -127,6 +133,25 @@ const REWARD_LINEAR: f64 = 3.0;
 const REWARD_JITTER_STDDEV: f64 = 0.10;
 
 type OpenRouterAgent = rig::agent::Agent<openrouter::completion::CompletionModel, ()>;
+
+fn make_memory() -> InMemoryConversationMemory {
+    InMemoryConversationMemory::new().with_filter(|msgs: Vec<rig::completion::message::Message>| {
+        let mut out = msgs;
+        let char_budget = MEMORY_TOKEN_BUDGET * 4;
+        let mut total: usize = out.iter().map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0)).sum();
+        tracing::info!(history_msgs = out.len(), history_chars = total, budget_chars = char_budget, "memory loaded");
+        let msgs_before = out.len();
+        while total > char_budget && out.len() > 1 {
+            let removed_size = serde_json::to_string(&out[0]).map(|s| s.len()).unwrap_or(0);
+            out.remove(0);
+            total = total.saturating_sub(removed_size);
+        }
+        if out.len() < msgs_before {
+            tracing::warn!(trimmed = msgs_before - out.len(), history_msgs = out.len(), history_chars = total, budget_chars = char_budget, "memory trimmed");
+        }
+        out
+    })
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TrialStats {
@@ -170,30 +195,30 @@ pub struct QuestGenerator {
     description_agent: OpenRouterAgent,
     trial_agent: OpenRouterAgent,
     results_agent: OpenRouterAgent,
+    description_memory: InMemoryConversationMemory,
+    trial_memory: InMemoryConversationMemory,
+    results_memory: InMemoryConversationMemory,
 }
 
 impl QuestGenerator {
     pub fn new(api_key: &str) -> anyhow::Result<Self> {
         let client = openrouter::Client::new(api_key)?;
+        let description_memory = make_memory();
         let description_agent = client
-            // .agent("openrouter/free:arcee-ai")
-            // .agent("openrouter/free:Nous Research")
             .agent("openrouter/free:")
-            .preamble(DESCRIPTION_SYSTEM_CONTEXT)
+            .preamble([WORLD_BUILDING_CONTEXT, DESCRIPTION_SYSTEM_CONTEXT].join("\n\n").as_str())
             .build();
+        let trial_memory = make_memory();
         let trial_agent = client
-            // .agent("openrouter/free:arcee-ai")
-            // .agent("openrouter/free:Nous Research")
             .agent("openrouter/free")
-            .preamble(TRIAL_SYSTEM_CONTEXT)
+            .preamble([WORLD_BUILDING_CONTEXT, TRIAL_SYSTEM_CONTEXT].join("\n\n").as_str())
             .build();
+        let results_memory = make_memory();
         let results_agent = client
-            // .agent("openrouter/free:arcee-ai")
-            // .agent("openrouter/free:Nous Research")
             .agent("openrouter/free")
-            .preamble(RESULTS_SYSTEM_CONTEXT)
+            .preamble([WORLD_BUILDING_CONTEXT, RESULTS_SYSTEM_CONTEXT].join("\n\n").as_str())
             .build();
-        Ok(Self { description_agent, trial_agent, results_agent })
+        Ok(Self { description_agent, trial_agent, results_agent, description_memory, trial_memory, results_memory })
     }
 
     fn sanitize(s: &str) -> String {
@@ -230,12 +255,13 @@ impl QuestGenerator {
         None
     }
 
-    async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(agent: &OpenRouterAgent, prompt: &str, expected_trials: Option<usize>) -> anyhow::Result<T> {
+    async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(agent: &OpenRouterAgent, memory: &InMemoryConversationMemory, prompt: &str, expected_trials: Option<usize>, conversation_id: &str) -> anyhow::Result<T> {
         const MAX_RETRIES: u32 = 5;
         let mut retries = 0;
         loop {
+            let history = memory.load(conversation_id).await.unwrap_or_default();
             // tracing::info!("PROMPT:\n{}", prompt);
-            let raw = Self::prompt_with_retry(agent, prompt).await?;
+            let raw = Self::prompt_with_retry(agent, prompt, &history).await?;
             // tracing::info!("RESPONSE:\n{}", raw);
             let parsed = serde_yaml::from_str::<serde_yaml::Value>(&raw);
             match parsed {
@@ -260,7 +286,14 @@ impl QuestGenerator {
                         }
                     }
                     match serde_yaml::from_value(value) {
-                        Ok(result) => return Ok(result),
+                        Ok(result) => {
+                            let _ = memory.append(conversation_id, vec![
+                                Message::user(prompt),
+                                Message::assistant(&raw),
+                            ]).await;
+                            tracing::info!(conversation_id, "committed to memory");
+                            return Ok(result);
+                        }
                         Err(e) => {
                             if retries < MAX_RETRIES {
                                 retries += 1;
@@ -275,11 +308,11 @@ impl QuestGenerator {
         }
     }
 
-    async fn prompt_with_retry(agent: &OpenRouterAgent, prompt: &str) -> anyhow::Result<String> {
+    async fn prompt_with_retry(agent: &OpenRouterAgent, prompt: &str, history: &[Message]) -> anyhow::Result<String> {
         const MAX_RETRIES: u32 = 12;
         let mut retries = 0;
         loop {
-            match agent.prompt(prompt).await {
+            match agent.prompt(prompt).without_memory().with_history(history.iter().cloned()).await {
                 Ok(response) => return Ok(Self::sanitize(&response)),
                 Err(e) if retries < MAX_RETRIES => {
                     let msg = e.to_string();
@@ -311,7 +344,7 @@ impl QuestGenerator {
             quest_difficulty: quest.quest_difficulty,
         })?;
         tracing::info!("generating quest description");
-        let desc_response = Self::prompt_parse_retry::<DescResponse>(&self.description_agent, &desc_yaml, None).await?;
+        let desc_response = Self::prompt_parse_retry::<DescResponse>(&self.description_agent, &self.description_memory, &desc_yaml, None, "description").await?;
         tracing::info!("quest description received");
         let quest_title = desc_response.quest_title;
         let quest_giver = desc_response.quest_giver;
@@ -331,7 +364,7 @@ impl QuestGenerator {
             trials: &quest.trials,      
         })?);
         tracing::info!("generating quest trials");
-        let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &trial_yaml, Some(quest.trials.len())).await?.trials;
+        let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &self.trial_memory, &trial_yaml, Some(quest.trials.len()), "trials").await?.trials;
         tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
 
         let reward = Self::calculate_reward(&quest.trials);
@@ -357,7 +390,7 @@ impl QuestGenerator {
             trials: &quest.trials,
         })?);
         tracing::info!("generating quest trials (description provided)");
-        let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &trial_yaml, Some(quest.trials.len())).await?.trials;
+        let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &self.trial_memory, &trial_yaml, Some(quest.trials.len()), "trials").await?.trials;
         tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
 
         let reward = Self::calculate_reward(&quest.trials);
@@ -414,7 +447,7 @@ impl QuestGenerator {
         let results_prompt = format!("{results_yaml}{scaffold}");
 
         tracing::info!("generating quest results");
-        let r = Self::prompt_parse_retry::<ResultsResponse>(&self.results_agent, &results_prompt, Some(outcomes.len())).await?;
+        let r = Self::prompt_parse_retry::<ResultsResponse>(&self.results_agent, &self.results_memory, &results_prompt, Some(outcomes.len()), "results").await?;
         tracing::info!(count = r.trials.len(), "quest results received");
 
         Ok(QuestResults { trials: r.trials, summary: r.summary })

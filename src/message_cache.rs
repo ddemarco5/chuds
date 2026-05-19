@@ -22,6 +22,12 @@ pub struct MessageCache {
     /// quest ID currently assigned to it (None = empty).
     #[serde(default)]
     pub slots: Vec<JobSlot>,
+    /// Discord message ID of the persistent header posted between the chudlerboard and job slots.
+    #[serde(default)]
+    pub header_message_id: Option<u64>,
+    /// Last content string sent to the job board header message.
+    #[serde(default)]
+    pub job_board_header: String,
     /// Discord message ID of the persistent divider posted between job slots and buffered messages.
     #[serde(default)]
     pub divider_message_id: Option<u64>,
