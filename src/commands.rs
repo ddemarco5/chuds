@@ -3,6 +3,7 @@ use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use poise::serenity_prelude::{self as serenity, CreateAttachment, CreateMessage, EditMessage, GetMessages, MessageId};
 
 use crate::board::{Board, BoardQuest};
+use crate::chud_msg;
 use crate::message_cache::JobSlot;
 use crate::engine;
 use crate::quest_generator::QuestGenerator;
@@ -789,7 +790,7 @@ pub async fn take(ctx: Context<'_>, title: String) -> Result<(), Error> {
         .clone();
 
     let first_name = info.player.name.split_whitespace().next().unwrap_or(&info.player.name).to_string();
-    let content = format!("**{}** ripped **{}** off the board", first_name, info.quest_title);
+    let content = chud_msg!("chud_takes_job", first_name, info.quest_title);
 
     ctx.data().generation_queue.send(engine::GenerationJob::QuestResult { board_quest, player: info.player })
         .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;

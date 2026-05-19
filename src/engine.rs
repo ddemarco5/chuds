@@ -5,6 +5,7 @@ use crate::simulation::play_quest;
 use crate::quest_generator::{QuestData, QuestGenerator, QuestResults, TrialResult};
 use crate::quest_result::QuestResult;
 use crate::storage;
+use crate::chud_msg;
 
 /// Info returned after a chud accepts a quest.
 pub struct AssignInfo {
@@ -230,7 +231,7 @@ pub fn format_dm_completion_report(
     }
     out.push_str(&format!("──────────\n**{}**\n{}", outcome, result.summary));
     if result.passed && reward > 0 {
-        out.push_str(&format!("\nYou're ${} richer!", reward));
+        out.push_str(&format!("\n{}", chud_msg!("chud_brings_money", reward)));
     }
 
     if level_up.any() {

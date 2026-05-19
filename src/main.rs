@@ -1,6 +1,7 @@
 mod board;
 mod chudmasters;
 mod commands;
+mod messages;
 mod engine;
 mod message_cache;
 mod player;
