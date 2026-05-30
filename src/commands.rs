@@ -1,5 +1,6 @@
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 
+use poise::Modal;
 use poise::serenity_prelude::{
     self as serenity, ButtonStyle, ComponentInteraction, CreateActionRow, CreateAttachment,
     CreateButton, CreateInteractionResponse, CreateInteractionResponseFollowup, CreateMessage,
@@ -56,22 +57,53 @@ async fn admin_guard(ctx: Context<'_>) -> bool {
     ok
 }
 
-/// Returns true if the invoking user is admin or a Chudmaster and is in the configured channel.
-async fn chudmaster_guard(ctx: Context<'_>) -> bool {
-    let data = ctx.data();
-    let user_id = ctx.author().id.get();
+fn chudmaster_check(data: &Data, user_id: u64, channel_id: u64) -> bool {
     let is_admin = user_id == data.admin_user_id;
     let is_chudmaster = storage::is_chudmaster(user_id).unwrap_or(false);
-    let ok = (is_admin || is_chudmaster) && ctx.channel_id().get() == data.channel_id;
-    if !ok {
-        tracing::warn!(
-            user = user_id,
-            channel = ctx.channel_id().get(),
-            "unauthorized or off-channel command ignored"
-        );
-        ctx.say("you don't have permission for this command (sorry bud)").await.ok();
+    (is_admin || is_chudmaster) && channel_id == data.channel_id
+}
+
+fn parse_difficulty(raw: &str) -> Result<u8, &'static str> {
+    let difficulty: u8 = raw.trim().parse().map_err(|_| "difficulty must be a number")?;
+    if !(1..=10).contains(&difficulty) {
+        return Err("difficulty must be between 1 and 10");
     }
-    ok
+    Ok(difficulty)
+}
+
+async fn say_ephemeral(ctx: Context<'_>, text: impl Into<String>) -> Result<(), Error> {
+    ctx.send(poise::CreateReply::default().content(text).ephemeral(true))
+        .await?;
+    Ok(())
+}
+
+#[derive(Debug, poise::Modal)]
+#[name = "Generate Job"]
+struct GenerateJobModal {
+    #[name = "Description"]
+    #[paragraph]
+    description: String,
+    #[name = "Difficulty (1-10)"]
+    #[placeholder = "e.g. 5"]
+    difficulty: String,
+}
+
+#[derive(Debug, poise::Modal)]
+#[name = "Write Job"]
+struct WriteJobModal {
+    #[name = "Title"]
+    title: String,
+    #[name = "Giver"]
+    giver: String,
+    #[name = "Description"]
+    #[paragraph]
+    description: String,
+    #[name = "Goal"]
+    #[paragraph]
+    goal: String,
+    #[name = "Difficulty (1-10)"]
+    #[placeholder = "e.g. 5"]
+    difficulty: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -853,56 +885,89 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
 
 /// Fully generate a new quest via the LLM and post it to the board.
 #[poise::command(slash_command)]
-pub async fn generate_job(
-    ctx: Context<'_>,
-    description: String,
-    difficulty: u8,
-) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !chudmaster_guard(ctx).await {
+pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
+    let user_id = ctx.author().id.get();
+    let channel_id = ctx.channel_id().get();
+    if !chudmaster_check(ctx.data(), user_id, channel_id) {
         tracing::info!("Non-CM tried to submit a generate job");
+        tracing::warn!(user = user_id, channel = channel_id, "unauthorized or off-channel command ignored");
+        say_ephemeral(ctx, "you don't have permission for this command (sorry bud)").await?;
         return Ok(());
     }
+
+    let Context::Application(app_ctx) = ctx else {
+        return Ok(());
+    };
+    let Some(data) = GenerateJobModal::execute(app_ctx).await? else {
+        return Ok(());
+    };
+
+    let difficulty = match parse_difficulty(&data.difficulty) {
+        Ok(d) => d,
+        Err(msg) => {
+            say_ephemeral(ctx, msg).await?;
+            return Ok(());
+        }
+    };
     {
         let board = ctx.data().board.lock().await;
         let pending = ctx.data().pending_quests.load(Ordering::SeqCst);
         if board.quests.len() + pending >= ctx.data().max_jobs {
-            ctx.say(format!("Board is full ({} jobs max).", ctx.data().max_jobs)).await?;
+            say_ephemeral(ctx, format!("Board is full ({} jobs max).", ctx.data().max_jobs)).await?;
             return Ok(());
         }
         ctx.data().pending_quests.fetch_add(1, Ordering::SeqCst);
     }
-    tracing::info!("{} submitted generate_job with description '{}'", ctx.author().name, description);
-    ctx.data().generation_queue.send(engine::make_quest_creation_job(description, difficulty))
+    tracing::info!("{} submitted generate_job with description '{}'", ctx.author().name, data.description);
+    ctx.data().generation_queue.send(engine::make_quest_creation_job(data.description, difficulty))
         .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
-    ctx.say("ok").await?;
+    say_ephemeral(ctx, "ok").await?;
     Ok(())
 }
 
 /// Post a user-authored quest; only trial situations are LLM-generated.
 #[poise::command(slash_command)]
-pub async fn write_job(
-    ctx: Context<'_>,
-    title: String,
-    giver: String,
-    description: String,
-    goal: String,
-    difficulty: u8,
-) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !chudmaster_guard(ctx).await {
+pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
+    let user_id = ctx.author().id.get();
+    let channel_id = ctx.channel_id().get();
+    if !chudmaster_check(ctx.data(), user_id, channel_id) {
         tracing::info!("Non-CM tried to submit a write job");
+        tracing::warn!(user = user_id, channel = channel_id, "unauthorized or off-channel command ignored");
+        say_ephemeral(ctx, "you don't have permission for this command (sorry bud)").await?;
         return Ok(());
     }
+
+    let Context::Application(app_ctx) = ctx else {
+        return Ok(());
+    };
+    let Some(data) = WriteJobModal::execute(app_ctx).await? else {
+        return Ok(());
+    };
+
+    let difficulty = match parse_difficulty(&data.difficulty) {
+        Ok(d) => d,
+        Err(msg) => {
+            say_ephemeral(ctx, msg).await?;
+            return Ok(());
+        }
+    };
     let mut board = ctx.data().board.lock().await;
     if board.quests.len() >= ctx.data().max_jobs {
-        ctx.say(format!("Board is full ({} jobs max).", ctx.data().max_jobs)).await?;
+        say_ephemeral(ctx, format!("Board is full ({} jobs max).", ctx.data().max_jobs)).await?;
         return Ok(());
     }
-    tracing::info!("{} submitted write_job with description '{}'", ctx.author().name, description);
-    engine::write_job(&ctx.data().generator, &mut *board, title, giver, description, goal, difficulty).await?;
+    tracing::info!("{} submitted write_job with description '{}'", ctx.author().name, data.description);
+    engine::write_job(
+        &ctx.data().generator,
+        &mut *board,
+        data.title,
+        data.giver,
+        data.description,
+        data.goal,
+        difficulty,
+    ).await?;
     update_board_message(&ctx.serenity_context().http, ctx.data().channel_id, &mut *board, ctx.data().max_jobs).await?;
-    ctx.say("ok").await?;
+    say_ephemeral(ctx, "ok").await?;
     Ok(())
 }
 
