@@ -119,6 +119,9 @@ struct ResultsPrompt<'a> {
 #[derive(Deserialize)]
 struct ResultsResponse { trials: Vec<String>, summary: String }
 
+// Per-attempt timeout for LLM requests. Raise if using slow free-tier models.
+const PROMPT_TIMEOUT_SECS: u64 = 90;
+
 // Token budget for each agent's in-memory conversation history (approximate; 1 token ≈ 4 chars).
 // Raise to give agents more context; lower to reduce prompt size.
 const MEMORY_TOKEN_BUDGET: usize = 50_000;
@@ -312,9 +315,21 @@ impl QuestGenerator {
         const MAX_RETRIES: u32 = 12;
         let mut retries = 0;
         loop {
-            match agent.prompt(prompt).without_memory().with_history(history.iter().cloned()).await {
-                Ok(response) => return Ok(Self::sanitize(&response)),
-                Err(e) if retries < MAX_RETRIES => {
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(PROMPT_TIMEOUT_SECS),
+                agent.prompt(prompt).without_memory().with_history(history.iter().cloned()),
+            ).await {
+                Err(_elapsed) => {
+                    if retries < MAX_RETRIES {
+                        retries += 1;
+                        tracing::warn!(PROMPT_TIMEOUT_SECS, retries, MAX_RETRIES, "request timed out, retrying");
+                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                        continue;
+                    }
+                    return Err(anyhow::anyhow!("LLM request timed out after {} retries", MAX_RETRIES));
+                }
+                Ok(Ok(response)) => return Ok(Self::sanitize(&response)),
+                Ok(Err(e)) => {
                     let msg = e.to_string();
                     let (wait_secs, label) = if msg.contains("503") {
                         (10, "503 model overloaded")
@@ -327,12 +342,14 @@ impl QuestGenerator {
                     } else {
                         return Err(e.into());
                     };
+                    if retries >= MAX_RETRIES {
+                        return Err(e.into());
+                    }
                     tracing::warn!(msg);
                     retries += 1;
                     tracing::warn!(error = label, wait_secs, retries, MAX_RETRIES, "retryable error, waiting before retry");
                     tokio::time::sleep(tokio::time::Duration::from_secs(wait_secs)).await;
                 }
-                Err(e) => return Err(e.into()),
             }
         }
     }
