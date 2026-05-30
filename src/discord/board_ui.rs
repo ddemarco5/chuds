@@ -131,6 +131,7 @@ pub async fn update_board_message(
     board: &mut Board,
     max_jobs: usize,
 ) -> anyhow::Result<()> {
+    let _cache_guard = storage::message_cache_lock().await;
     let ch = serenity::ChannelId::new(channel_id);
     let mut board_dirty = false;
 

@@ -108,9 +108,30 @@ pub async fn post_buffered_message(
     max_buffer: usize,
     content: &str,
 ) {
+    post_buffered_message_inner(http, channel_id, max_buffer, content, true).await;
+}
+
+/// Post a buffered message without evicting older ones. Call [`trim_buffered_messages`]
+/// once the batch is complete (e.g. at the end of a tick).
+pub async fn post_buffered_message_deferred(
+    http: &serenity::Http,
+    channel_id: u64,
+    content: &str,
+) {
+    post_buffered_message_inner(http, channel_id, 0, content, false).await;
+}
+
+async fn post_buffered_message_inner(
+    http: &serenity::Http,
+    channel_id: u64,
+    max_buffer: usize,
+    content: &str,
+    evict_before_post: bool,
+) {
+    let _guard = storage::message_cache_lock().await;
     let mut cache = storage::load_message_cache().unwrap_or_default();
     let ch = serenity::ChannelId::new(channel_id);
-    if cache.pending_deletes.len() >= max_buffer {
+    if evict_before_post && cache.pending_deletes.len() >= max_buffer {
         let old_id = cache.pending_deletes.remove(0);
         if let Err(e) = http.delete_message(ch, MessageId::new(old_id), None).await {
             tracing::warn!(msg_id = old_id, err = %e, "failed to evict oldest buffered message");
@@ -127,5 +148,25 @@ pub async fn post_buffered_message(
             }
         }
         Err(e) => tracing::warn!(err = %e, "failed to post buffered message"),
+    }
+}
+
+/// Delete oldest buffered messages until at most `max_buffer` remain.
+pub async fn trim_buffered_messages(
+    http: &serenity::Http,
+    channel_id: u64,
+    max_buffer: usize,
+) {
+    let _guard = storage::message_cache_lock().await;
+    let mut cache = storage::load_message_cache().unwrap_or_default();
+    let ch = serenity::ChannelId::new(channel_id);
+    while cache.pending_deletes.len() > max_buffer {
+        let old_id = cache.pending_deletes.remove(0);
+        if let Err(e) = http.delete_message(ch, MessageId::new(old_id), None).await {
+            tracing::warn!(msg_id = old_id, err = %e, "failed to evict oldest buffered message");
+        }
+    }
+    if let Err(e) = storage::save_message_cache(&cache) {
+        tracing::warn!(err = %e, "failed to save message cache after buffer trim");
     }
 }

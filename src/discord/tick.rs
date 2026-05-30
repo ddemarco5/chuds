@@ -2,7 +2,9 @@ use poise::serenity_prelude::{self as serenity, CreateAttachment, CreateMessage}
 
 use crate::chud_msg;
 use crate::discord::board_ui;
-use crate::discord::channel::{cleanup_non_bot_messages, post_buffered_message};
+use crate::discord::channel::{
+    cleanup_non_bot_messages, post_buffered_message_deferred, trim_buffered_messages,
+};
 use crate::discord::formatting;
 use crate::game::domain::board::Board;
 use crate::game::domain::job_queue::JobQueue;
@@ -26,7 +28,7 @@ pub async fn execute_tick(
         let board_guard = board.lock().await;
         if board_guard.active_quest_count() > 0 {
             let new_day_msg = chud_msg!("new_day");
-            post_buffered_message(http, channel_id, max_buffer, &new_day_msg).await;
+            post_buffered_message_deferred(http, channel_id, &new_day_msg).await;
         }
     }
 
@@ -44,7 +46,7 @@ pub async fn execute_tick(
     storage::save_hospital(&hospital)?;
 
     for msg in &outcome.hospital_releases {
-        post_buffered_message(http, channel_id, max_buffer, msg).await;
+        post_buffered_message_deferred(http, channel_id, msg).await;
     }
 
     for qr in &outcome.quest_resolved {
@@ -75,7 +77,7 @@ pub async fn execute_tick(
         } else {
             qr.summary.clone()
         };
-        post_buffered_message(http, channel_id, max_buffer, &content).await;
+        post_buffered_message_deferred(http, channel_id, &content).await;
 
         let first_name = qr
             .player_name
@@ -91,7 +93,7 @@ pub async fn execute_tick(
             "return_failed"
         };
         let return_msg = chud_msg!(return_key, first_name);
-        post_buffered_message(http, channel_id, max_buffer, &return_msg).await;
+        post_buffered_message_deferred(http, channel_id, &return_msg).await;
 
         let dm_content = formatting::format_dm_completion_report(
             &qr.player_name,
@@ -150,7 +152,7 @@ pub async fn execute_tick(
             "scout_returned_cocky"
         };
         let scout_return_msg = chud_msg!(scout_key, first_name);
-        post_buffered_message(http, channel_id, max_buffer, &scout_return_msg).await;
+        post_buffered_message_deferred(http, channel_id, &scout_return_msg).await;
 
         let active_player_name: Option<String> = sr
             .active_discord_user_id
@@ -183,6 +185,8 @@ pub async fn execute_tick(
             Err(e) => tracing::warn!(discord_user_id = sr.discord_user_id, err = %e, "failed to open DM channel for scouting report"),
         }
     }
+
+    trim_buffered_messages(http, channel_id, max_buffer).await;
 
     if !outcome.quest_resolved.is_empty()
         || !outcome.scout_results.is_empty()

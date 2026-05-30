@@ -129,19 +129,21 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!(guild_id, "slash commands registered");
                 let bot_user_id = ready.user.id.get();
 
-                let cache = storage::load_message_cache().unwrap_or_default();
-                let mut b = board.lock().await;
-                let messages_exist =
-                    validate_cached_messages_exist(&ctx.http, channel_id, &*b, &cache).await;
-                if !messages_exist {
-                    tracing::warn!("cached messages missing, purging channel and resetting message cache");
-                    delete_all_messages_in_channel(&ctx.http, channel_id).await;
-                    b.chudlerboard_message_id = None;
-                    if let Err(e) = storage::save_message_cache(&Default::default()) {
-                        tracing::warn!(err = %e, "failed to clear message cache");
+                {
+                    let _cache_guard = storage::message_cache_lock().await;
+                    let cache = storage::load_message_cache().unwrap_or_default();
+                    let mut b = board.lock().await;
+                    let messages_exist =
+                        validate_cached_messages_exist(&ctx.http, channel_id, &*b, &cache).await;
+                    if !messages_exist {
+                        tracing::warn!("cached messages missing, purging channel and resetting message cache");
+                        delete_all_messages_in_channel(&ctx.http, channel_id).await;
+                        b.chudlerboard_message_id = None;
+                        if let Err(e) = storage::save_message_cache(&Default::default()) {
+                            tracing::warn!(err = %e, "failed to clear message cache");
+                        }
                     }
                 }
-                drop(b);
 
                 cleanup_non_bot_messages(
                     &ctx.http,

@@ -1,6 +1,8 @@
 use std::path::Path;
+use std::sync::LazyLock;
 
 use anyhow::Context;
+use tokio::sync::{Mutex, MutexGuard};
 
 use crate::game::domain::board::Board;
 use crate::game::domain::hospital::Hospital;
@@ -15,6 +17,13 @@ const BOARD_PATH: &str = "data/board.yaml";
 const HOSPITAL_PATH: &str = "data/hospital.yaml";
 const MESSAGE_CACHE_PATH: &str = "data/message_cache.yaml";
 const CHUDMASTERS_PATH: &str = "data/chudmasters.yaml";
+
+static MESSAGE_CACHE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+/// Serialize all reads/writes of [`MessageCache`] on disk.
+pub async fn message_cache_lock() -> MutexGuard<'static, ()> {
+    MESSAGE_CACHE_LOCK.lock().await
+}
 
 /// Persist a player to `data/players/<discord_user_id>.yaml`.
 pub fn save_player(player: &Player) -> anyhow::Result<()> {
