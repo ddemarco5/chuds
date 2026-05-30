@@ -1,10 +1,15 @@
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 
-use poise::serenity_prelude::{self as serenity, CreateAttachment, CreateMessage, EditMessage, GetMessages, MessageId};
+use poise::serenity_prelude::{
+    self as serenity, ButtonStyle, ComponentInteraction, CreateActionRow, CreateAttachment,
+    CreateButton, CreateInteractionResponse, CreateInteractionResponseFollowup, CreateMessage,
+    EditInteractionResponse, EditMessage, GetMessages, MessageId,
+};
 
 use crate::board::{Board, BoardQuest};
 use crate::chud_msg;
-use crate::message_cache::JobSlot;
+use crate::hospital::Hospital;
+use crate::message_cache::{JobSlot, MessageCache};
 use crate::engine;
 use crate::quest_generator::QuestGenerator;
 use crate::simulation;
@@ -73,6 +78,84 @@ async fn chudmaster_guard(ctx: Context<'_>) -> bool {
 // Channel cleanup
 // ---------------------------------------------------------------------------
 
+/// Delete all messages in the channel (both bot and non-bot messages).
+pub async fn delete_all_messages_in_channel(
+    http: &serenity::Http,
+    channel_id: u64,
+) {
+    let ch = serenity::ChannelId::new(channel_id);
+    let messages = match ch.messages(http, GetMessages::new().limit(100)).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(err = %e, "failed to fetch channel messages for purge");
+            return;
+        }
+    };
+    if messages.is_empty() {
+        return;
+    }
+    tracing::info!(count = messages.len(), "purging all messages in channel");
+    for msg in &messages {
+        if let Err(e) = http.delete_message(ch, msg.id, None).await {
+            tracing::warn!(msg_id = msg.id.get(), err = %e, "failed to delete message during purge");
+        }
+    }
+}
+
+/// Validate that all cached message IDs still exist in Discord.
+/// Returns true if all exist, false if any are missing.
+pub async fn validate_cached_messages_exist(
+    http: &serenity::Http,
+    channel_id: u64,
+    board: &Board,
+    cache: &MessageCache,
+) -> bool {
+    let ch = serenity::ChannelId::new(channel_id);
+
+    // Collect all message IDs to check
+    let mut message_ids = Vec::new();
+
+    // Chudlerboard message ID (stored in Board)
+    if let Some(id) = board.chudlerboard_message_id {
+        message_ids.push(("chudlerboard", id));
+    }
+
+    // Header message ID (stored in MessageCache)
+    if let Some(id) = cache.header_message_id {
+        message_ids.push(("header", id));
+    }
+
+    // Divider message ID (stored in MessageCache)
+    if let Some(id) = cache.divider_message_id {
+        message_ids.push(("divider", id));
+    }
+
+    // Job slot message IDs (stored in MessageCache)
+    for slot in &cache.slots {
+        if let Some(id) = slot.message_id {
+            message_ids.push(("slot", id));
+        }
+    }
+
+    if message_ids.is_empty() {
+        return true; // No cached messages to validate
+    }
+
+    // Check each message by attempting to fetch it
+    for (kind, id) in message_ids {
+        let msg_id = serenity::MessageId::new(id);
+        match http.get_message(ch, msg_id).await {
+            Ok(_) => continue, // Message exists
+            Err(e) => {
+                tracing::warn!(kind, msg_id = id, err = %e, "cached message not found");
+                return false; // At least one message is missing
+            }
+        }
+    }
+
+    true
+}
+
 /// Delete all non-bot messages in the channel when their count exceeds `threshold`.
 ///
 /// Runs before any message edits on each tick so the board channel stays tidy.
@@ -111,17 +194,142 @@ fn format_job_slot(quest: Option<&BoardQuest>) -> String {
     match quest {
         Some(q) => {
             let title = &q.generated.quest_title;
-            let giver = &q.generated.quest_giver;
-            let desc = &q.generated.description;
-            let reward = q.generated.reward;
             if q.has_active() {
-                format!("~~**{}** - *{}* | ${}~~\n~~{}~~\n─────────────────", title, giver, reward, desc)
+                // Taken: collapse to a struck-through title to save channel space.
+                format!("~~{}~~", title)
             } else {
-                format!("**{}** - *{}* | ${}\n{}\n─────────────────", title, giver, reward, desc)
+                let giver = &q.generated.quest_giver;
+                let desc = &q.generated.description;
+                let reward = q.generated.reward;
+                format!("**{}** - *{}* | ${}\n{}", title, giver, reward, desc)
             }
         }
         None => "*Nothing posted here*".to_string(),
     }
+}
+
+/// Components for a job slot message: a "Take" button on open quests plus a
+/// "Scout" button on any posted quest (open or already taken). Empty slots get
+/// no components; passing an empty vec on edit clears stale buttons.
+fn job_slot_components(quest: Option<&BoardQuest>) -> Vec<CreateActionRow> {
+    match quest {
+        Some(q) => {
+            let mut buttons = Vec::new();
+            if !q.has_active() {
+                buttons.push(
+                    CreateButton::new(format!("take:{}", q.id))
+                        .label("Take")
+                        .style(ButtonStyle::Primary),
+                );
+            }
+            buttons.push(
+                CreateButton::new(format!("scout:{}", q.id))
+                    .label("Scout")
+                    .style(ButtonStyle::Secondary),
+            );
+            vec![CreateActionRow::Buttons(buttons)]
+        }
+        None => vec![],
+    }
+}
+
+/// Post-assignment tail shared by `/take` and the Take button: queue the LLM
+/// job, announce the take in-channel, and refresh the board messages.
+async fn announce_taken_quest(
+    http: &serenity::Http,
+    board: &mut Board,
+    data: &Data,
+    info: engine::AssignInfo,
+    quest_id: u32,
+) -> anyhow::Result<()> {
+    let board_quest = board
+        .quests
+        .iter()
+        .find(|q| q.id == quest_id)
+        .ok_or_else(|| anyhow::anyhow!("quest {} not found after assignment", quest_id))?
+        .clone();
+
+    let first_name = info.player.name.split_whitespace().next().unwrap_or(&info.player.name).to_string();
+    let content = chud_msg!("chud_takes_job", first_name, info.quest_title);
+
+    data.generation_queue
+        .send(engine::GenerationJob::QuestResult { board_quest, player: info.player })
+        .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
+
+    post_buffered_message(http, data.channel_id, data.max_buffer_messages, &content).await;
+    update_board_message(http, data.channel_id, board, data.max_jobs).await?;
+    Ok(())
+}
+
+/// Send an ephemeral followup to a component interaction (visible only to the clicker).
+async fn ephemeral_followup(
+    ctx: &serenity::Context,
+    interaction: &ComponentInteraction,
+    content: &str,
+) -> anyhow::Result<()> {
+    interaction
+        .create_followup(
+            &ctx.http,
+            CreateInteractionResponseFollowup::new().ephemeral(true).content(content),
+        )
+        .await?;
+    Ok(())
+}
+
+/// Send an ephemeral followup with a heal button.
+async fn ephemeral_with_heal_button(
+    ctx: &serenity::Context,
+    interaction: &ComponentInteraction,
+    content: &str,
+    user_id: u64,
+    heal_price: u32,
+) -> anyhow::Result<()> {
+    let heal_label = chud_msg!("heal_button_label", heal_price);
+    let button = CreateButton::new(format!("heal:{}", user_id))
+        .label(heal_label)
+        .style(ButtonStyle::Primary);
+    let row = CreateActionRow::Buttons(vec![button]);
+
+    interaction
+        .create_followup(
+            &ctx.http,
+            CreateInteractionResponseFollowup::new()
+                .ephemeral(true)
+                .content(content)
+                .components(vec![row]),
+        )
+        .await?;
+    Ok(())
+}
+
+/// Ephemeral response when a hospitalized player tries to take or scout a job.
+async fn ephemeral_hospitalized_response(
+    ctx: &serenity::Context,
+    interaction: &ComponentInteraction,
+    player: &crate::player::Player,
+    user_id: u64,
+) -> anyhow::Result<()> {
+    let hospital = Hospital::load()?;
+    let days = hospital.get_ticks_remaining(user_id).unwrap_or(0);
+    let days_remaining = if days == 1 {
+        "1 day".to_string()
+    } else {
+        format!("{days} days")
+    };
+
+    if let Some(heal_price) = hospital.get_heal_price(user_id) {
+        if player.cash >= heal_price {
+            let msg = chud_msg!("busy_hospitalized", player.name, &days_remaining);
+            ephemeral_with_heal_button(ctx, interaction, &msg, user_id, heal_price).await?;
+        } else {
+            let msg = chud_msg!("heal_insufficient_funds", player.name);
+            ephemeral_followup(ctx, interaction, &msg).await?;
+        }
+    } else {
+        let msg = chud_msg!("busy_hospitalized", player.name, &days_remaining);
+        ephemeral_followup(ctx, interaction, &msg).await?;
+    }
+    Ok(())
 }
 
 async fn post_buffered_message(
@@ -344,12 +552,17 @@ pub(crate) async fn update_board_message(
         }
         if let Some(msg_id) = slot.message_id {
             let ok = http
-                .edit_message(ch, MessageId::new(msg_id), &EditMessage::new().content(&expected), vec![])
+                .edit_message(
+                    ch,
+                    MessageId::new(msg_id),
+                    &EditMessage::new().content(&expected).components(job_slot_components(quest)),
+                    vec![],
+                )
                 .await
                 .is_ok();
             if !ok {
                 tracing::warn!(msg_id, slot = i, "failed to edit job slot message, posting new one");
-                match http.send_message(ch, vec![], &CreateMessage::new().content(&expected)).await {
+                match http.send_message(ch, vec![], &CreateMessage::new().content(&expected).components(job_slot_components(quest))).await {
                     Ok(msg) => {
                         slot.message_id = Some(msg.id.get());
                         slot.content = expected;
@@ -373,7 +586,7 @@ pub(crate) async fn update_board_message(
                 }
             }
         } else {
-            match http.send_message(ch, vec![], &CreateMessage::new().content(&expected)).await {
+            match http.send_message(ch, vec![], &CreateMessage::new().content(&expected).components(job_slot_components(quest))).await {
                 Ok(msg) => {
                     tracing::info!(msg_id = msg.id.get(), slot = i, "job slot message posted");
                     slot.message_id = Some(msg.id.get());
@@ -439,6 +652,17 @@ pub async fn execute_tick(
 ) -> anyhow::Result<()> {
     cleanup_non_bot_messages(http, channel_id, bot_user_id, max_non_bot_messages).await;
 
+    let new_day_msg = chud_msg!("new_day");
+    post_buffered_message(http, channel_id, max_buffer, &new_day_msg).await;
+
+    // Process hospital tick first
+    let mut hospital = crate::hospital::Hospital::load()?;
+    let released_messages = hospital.tick();
+    for msg in &released_messages {
+        post_buffered_message(http, channel_id, max_buffer, msg).await;
+    }
+    hospital.save()?;
+
     let mut board = board.lock().await;
 
     let (resolved, scouted) = simulation::run_tick(&mut *board).await?;
@@ -465,6 +689,17 @@ pub async fn execute_tick(
         };
         post_buffered_message(http, channel_id, max_buffer, &content).await;
 
+        let first_name = qr.player_name.split_whitespace().next().unwrap_or(&qr.player_name).to_string();
+        let return_key = if qr.hospitalized {
+            "return_hospitalized"
+        } else if qr.result.passed {
+            "return_passed"
+        } else {
+            "return_failed"
+        };
+        let return_msg = chud_msg!(return_key, first_name);
+        post_buffered_message(http, channel_id, max_buffer, &return_msg).await;
+
         let dm_content = engine::format_dm_completion_report(&qr.player_name, &qr.result, &qr.player, &qr.level_up, qr.reward);
         let dm_map = serde_json::json!({ "recipient_id": qr.discord_user_id.to_string() });
         match http.create_private_channel(&dm_map).await {
@@ -481,6 +716,15 @@ pub async fn execute_tick(
                 if let Err(e) = http.send_message(dm.id, attachments, &msg).await {
                     tracing::warn!(discord_user_id = qr.discord_user_id, err = %e, "failed to DM quest report");
                 }
+
+                // Send hospital notification DM if player was hospitalized
+                if qr.hospitalized {
+                    let hospital_msg = chud_msg!("dm_hospitalized", qr.player_name);
+                    let hospital_dm = CreateMessage::new().content(hospital_msg);
+                    if let Err(e) = http.send_message(dm.id, vec![], &hospital_dm).await {
+                        tracing::warn!(discord_user_id = qr.discord_user_id, err = %e, "failed to DM hospital notification");
+                    }
+                }
             }
             Err(e) => tracing::warn!(discord_user_id = qr.discord_user_id, err = %e, "failed to open DM channel"),
         }
@@ -488,16 +732,19 @@ pub async fn execute_tick(
 
     for sr in &scouted {
         let first_name = sr.player_name.split_whitespace().next().unwrap_or(&sr.player_name).to_string();
-        let flavour = if sr.chance == 0.0 {
-            " with poop in their pants"
-        } else if sr.chance <= 0.20 {
-            " white as a ghost"
-        } else if sr.chance >= 0.80 {
-            " with a shit-eating grin"
+        let scout_key = if sr.chance == 0.0 {
+            "scout_returned_impossible"
+        } else if sr.chance <= 0.25 {
+            "scout_returned_terrified"
+        } else if sr.chance <= 0.50 {
+            "scout_returned_nervous"
+        } else if sr.chance <= 0.80 {
+            "scout_returned_confident"
         } else {
-            ""
+            "scout_returned_cocky"
         };
-        post_buffered_message(http, channel_id, max_buffer, &format!("{} saunters back in{}.", first_name, flavour)).await;
+        let scout_return_msg = chud_msg!(scout_key, first_name);
+        post_buffered_message(http, channel_id, max_buffer, &scout_return_msg).await;
 
         let active_player_name: Option<String> = sr.active_discord_user_id
             .and_then(|id| storage::load_player(id).ok().flatten())
@@ -754,93 +1001,194 @@ pub async fn assign(ctx: Context<'_>, target_user_id: String, quest_id: u32) -> 
     Ok(())
 }
 
-/// Take an open quest off the board by title.
-#[poise::command(slash_command)]
-pub async fn take(ctx: Context<'_>, title: String) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    let user_id = ctx.author().id.get();
-    if storage::load_player(user_id)?.is_none() {
-        ctx.say("you don't have a chud").await?;
+/// Handle a click on a job slot's "Take" button.
+///
+/// Acks immediately (silent) so the slow board refresh that follows can't trip
+/// Discord's 3-second response deadline; all user feedback uses ephemeral
+/// followups visible only to the clicker.
+pub async fn handle_take_button(
+    ctx: &serenity::Context,
+    interaction: &ComponentInteraction,
+    data: &Data,
+) -> anyhow::Result<()> {
+    interaction
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+
+    let quest_id: u32 = match interaction.data.custom_id.strip_prefix("take:").and_then(|s| s.parse().ok()) {
+        Some(id) => id,
+        None => return Ok(()),
+    };
+    let user_id = interaction.user.id.get();
+
+    let player = match storage::load_player(user_id)? {
+        Some(p) => p,
+        None => {
+            ephemeral_followup(ctx, interaction, "You don't have a chud.").await?;
+            return Ok(());
+        }
+    };
+
+    let mut board = data.board.lock().await;
+    if let Some(reason) = board.is_player_busy(user_id)? {
+        match reason {
+            engine::BusyReason::ActiveQuest { quest_title } => {
+                let msg = chud_msg!("busy_active_quest", player.name, quest_title);
+                ephemeral_followup(ctx, interaction, &msg).await?;
+            }
+            engine::BusyReason::Scouting => {
+                let msg = chud_msg!("busy_scouting", player.name);
+                ephemeral_followup(ctx, interaction, &msg).await?;
+            }
+            engine::BusyReason::Hospitalized => {
+                ephemeral_hospitalized_response(ctx, interaction, &player, user_id).await?;
+            }
+        }
         return Ok(());
     }
-    let http = &ctx.serenity_context().http;
-    let channel_id = ctx.data().channel_id;
-    let max_buffer = ctx.data().max_buffer_messages;
-    let mut board = ctx.data().board.lock().await;
-    if board.is_player_busy(user_id) {
-        ctx.say("your chud is busy").await?;
-        return Ok(());
-    }
 
-    let quest_id = board
-        .quests
-        .iter()
-        .filter(|q| !q.has_active())
-        .find(|q| q.generated.quest_title.to_lowercase() == title.to_lowercase())
-        .map(|q| q.id)
-        .ok_or_else(|| anyhow::anyhow!("No open quest found with that title"))?;
+    // assign_chud_to_quest guards quest existence/availability internally.
+    let info = match engine::assign_chud_to_quest(&mut *board, user_id, quest_id) {
+        Ok(info) => info,
+        Err(_) => {
+            ephemeral_followup(ctx, interaction, "That job is no longer available.").await?;
+            return Ok(());
+        }
+    };
 
-    let info = engine::assign_chud_to_quest(&mut *board, user_id, quest_id)?;
-
-    // Clone the now-Active quest and hand it off to the generation worker.
-    // This command returns immediately; the LLM call happens in the background.
-    let board_quest = board.quests.iter()
-        .find(|q| q.id == quest_id)
-        .ok_or_else(|| anyhow::anyhow!("quest {} not found after assignment", quest_id))?
-        .clone();
-
-    let first_name = info.player.name.split_whitespace().next().unwrap_or(&info.player.name).to_string();
-    let content = chud_msg!("chud_takes_job", first_name, info.quest_title);
-
-    ctx.data().generation_queue.send(engine::GenerationJob::QuestResult { board_quest, player: info.player })
-        .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
-
-    ctx.say("ok").await?;
-
-    post_buffered_message(http, channel_id, max_buffer, &content).await;
-
-    update_board_message(http, channel_id, &mut *board, ctx.data().max_jobs).await?;
+    announce_taken_quest(&ctx.http, &mut *board, data, info, quest_id).await?;
     Ok(())
 }
 
-/// Scout an open quest to assess your chances without committing to it.
-#[poise::command(slash_command)]
-pub async fn scout(ctx: Context<'_>, title: String) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    let user_id = ctx.author().id.get();
+/// Handle a click on a job slot's "Scout" button.
+///
+/// Mirrors [`handle_take_button`]: acks immediately, then validates and applies
+/// the scout, surfacing any problem as an ephemeral followup. Scouting doesn't
+/// change a slot's appearance, so no board refresh is needed.
+pub async fn handle_scout_button(
+    ctx: &serenity::Context,
+    interaction: &ComponentInteraction,
+    data: &Data,
+) -> anyhow::Result<()> {
+    interaction
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+
+    let quest_id: u32 = match interaction.data.custom_id.strip_prefix("scout:").and_then(|s| s.parse().ok()) {
+        Some(id) => id,
+        None => return Ok(()),
+    };
+    let user_id = interaction.user.id.get();
+
     let player = match storage::load_player(user_id)? {
         Some(p) => p,
-        None => { ctx.say("you don't have a chud").await?; return Ok(()); }
+        None => {
+            ephemeral_followup(ctx, interaction, "You don't have a chud.").await?;
+            return Ok(());
+        }
     };
-    let http = &ctx.serenity_context().http;
-    let channel_id = ctx.data().channel_id;
-    let max_buffer = ctx.data().max_buffer_messages;
-    let mut board = ctx.data().board.lock().await;
-    if board.is_player_busy(user_id) {
-        ctx.say("your chud is busy").await?;
+
+    let mut board = data.board.lock().await;
+    if let Some(reason) = board.is_player_busy(user_id)? {
+        match reason {
+            engine::BusyReason::ActiveQuest { quest_title } => {
+                let msg = chud_msg!("busy_active_quest", player.name, quest_title);
+                ephemeral_followup(ctx, interaction, &msg).await?;
+            }
+            engine::BusyReason::Scouting => {
+                let msg = chud_msg!("busy_scouting", player.name);
+                ephemeral_followup(ctx, interaction, &msg).await?;
+            }
+            engine::BusyReason::Hospitalized => {
+                ephemeral_hospitalized_response(ctx, interaction, &player, user_id).await?;
+            }
+        }
         return Ok(());
     }
-
-    let quest_id = board
-        .quests
-        .iter()
-        .find(|q| q.generated.quest_title.to_lowercase() == title.to_lowercase())
-        .map(|q| q.id)
-        .ok_or_else(|| anyhow::anyhow!("No quest found with that title"))?;
 
     if !board.scout(quest_id, user_id) {
-        ctx.say("that quest is not available to scout").await?;
+        ephemeral_followup(ctx, interaction, "That job is no longer available.").await?;
         return Ok(());
     }
-
     storage::save_board(&*board)?;
+    drop(board);
 
     let first_name = player.name.split_whitespace().next().unwrap_or(&player.name).to_string();
     let content = format!("**{}** stumbled out the door", first_name);
+    post_buffered_message(&ctx.http, data.channel_id, data.max_buffer_messages, &content).await;
+    Ok(())
+}
 
-    ctx.say("ok").await?;
+/// Handle a click on the "Heal chud" button.
+///
+/// The button is only shown when the player owns the chud, the chud is hospitalized,
+/// and the player has sufficient funds. Any violation of these is a bug.
+pub async fn handle_heal_button(
+    ctx: &serenity::Context,
+    interaction: &ComponentInteraction,
+    data: &Data,
+) -> anyhow::Result<()> {
+    interaction
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
 
-    post_buffered_message(http, channel_id, max_buffer, &content).await;
+    let user_id: u64 = interaction
+        .data
+        .custom_id
+        .strip_prefix("heal:")
+        .and_then(|s| s.parse().ok())
+        .expect("valid heal button ID");
+
+    // Button is only shown to the chud owner
+    assert_eq!(
+        interaction.user.id.get(),
+        user_id,
+        "heal button clicked by non-owner"
+    );
+
+    let mut player = storage::load_player(user_id)?
+        .expect("player with heal button exists");
+
+    let mut hospital = Hospital::load()?;
+    let heal_price = hospital
+        .get_heal_price(user_id)
+        .expect("chud with heal button is hospitalized");
+
+    // Button is only shown when player can afford it
+    assert!(
+        player.cash >= heal_price,
+        "player cannot afford heal they were offered"
+    );
+
+    // Deduct cash and save
+    player.cash -= heal_price;
+    storage::save_player(&player)?;
+
+    // Release from hospital, announce in main channel, and save
+    let chud_name = hospital
+        .get_chud_name(user_id)
+        .expect("hospitalized chud has name")
+        .to_string();
+    let release_msg = hospital
+        .release(user_id)
+        .expect("hospitalized chud exists");
+    hospital.save()?;
+    post_buffered_message(
+        &ctx.http,
+        data.channel_id,
+        data.max_buffer_messages,
+        &release_msg,
+    )
+    .await;
+
+    let msg = chud_msg!("heal_success", chud_name, heal_price);
+    interaction
+        .edit_response(
+            &ctx.http,
+            EditInteractionResponse::new().content(msg).components(vec![]),
+        )
+        .await?;
+
     Ok(())
 }
 

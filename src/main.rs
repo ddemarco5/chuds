@@ -3,6 +3,7 @@ mod chudmasters;
 mod commands;
 mod messages;
 mod engine;
+mod hospital;
 mod message_cache;
 mod player;
 mod quest_builder;
@@ -77,8 +78,6 @@ async fn main() -> anyhow::Result<()> {
                 commands::add_chud(),
                 commands::delete_chud(),
                 commands::assign(),
-                commands::take(),
-                commands::scout(),
                 commands::stats(),
                 commands::cash(),
                 commands::job(),
@@ -87,6 +86,28 @@ async fn main() -> anyhow::Result<()> {
                 commands::add_cm(),
                 commands::delete_cm(),
             ],
+            event_handler: |ctx, event, _framework, data| {
+                Box::pin(async move {
+                    if let serenity::FullEvent::InteractionCreate { interaction } = event {
+                        if let serenity::Interaction::Component(component) = interaction {
+                            let id = &component.data.custom_id;
+                            let handled = if id.starts_with("take:") {
+                                Some(commands::handle_take_button(ctx, component, data).await)
+                            } else if id.starts_with("scout:") {
+                                Some(commands::handle_scout_button(ctx, component, data).await)
+                            } else if id.starts_with("heal:") {
+                                Some(commands::handle_heal_button(ctx, component, data).await)
+                            } else {
+                                None
+                            };
+                            if let Some(Err(e)) = handled {
+                                tracing::warn!(err = %e, custom_id = %component.data.custom_id, "button handler failed");
+                            }
+                        }
+                    }
+                    Ok(())
+                })
+            },
             ..Default::default()
         })
         .setup(move |ctx, ready, framework| {
@@ -105,6 +126,26 @@ async fn main() -> anyhow::Result<()> {
                 .await?;
                 tracing::info!(guild_id, "slash commands registered");
                 let bot_user_id = ready.user.id.get();
+
+                // -----------------------------------------------------------------------
+                // Startup validation: check if all cached message IDs still exist.
+                // If any are missing, purge the channel and start fresh.
+                // -----------------------------------------------------------------------
+                let cache = storage::load_message_cache().unwrap_or_default();
+                let mut b = board.lock().await;
+                let messages_exist = commands::validate_cached_messages_exist(&ctx.http, channel_id, &*b, &cache).await;
+                if !messages_exist {
+                    tracing::warn!("cached messages missing, purging channel and resetting message cache");
+                    commands::delete_all_messages_in_channel(&ctx.http, channel_id).await;
+                    // Reset message IDs so new messages will be posted
+                    b.chudlerboard_message_id = None;
+                    // Clear the message cache so update_board_message posts fresh messages
+                    if let Err(e) = storage::save_message_cache(&Default::default()) {
+                        tracing::warn!(err = %e, "failed to clear message cache");
+                    }
+                }
+                drop(b);
+
                 commands::cleanup_non_bot_messages(&ctx.http, channel_id, bot_user_id, max_non_bot_messages).await;
                 {
                     let mut b = board.lock().await;

@@ -331,7 +331,9 @@ impl QuestGenerator {
                 Ok(Ok(response)) => return Ok(Self::sanitize(&response)),
                 Ok(Err(e)) => {
                     let msg = e.to_string();
-                    let (wait_secs, label) = if msg.contains("503") {
+                    let (wait_secs, label) = if msg.contains("404") {
+                        (10, "404 model not found")
+                    } else if msg.contains("503") {
                         (10, "503 model overloaded")
                     } else if msg.contains("500") {
                         (15, "500 internal server error")

@@ -34,6 +34,7 @@ pub struct QuestResolved {
     pub player: crate::player::Player,
     pub level_up: crate::player::LevelUp,
     pub reward: u32,
+    pub hospitalized: bool,
 }
 
 // P(optimal stat chosen) by experience level.
@@ -210,6 +211,7 @@ pub async fn tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<
     tracing::info!(count = due.len(), "tick fired");
 
     let mut resolved = Vec::new();
+    let mut hospital = crate::hospital::Hospital::load()?;
 
     for board_quest in due {
         let discord_user_id = match board_quest.assigned_to() {
@@ -241,8 +243,9 @@ pub async fn tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<
         let quest_title = board_quest.generated.quest_title.clone();
 
         let level_up = player.record_quest(&result);
+        let player_name = player.name.clone(); // Clone name before player is moved
         if passed {
-            tracing::info!("{} made ${}", player.name, board_quest.generated.reward);
+            tracing::info!("{} made ${}", player_name, board_quest.generated.reward);
             player.cash += board_quest.generated.reward;
         }
         storage::save_player(&player)?;
@@ -254,15 +257,28 @@ pub async fn tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<
             "quest resolved and player saved"
         );
 
+        // Hospitalize on severe failures (margin < -2)
+        let hospitalized = !passed
+            && result.trials.last().map_or(false, |t| t.margin < -2)
+            && {
+                let ticks = result.trials.last().unwrap().margin.abs() as u32;
+                let admitted = hospital.admit(discord_user_id, player_name.clone(), ticks).is_some();
+                if admitted {
+                    tracing::info!(discord_user_id, ticks, "chud admitted to hospital");
+                }
+                admitted
+            };
+
         resolved.push(QuestResolved {
             discord_user_id,
-            player_name: player.name.clone(),
+            player_name,
             quest_title,
             summary,
             result,
             player,
             level_up,
             reward: board_quest.generated.reward,
+            hospitalized,
         });
 
         if !passed {
@@ -276,6 +292,7 @@ pub async fn tick(board: &mut Board) -> anyhow::Result<(Vec<QuestResolved>, Vec<
     }
 
     storage::save_board(board)?;
+    hospital.save()?;
     Ok((resolved, scout_results))
 }
 

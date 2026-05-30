@@ -13,6 +13,14 @@ pub struct AssignInfo {
     pub quest_title: String,
 }
 
+/// Reason why a player is busy and cannot take new quests.
+#[derive(Debug, Clone)]
+pub enum BusyReason {
+    ActiveQuest { quest_title: String },
+    Scouting,
+    Hospitalized,
+}
+
 /// A pending generation job sent to the background worker.
 pub enum GenerationJob {
     /// Generate the LLM result narrative for an already-assigned quest.
@@ -122,8 +130,8 @@ pub fn assign_chud_to_quest(
     let player = storage::load_player(discord_user_id)?
         .ok_or_else(|| anyhow::anyhow!("no chud found for user {}", discord_user_id))?;
 
-    if board.is_player_busy(discord_user_id) {
-        anyhow::bail!("user {} is already on or scouting a quest", discord_user_id);
+    if let Some(_reason) = board.is_player_busy(discord_user_id)? {
+        anyhow::bail!("user {} is busy", discord_user_id);
     }
 
     let quest = board

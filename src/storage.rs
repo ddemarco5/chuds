@@ -137,3 +137,4 @@ pub fn load_board() -> anyhow::Result<Board> {
     let yaml = std::fs::read_to_string(BOARD_PATH).context("reading board")?;
     serde_yaml::from_str(&yaml).context("parsing board")
 }
+

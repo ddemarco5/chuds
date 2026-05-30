@@ -1,3 +1,11 @@
+new_day:
+  - "*A new day begins.*"
+  - "*The sun rises. Another chudly day.*"
+  - "*Morning breaks. Time waits for no chud.*"
+  - "*A fresh day dawns over the job board.*"
+  - "*The clock ticks. A new day is here.*"
+  - "*Wake up and smell the chuds*"
+
 chud_takes_job:
   - "**{}** ripped **{}** off the board"
   - "**{}** snagged **{}** and skipped out the door"
@@ -25,3 +33,103 @@ chud_brings_money:
   - "${} is dropped into your money bucket."
   - "${} drops into your lap like it was always meant to be there."
   - "Your coin purse is now ${} heavier. Thanks dumbass chud."
+
+return_passed:
+  - "{} saunters back in with a shit-eating grin."
+  - "{} strolls through the door looking pleased with themselves."
+  - "{} bursts in, clearly proud of their work."
+  - "{} returns with a confident swagger."
+
+return_failed:
+  - "{} stumbles back in with their head hung low."
+  - "{} drags themselves through the door, defeated."
+  - "{} returns looking like they've seen better days."
+  - "{} shuffles in, avoiding eye contact."
+  - "{} sheepishly walks in, they fucked it up again."
+
+return_hospitalized:
+  - "{} is carted off to the hospital."
+  - "{} took a beating and was rushed to the infirmary."
+  - "The medics dragged {} away on a stretcher."
+  - "Ew someone stepped in {}, they were scraped off the floor and taken to the hospital"
+
+scout_returned_impossible:
+  - "{} saunters back in with poop in their pants."
+  - "{} returns trembling and speechless."
+  - "{} returns white as a ghost."
+
+scout_returned_terrified:
+  - "{} comes back looking terrified."
+  - "{} stumbles in, visibly shaken."
+  - "{} returns with a look of fear."
+
+scout_returned_nervous:
+  - "{} returns, looking uncertain."
+  - "{} comes back with a worried expression."
+  - "{} walks in, clearly apprehensive."
+  - "{} returns shrugging noncommittally."
+
+scout_returned_confident:
+  - "{} strolls back in with a confident gait."
+  - "{} returns, looking optimistic about the odds."
+  - "{} walks in with a determined look."
+  - "{} returns nodding thoughtfully."
+
+scout_returned_cocky:
+  - "{} saunters back in with a shit-eating grin."
+  - "{} struts in like they own the place."
+  - "{} returns smirking confidently."
+  - "{} bounces in, completely unfazed."
+
+chud_hospital_admit:
+  - "{} has been admitted to the hospital."
+  - "{} took a beating and is being patched up."
+  - "The medics are working on {}. They'll be out soon."
+
+chud_hospital_release:
+  - "{} has recovered and left the hospital."
+  - "{} walks out of the hospital, good as new."
+  - "The doctors released {}. They're ready for action."
+
+# Busy reason messages for ephemeral responses
+busy_active_quest:
+  - "{} is already on **{}**."
+  - "{} is busy with **{}** right now."
+  - "Can't do that - {} is working on **{}**."
+
+busy_scouting:
+  - "{} is busy scouting."
+  - "{} is out checking a job right now."
+  - "{} is scouting and can't be disturbed."
+
+busy_hospitalized:
+  - "{} is recovering in the hospital for {} more days."
+  - "{} is in the infirmary. {} days until they're back."
+  - "{} is being patched up. {} days left on the clock."
+
+# DM notification when chud is hospitalized
+dm_hospitalized:
+  - "**{}** has been admitted to the hospital and will be unavailable until they recover."
+  - "**{}** took a serious beating and is being treated in the infirmary. They won't be available for jobs."
+  - "The medics have taken **{}** to the hospital. They'll be out of commission for a while."
+  - "Holy shit **{}** got *FUCKED* up... they'll be in the hospital for a bit..."
+
+# Heal button label
+heal_button_label:
+  - "Heal immediately for ${}"
+  - "Pay ${} to insta-heal chud"
+  - "Treat injuries now for ${}"
+  - "Bribe the docs for ${}"
+
+# Heal success message (chud_name, price)
+heal_success:
+  - "{} has been treated and released from the hospital. You paid ${}."
+  - "The doctors patched up {} for ${}. They're ready for action."
+  - "{} is healed and back on the streets. ${} deducted from your account."
+
+# Insufficient funds - can't afford heal (chud_name) - no button shown
+heal_insufficient_funds:
+  - "{} is in the hospital but you don't have enough money to heal them."
+  - "{} needs medical treatment but your wallet is too light."
+  - "You can't afford to heal {} right now."
+  - "Broke boys get broke chuds."

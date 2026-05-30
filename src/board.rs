@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::engine::BusyReason;
+use crate::hospital::Hospital;
 use crate::quest_generator::{GeneratedQuest, QuestData};
 use crate::quest_result::QuestResult;
 
@@ -102,14 +104,31 @@ impl Board {
         })
     }
 
-    /// True if the player has any Active or Scouting state on any quest.
-    pub fn is_player_busy(&self, discord_user_id: u64) -> bool {
-        self.quests.iter().any(|q| {
-            q.states.iter().any(|s| match s {
-                QuestState::Active { discord_user_id: uid, .. } => *uid == discord_user_id,
-                QuestState::Scouting { discord_user_id: uid } => *uid == discord_user_id,
-            })
-        })
+    /// Returns why the player is busy, or None if available.
+    /// Checks: Active quest → Scouting → Hospitalized
+    pub fn is_player_busy(&self, discord_user_id: u64) -> anyhow::Result<Option<BusyReason>> {
+        // Check active quest first
+        if let Some(quest) = self.active_quest_for(discord_user_id) {
+            return Ok(Some(BusyReason::ActiveQuest {
+                quest_title: quest.generated.quest_title.clone(),
+            }));
+        }
+
+        // Check scouting second
+        let is_scouting = self.quests.iter().any(|q| {
+            q.states.iter().any(|s| matches!(s, QuestState::Scouting { discord_user_id: uid } if *uid == discord_user_id))
+        });
+        if is_scouting {
+            return Ok(Some(BusyReason::Scouting));
+        }
+
+        // Check hospital third
+        let hospital = Hospital::load()?;
+        if hospital.is_hospitalized(discord_user_id) {
+            return Ok(Some(BusyReason::Hospitalized));
+        }
+
+        Ok(None)
     }
 
     /// Remove a quest by id regardless of state. Returns `false` if not found.
