@@ -25,12 +25,16 @@ RULES:
 - Include your character name in the 'quest_giver' field - Create one if not provided. Use a first and last name
 - Create a 'quest_title' field: 1-4 words that will title the job posting paper to be posted on a wall.
 - Output in YAML format with 'quest_title', 'quest_giver' (your name), 'description' (your letter), and 'goal' (the quest goal) fields
+- If quest_goal is present in the input YAML, use it verbatim as the 'goal' field and shape the job posting so the described problem leads to that outcome
+- If quest_goal is absent, invent an appropriate goal
 
-You will receive quest_description and quest_difficulty in YAML format."#;
+You will receive quest_description and quest_difficulty in YAML format. quest_goal may also be included."#;
 #[derive(Serialize)]
 struct DescPrompt<'a> {
     quest_description: &'a str,
     quest_difficulty: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quest_goal: Option<&'a str>,
 }
 #[derive(Deserialize)]
 struct DescResponse { quest_title: String, quest_giver: String, description: String, goal: String }
@@ -361,14 +365,19 @@ impl QuestGenerator {
         let desc_yaml = serde_yaml::to_string(&DescPrompt {
             quest_description: &quest.quest_description,
             quest_difficulty: quest.quest_difficulty,
+            quest_goal: quest.quest_goal.as_deref(),
         })?;
-        tracing::info!("generating quest description");
+        if quest.quest_goal.is_some() {
+            tracing::info!("generating quest description with user-provided goal");
+        } else {
+            tracing::info!("generating quest description");
+        }
         let desc_response = Self::prompt_parse_retry::<DescResponse>(&self.description_agent, &self.description_memory, &desc_yaml, None, "description").await?;
         tracing::info!("quest description received");
         let quest_title = desc_response.quest_title;
         let quest_giver = desc_response.quest_giver;
         let description = desc_response.description;
-        let quest_goal = desc_response.goal;
+        let quest_goal = quest.quest_goal.clone().unwrap_or(desc_response.goal);
         tracing::info!("quest goal is {quest_goal}");
 
         let trial_scaffold = {

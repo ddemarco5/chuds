@@ -83,6 +83,9 @@ struct GenerateJobModal {
     #[name = "Description"]
     #[paragraph]
     description: String,
+    #[name = "Goal (optional)"]
+    #[paragraph]
+    goal: Option<String>,
     #[name = "Difficulty (1-10)"]
     #[placeholder = "e.g. 5"]
     difficulty: String,
@@ -918,8 +921,14 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
         }
         ctx.data().pending_quests.fetch_add(1, Ordering::SeqCst);
     }
-    tracing::info!("{} submitted generate_job with description '{}'", ctx.author().name, data.description);
-    ctx.data().generation_queue.send(engine::make_quest_creation_job(data.description, difficulty))
+    let goal = data.goal.filter(|s| !s.trim().is_empty()).map(|s| s.trim().to_string());
+    tracing::info!(
+        author = %ctx.author().name,
+        description = %data.description,
+        has_goal = goal.is_some(),
+        "submitted generate_job"
+    );
+    ctx.data().generation_queue.send(engine::make_quest_creation_job(data.description, difficulty, goal))
         .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
     say_ephemeral(ctx, "ok").await?;
     Ok(())

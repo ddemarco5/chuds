@@ -44,10 +44,14 @@ pub enum GenerationJob {
 // ---------------------------------------------------------------------------
 
 /// Build a [`GenerationJob::QuestCreation`] from a raw description and difficulty.
-pub fn make_quest_creation_job(description: String, difficulty: u8) -> GenerationJob {
+pub fn make_quest_creation_job(
+    description: String,
+    difficulty: u8,
+    quest_goal: Option<String>,
+) -> GenerationJob {
     let quest_data = QuestData {
         quest_description: description,
-        quest_goal: None,
+        quest_goal,
         quest_difficulty: difficulty,
         trials: roll_trials(difficulty),
     };
