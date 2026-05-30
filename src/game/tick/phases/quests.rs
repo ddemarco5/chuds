@@ -4,7 +4,7 @@ use crate::game::tick::{QuestResolved, TickContext, TickOutcome};
 
 pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::Result<()> {
     let due = ctx.board.tick_and_take_due();
-    tracing::info!(count = due.len(), "tick fired");
+    tracing::info!(quests_due = due.len(), "quest phase complete");
 
     for board_quest in due {
         if let Some(resolved) = resolve_quest(ctx.board, &mut ctx.hospital, board_quest)? {
