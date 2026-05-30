@@ -2,8 +2,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use rand_distr::{Distribution, Normal};
 
-use crate::player::Player;
-use crate::quest_generator::TrialStats;
+use crate::game::domain::player::Player;
+use crate::game::generation::quest_generator::TrialStats;
 
 /// Standard deviation for the trial-count normal distribution. Tweak to taste.
 pub const TRIAL_COUNT_STDDEV: f64 = 1.0;

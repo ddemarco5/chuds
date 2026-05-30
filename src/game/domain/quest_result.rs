@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::player::Player;
-use crate::quest_builder::{PlayedQuest, StatChoice, TrialOutcome};
-use crate::quest_generator::GeneratedQuest;
+use crate::game::domain::player::Player;
+use crate::game::generation::quest_generator::GeneratedQuest;
+use crate::game::mechanics::quest_builder::{PlayedQuest, StatChoice, TrialOutcome};
 
 fn is_optimal(outcome: &TrialOutcome, player: &Player) -> bool {
     let chosen_score = outcome.player_stat as i16 - outcome.required as i16;

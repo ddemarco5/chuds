@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::quest_result::QuestResult;
+use crate::game::domain::quest_result::QuestResult;
 
 const MAX_STAT: u8 = 10;
 

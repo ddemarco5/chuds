@@ -2,10 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::BusyReason;
-use crate::hospital::Hospital;
-use crate::quest_generator::{GeneratedQuest, QuestData};
-use crate::quest_result::QuestResult;
+use crate::game::domain::quest_result::QuestResult;
+use crate::game::generation::quest_generator::{GeneratedQuest, QuestData};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -31,9 +29,10 @@ pub struct BoardQuest {
 }
 
 impl BoardQuest {
-
     pub fn has_active(&self) -> bool {
-        self.states.iter().any(|s| matches!(s, QuestState::Active { .. }))
+        self.states
+            .iter()
+            .any(|s| matches!(s, QuestState::Active { .. }))
     }
 
     /// Returns the Discord user ID of the first (or only) active player, if any.
@@ -72,13 +71,17 @@ impl Board {
         id
     }
 
-
     /// Assign an open quest to a player with a tick countdown.
     /// Returns `false` if the quest doesn't exist or is already taken.
     pub fn assign(&mut self, quest_id: u32, discord_user_id: u64, ticks_remaining: u32) -> bool {
-        match self.quests.iter_mut().find(|q| q.id == quest_id && !q.has_active()) {
+        match self
+            .quests
+            .iter_mut()
+            .find(|q| q.id == quest_id && !q.has_active())
+        {
             Some(q) => {
-                q.states.push(QuestState::Active { discord_user_id, ticks_remaining });
+                q.states
+                    .push(QuestState::Active { discord_user_id, ticks_remaining });
                 true
             }
             None => false,
@@ -90,7 +93,8 @@ impl Board {
     pub fn scout(&mut self, quest_id: u32, discord_user_id: u64) -> bool {
         match self.quests.iter_mut().find(|q| q.id == quest_id) {
             Some(q) => {
-                q.states.push(QuestState::Scouting { discord_user_id });
+                q.states
+                    .push(QuestState::Scouting { discord_user_id });
                 true
             }
             None => false,
@@ -100,40 +104,18 @@ impl Board {
     /// The active quest for a given player, if any.
     pub fn active_quest_for(&self, discord_user_id: u64) -> Option<&BoardQuest> {
         self.quests.iter().find(|q| {
-            q.states.iter().any(|s| matches!(s, QuestState::Active { discord_user_id: uid, .. } if *uid == discord_user_id))
+            q.states.iter().any(|s| {
+                matches!(
+                    s,
+                    QuestState::Active { discord_user_id: uid, .. } if *uid == discord_user_id
+                )
+            })
         })
     }
 
     /// Number of quests with any player state (active job or scouting).
     pub fn active_quest_count(&self) -> usize {
         self.quests.iter().filter(|q| !q.states.is_empty()).count()
-    }
-
-    /// Returns why the player is busy, or None if available.
-    /// Checks: Active quest → Scouting → Hospitalized
-    pub fn is_player_busy(&self, discord_user_id: u64) -> anyhow::Result<Option<BusyReason>> {
-        // Check active quest first
-        if let Some(quest) = self.active_quest_for(discord_user_id) {
-            return Ok(Some(BusyReason::ActiveQuest {
-                quest_title: quest.generated.quest_title.clone(),
-            }));
-        }
-
-        // Check scouting second
-        let is_scouting = self.quests.iter().any(|q| {
-            q.states.iter().any(|s| matches!(s, QuestState::Scouting { discord_user_id: uid } if *uid == discord_user_id))
-        });
-        if is_scouting {
-            return Ok(Some(BusyReason::Scouting));
-        }
-
-        // Check hospital third
-        let hospital = Hospital::load()?;
-        if hospital.is_hospitalized(discord_user_id) {
-            return Ok(Some(BusyReason::Hospitalized));
-        }
-
-        Ok(None)
     }
 
     /// Remove a quest by id regardless of state. Returns `false` if not found.
@@ -148,15 +130,7 @@ impl Board {
     /// is present in `completed_results` AND either:
     ///   - `ticks_remaining` has reached zero (all trials elapsed), OR
     ///   - the current trial's result is a failure (early resolution).
-    ///
-    /// The current trial index (0-based) after decrement is:
-    ///   `total_trials - ticks_remaining - 1`
-    /// i.e. `total_trials - ticks_remaining` gives the 1-based trial number.
-    ///
-    /// Quests whose generation result isn't ready yet are left on the board
-    /// and rechecked next tick.
     pub fn tick_and_take_due(&mut self) -> Vec<BoardQuest> {
-        // Phase 1: decrement every active quest's counter.
         for q in &mut self.quests {
             for s in &mut q.states {
                 if let QuestState::Active { ticks_remaining, .. } = s {
@@ -165,22 +139,21 @@ impl Board {
             }
         }
 
-        // Phase 2: build the set of quest IDs that should resolve this tick.
-        // We do this as a separate pass so the drain closure below doesn't need
-        // to borrow self.completed_results at the same time as self.quests.
         let mut due_ids = std::collections::HashSet::new();
         for q in &self.quests {
             if let Some(QuestState::Active { ticks_remaining, .. }) = q.states.first() {
                 if let Some(result) = self.completed_results.get(&q.id) {
                     let total_trials = q.quest_data.trials.len() as u32;
                     if *ticks_remaining == 0 {
-                        // Final tick: resolve regardless of pass/fail.
                         due_ids.insert(q.id);
                     } else {
-                        // Intermediate tick: resolve early only if the trial
-                        // we just attempted is a failure.
-                        let trial_index = total_trials.saturating_sub(*ticks_remaining + 1) as usize;
-                        if result.trials.get(trial_index).map_or(false, |t| !t.passed) {
+                        let trial_index =
+                            total_trials.saturating_sub(*ticks_remaining + 1) as usize;
+                        if result
+                            .trials
+                            .get(trial_index)
+                            .map_or(false, |t| !t.passed)
+                        {
                             due_ids.insert(q.id);
                         }
                     }
@@ -188,10 +161,10 @@ impl Board {
             }
         }
 
-        // Phase 3: partition quests into due and remaining.
-        let (due, remaining): (Vec<_>, Vec<_>) = self.quests.drain(..).partition(|q| {
-            due_ids.contains(&q.id)
-        });
+        let (due, remaining): (Vec<_>, Vec<_>) = self
+            .quests
+            .drain(..)
+            .partition(|q| due_ids.contains(&q.id));
         self.quests = remaining;
         due
     }

@@ -1,20 +1,13 @@
-mod board;
-mod chudmasters;
-mod commands;
-mod messages;
-mod engine;
-mod hospital;
-mod message_cache;
-mod player;
-mod quest_builder;
-mod quest_generator;
-mod quest_result;
-mod simulation;
-mod storage;
+use std::{sync::Arc, time::Duration};
 
-use std::{sync::{Arc, atomic::{AtomicUsize, Ordering}}, time::Duration};
-
-use commands::Data;
+use chuds::discord::{
+    self, cleanup_non_bot_messages, delete_all_messages_in_channel, execute_tick,
+    handle_heal_button, handle_scout_button, handle_take_button, update_board_message,
+    validate_cached_messages_exist, Data,
+};
+use chuds::game::generation::worker::{spawn_generation_worker, WorkerEffect};
+use chuds::game::persistence::storage;
+use chuds::game::state::GameState;
 use poise::serenity_prelude as serenity;
 use tokio::time::MissedTickBehavior;
 
@@ -61,30 +54,33 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .map_err(|_| anyhow::anyhow!("TICK_TIME_S must be a positive integer"))?;
 
-    let generator = Arc::new(quest_generator::QuestGenerator::new(&api_key)?);
-    let board = Arc::new(tokio::sync::Mutex::new(storage::load_board()?));
-    let pending_quests = Arc::new(AtomicUsize::new(0));
+    let generator = Arc::new(chuds::game::generation::quest_generator::QuestGenerator::new(
+        &api_key,
+    )?);
+    let game_state = GameState::load()?;
+    let board = Arc::new(tokio::sync::Mutex::new(game_state.board));
+    let pending_quests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     tracing::info!(tick_time_s, "chuds bot starting");
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
-                commands::tick(),
-                commands::generate_job(),
-                commands::write_job(),
-                commands::delete_job(),
-                commands::chud(),
-                commands::add_chud(),
-                commands::delete_chud(),
-                commands::assign(),
-                commands::stats(),
-                commands::cash(),
-                commands::job(),
-                commands::save(),
-                commands::load(),
-                commands::add_cm(),
-                commands::delete_cm(),
+                discord::commands::tick(),
+                discord::commands::generate_job(),
+                discord::commands::write_job(),
+                discord::commands::delete_job(),
+                discord::commands::chud(),
+                discord::commands::add_chud(),
+                discord::commands::delete_chud(),
+                discord::commands::assign(),
+                discord::commands::stats(),
+                discord::commands::cash(),
+                discord::commands::job(),
+                discord::commands::save(),
+                discord::commands::load(),
+                discord::commands::add_cm(),
+                discord::commands::delete_cm(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
@@ -92,11 +88,11 @@ async fn main() -> anyhow::Result<()> {
                         if let serenity::Interaction::Component(component) = interaction {
                             let id = &component.data.custom_id;
                             let handled = if id.starts_with("take:") {
-                                Some(commands::handle_take_button(ctx, component, data).await)
+                                Some(handle_take_button(ctx, component, data).await)
                             } else if id.starts_with("scout:") {
-                                Some(commands::handle_scout_button(ctx, component, data).await)
+                                Some(handle_scout_button(ctx, component, data).await)
                             } else if id.starts_with("heal:") {
-                                Some(commands::handle_heal_button(ctx, component, data).await)
+                                Some(handle_heal_button(ctx, component, data).await)
                             } else {
                                 None
                             };
@@ -127,135 +123,79 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!(guild_id, "slash commands registered");
                 let bot_user_id = ready.user.id.get();
 
-                // -----------------------------------------------------------------------
-                // Startup validation: check if all cached message IDs still exist.
-                // If any are missing, purge the channel and start fresh.
-                // -----------------------------------------------------------------------
                 let cache = storage::load_message_cache().unwrap_or_default();
                 let mut b = board.lock().await;
-                let messages_exist = commands::validate_cached_messages_exist(&ctx.http, channel_id, &*b, &cache).await;
+                let messages_exist =
+                    validate_cached_messages_exist(&ctx.http, channel_id, &*b, &cache).await;
                 if !messages_exist {
                     tracing::warn!("cached messages missing, purging channel and resetting message cache");
-                    commands::delete_all_messages_in_channel(&ctx.http, channel_id).await;
-                    // Reset message IDs so new messages will be posted
+                    delete_all_messages_in_channel(&ctx.http, channel_id).await;
                     b.chudlerboard_message_id = None;
-                    // Clear the message cache so update_board_message posts fresh messages
                     if let Err(e) = storage::save_message_cache(&Default::default()) {
                         tracing::warn!(err = %e, "failed to clear message cache");
                     }
                 }
                 drop(b);
 
-                commands::cleanup_non_bot_messages(&ctx.http, channel_id, bot_user_id, max_non_bot_messages).await;
+                cleanup_non_bot_messages(
+                    &ctx.http,
+                    channel_id,
+                    bot_user_id,
+                    max_non_bot_messages,
+                )
+                .await;
                 {
                     let mut b = board.lock().await;
-                    commands::update_board_message(&ctx.http, channel_id, &mut b, max_jobs).await?;
+                    update_board_message(&ctx.http, channel_id, &mut b, max_jobs).await?;
                 }
 
-                // -----------------------------------------------------------------------
-                // Generation worker
-                //
-                // LLM calls are decoupled from both the tick loop and the Discord command
-                // handler via an unbounded mpsc channel.  The flow is:
-                //
-                //   /generate_job command
-                //     └─ validates board capacity (sync, fast)
-                //     └─ sends GenerationJob::QuestCreation { quest_data } down `generation_tx`
-                //
-                //   /take or /assign command
-                //     └─ assigns quest on board (sync, fast)
-                //     └─ sends GenerationJob::QuestResult { board_quest, player } down `generation_tx`
-                //
-                //   worker task (single sequential task — one LLM call at a time)
-                //     └─ QuestResult: calls engine::generate_result, stores in board.completed_results
-                //     └─ QuestCreation: calls generate_from_description, adds quest to board,
-                //        updates the board message
-                //
-                //   tick (periodic or /tick command)
-                //     └─ decrements ticks_remaining on all active quests
-                //     └─ picks up quests where ticks_remaining == 0 AND result is present
-                //     └─ applies stats, DMs player, posts to channel
-                //
-                // If generate_result errors the quest stays Active with ticks_remaining=0
-                // and is silently skipped every tick until manually removed.
-                // -----------------------------------------------------------------------
-                let (generation_tx, mut generation_rx) = tokio::sync::mpsc::unbounded_channel::<engine::GenerationJob>();
+                let (generation_tx, generation_rx) =
+                    tokio::sync::mpsc::unbounded_channel::<chuds::game::engine::GenerationJob>();
 
                 {
                     let worker_board = Arc::clone(&board);
                     let worker_generator = Arc::clone(&generator);
                     let worker_http = Arc::clone(&ctx.http);
                     let worker_pending = Arc::clone(&pending_quests);
-                    tokio::spawn(async move {
-                        // Sequential: we only pick up the next job after the current one
-                        // finishes. This avoids hammering the LLM API concurrently and
-                        // keeps completed_results writes orderly.
-                        while let Some(job) = generation_rx.recv().await {
-                            match job {
-                                engine::GenerationJob::QuestResult { board_quest, player } => {
-                                    match engine::generate_result(&*worker_generator, &board_quest, &player).await {
-                                        Ok(result) => {
-                                            let mut b = worker_board.lock().await;
-                                            b.completed_results.insert(board_quest.id, result);
-                                            if let Err(e) = storage::save_board(&*b) {
-                                                tracing::error!(err = %e, "failed to save board after generation");
-                                            }
-                                            tracing::info!(quest_id = board_quest.id, "generation complete, result stored");
-                                        }
-                                        Err(e) => {
-                                            // The quest remains Active on the board. Every subsequent
-                                            // tick will skip it (no entry in completed_results) until
-                                            // someone manually deletes it with /delete_job.
-                                            tracing::error!(
-                                                quest_id = board_quest.id,
-                                                err = %e,
-                                                "generate_result failed; quest will remain active and be skipped each tick"
-                                            );
-                                        }
+                    spawn_generation_worker(
+                        generation_rx,
+                        Arc::clone(&worker_board),
+                        worker_generator,
+                        worker_pending,
+                        move |effects| {
+                            let worker_http = Arc::clone(&worker_http);
+                            let worker_board = Arc::clone(&worker_board);
+                            Box::pin(async move {
+                                if effects.iter().any(|e| {
+                                    matches!(e, WorkerEffect::QuestAdded { .. })
+                                }) {
+                                    let mut b = worker_board.lock().await;
+                                    if let Err(e) = update_board_message(
+                                        &worker_http,
+                                        channel_id,
+                                        &mut b,
+                                        max_jobs,
+                                    )
+                                    .await
+                                    {
+                                        tracing::warn!(err = %e, "failed to update board after quest creation");
                                     }
                                 }
-                                engine::GenerationJob::QuestCreation { quest_data } => {
-                                    match worker_generator.generate_from_description(&quest_data).await {
-                                        Ok(generated) => {
-                                            tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest generated");
-                                            let mut b = worker_board.lock().await;
-                                            let id = b.add_quest(quest_data, generated);
-                                            worker_pending.fetch_sub(1, Ordering::SeqCst);
-                                            if let Err(e) = storage::save_board(&*b) {
-                                                tracing::error!(err = %e, "failed to save board after quest creation");
-                                            }
-                                            tracing::info!(quest_id = id, "quest added to board");
-                                            if let Err(e) = commands::update_board_message(&worker_http, channel_id, &mut *b, max_jobs).await {
-                                                tracing::warn!(err = %e, "failed to update board message after quest creation");
-                                            }
-                                        }
-                                        Err(e) => {
-                                            worker_pending.fetch_sub(1, Ordering::SeqCst);
-                                            tracing::error!(err = %e, "quest creation failed");
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
+                            })
+                        },
+                    );
                 }
 
-                // Periodic tick task — fires every TICK_TIME_S seconds.
-                // This is separate from the generation worker above: by the
-                // time a tick fires the worker has (usually) already written
-                // the LLM result into board.completed_results. execute_tick
-                // just applies those cached results and sends Discord messages.
                 let tick_board = Arc::clone(&board);
                 let tick_http = Arc::clone(&ctx.http);
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
-                    // Skip missed ticks instead of bursting to catch up after lag.
                     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
                     interval.tick().await;
                     loop {
                         interval.tick().await;
                         tracing::info!("background tick firing");
-                        if let Err(e) = commands::execute_tick(
+                        if let Err(e) = execute_tick(
                             &tick_http,
                             &tick_board,
                             channel_id,
@@ -263,7 +203,9 @@ async fn main() -> anyhow::Result<()> {
                             max_jobs,
                             bot_user_id,
                             max_non_bot_messages,
-                        ).await {
+                        )
+                        .await
+                        {
                             tracing::error!(err = %e, "background tick failed");
                         }
                     }

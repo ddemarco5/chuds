@@ -2,13 +2,15 @@ use std::path::Path;
 
 use anyhow::Context;
 
-use crate::board::Board;
-use crate::chudmasters::Chudmasters;
-use crate::message_cache::MessageCache;
-use crate::player::Player;
+use crate::game::domain::board::Board;
+use crate::game::domain::hospital::Hospital;
+use crate::game::domain::player::Player;
+use crate::game::persistence::chudmasters::Chudmasters;
+use crate::game::persistence::message_cache::MessageCache;
 
 const PLAYERS_DIR: &str = "data/players";
 const BOARD_PATH: &str = "data/board.yaml";
+const HOSPITAL_PATH: &str = "data/hospital.yaml";
 const MESSAGE_CACHE_PATH: &str = "data/message_cache.yaml";
 const CHUDMASTERS_PATH: &str = "data/chudmasters.yaml";
 
@@ -41,6 +43,31 @@ pub fn save_board(board: &Board) -> anyhow::Result<()> {
     std::fs::write(BOARD_PATH, yaml).context("writing board")
 }
 
+/// Load the quest board, returning an empty board if no file exists yet.
+pub fn load_board() -> anyhow::Result<Board> {
+    if !Path::new(BOARD_PATH).exists() {
+        return Ok(Board::default());
+    }
+    let yaml = std::fs::read_to_string(BOARD_PATH).context("reading board")?;
+    serde_yaml::from_str(&yaml).context("parsing board")
+}
+
+/// Persist the hospital to `data/hospital.yaml`.
+pub fn save_hospital(hospital: &Hospital) -> anyhow::Result<()> {
+    std::fs::create_dir_all("data")?;
+    let yaml = serde_yaml::to_string(hospital).context("serializing hospital")?;
+    std::fs::write(HOSPITAL_PATH, yaml).context("writing hospital")
+}
+
+/// Load the hospital from disk, or return empty if no file exists.
+pub fn load_hospital() -> anyhow::Result<Hospital> {
+    if !Path::new(HOSPITAL_PATH).exists() {
+        return Ok(Hospital::default());
+    }
+    let yaml = std::fs::read_to_string(HOSPITAL_PATH).context("reading hospital")?;
+    serde_yaml::from_str(&yaml).context("parsing hospital")
+}
+
 /// Return the Discord user IDs of all players that have a save file.
 pub fn list_player_ids() -> anyhow::Result<Vec<u64>> {
     if !Path::new(PLAYERS_DIR).exists() {
@@ -50,7 +77,11 @@ pub fn list_player_ids() -> anyhow::Result<Vec<u64>> {
     for entry in std::fs::read_dir(PLAYERS_DIR).context("reading players dir")? {
         let path = entry?.path();
         if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
-            if let Some(id) = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.parse::<u64>().ok()) {
+            if let Some(id) = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.parse::<u64>().ok())
+            {
                 ids.push(id);
             }
         }
@@ -128,13 +159,3 @@ pub fn remove_chudmaster(discord_user_id: u64) -> anyhow::Result<bool> {
     save_chudmasters(&cms)?;
     Ok(true)
 }
-
-/// Load the quest board, returning an empty board if no file exists yet.
-pub fn load_board() -> anyhow::Result<Board> {
-    if !Path::new(BOARD_PATH).exists() {
-        return Ok(Board::default());
-    }
-    let yaml = std::fs::read_to_string(BOARD_PATH).context("reading board")?;
-    serde_yaml::from_str(&yaml).context("parsing board")
-}
-
