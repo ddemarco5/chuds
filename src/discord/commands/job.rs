@@ -35,7 +35,7 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
             return Ok(());
         }
     };
-    {
+    let queued_count = {
         let queue = ctx.data().job_queue.lock().await;
         let pending = ctx.data().pending_quests.load(Ordering::SeqCst);
         if queue.entries.len() + pending >= ctx.data().max_job_queue {
@@ -47,7 +47,8 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
             return Ok(());
         }
         ctx.data().pending_quests.fetch_add(1, Ordering::SeqCst);
-    }
+        queue.entries.len() + pending + 1
+    };
     let goal = data
         .goal
         .filter(|s| !s.trim().is_empty())
@@ -66,7 +67,15 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
             goal,
         ))
         .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
-    say_ephemeral(ctx, "ok").await?;
+    say_ephemeral(
+        ctx,
+        format!(
+            "{}/{} jobs in queue",
+            queued_count,
+            ctx.data().max_job_queue
+        ),
+    )
+    .await?;
     Ok(())
 }
 
