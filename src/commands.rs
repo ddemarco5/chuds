@@ -652,8 +652,13 @@ pub async fn execute_tick(
 ) -> anyhow::Result<()> {
     cleanup_non_bot_messages(http, channel_id, bot_user_id, max_non_bot_messages).await;
 
-    let new_day_msg = chud_msg!("new_day");
-    post_buffered_message(http, channel_id, max_buffer, &new_day_msg).await;
+    {
+        let board_guard = board.lock().await;
+        if board_guard.active_quest_count() > 0 {
+            let new_day_msg = chud_msg!("new_day");
+            post_buffered_message(http, channel_id, max_buffer, &new_day_msg).await;
+        }
+    }
 
     // Process hospital tick first
     let mut hospital = crate::hospital::Hospital::load()?;

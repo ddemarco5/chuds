@@ -104,6 +104,11 @@ impl Board {
         })
     }
 
+    /// Number of quests with any player state (active job or scouting).
+    pub fn active_quest_count(&self) -> usize {
+        self.quests.iter().filter(|q| !q.states.is_empty()).count()
+    }
+
     /// Returns why the player is busy, or None if available.
     /// Checks: Active quest → Scouting → Hospitalized
     pub fn is_player_busy(&self, discord_user_id: u64) -> anyhow::Result<Option<BusyReason>> {
