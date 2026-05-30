@@ -28,7 +28,11 @@ RULES:
 - If quest_goal is present in the input YAML, use it verbatim as the 'goal' field and shape the job posting so the described problem leads to that outcome
 - If quest_goal is absent, invent an appropriate goal
 
-You will receive quest_description and quest_difficulty in YAML format. quest_goal may also be included."#;
+You will receive quest_description and quest_difficulty in YAML format. quest_goal may also be included.
+
+YAML OUTPUT:
+- Reply with ONLY valid YAML (no preamble or commentary). You may wrap the YAML in ```yaml fences.
+- Use block scalars (|) or double-quoted strings for 'description' and 'goal' when they contain colons, quotes, or multiple lines."#;
 #[derive(Serialize)]
 struct DescPrompt<'a> {
     quest_description: &'a str,
@@ -55,8 +59,12 @@ RULES:
 
 You will receive quest data and the quest description in YAML format. Keep the tone of the trials consistent with the description.
 If there is only one trial, ensure it encapsulates the whole adventure.
-Respond with the exact yaml template below, text surrounded with * is for you to replace
-"#;
+Respond with the exact YAML template shown in the user message. Replace each REPLACE_TRIAL_N placeholder (e.g. REPLACE_TRIAL_1) with one trial description string.
+The input 'trials' list contains stat numbers only; your output 'trials' must be a list of description strings (same count), not stat objects.
+
+YAML OUTPUT:
+- Reply with ONLY valid YAML (no preamble or commentary). You may wrap the YAML in ```yaml fences.
+- Each trial entry must be a single YAML string; use a block scalar (|) or double-quoted string if needed."#;
 #[derive(Serialize)]
 struct TrialPrompt<'a> {
     quest_description: &'a str,
@@ -101,8 +109,11 @@ RULES:
 - Match the tone set by the job giver's description
 
 You will receive the job context and trial roll outcomes in YAML format.
-Text surrounded with * in the template is for you to replace
-"#;
+Respond with the exact YAML template shown in the user message. Replace each REPLACE_TRIAL_N placeholder and REPLACE_QUEST_SUMMARY with your narrative.
+
+YAML OUTPUT:
+- Reply with ONLY valid YAML (no preamble or commentary). You may wrap the YAML in ```yaml fences.
+- Each trial entry and 'summary' must be YAML strings; use block scalars (|) or double-quoted strings when needed."#;
 #[derive(Serialize)]
 struct TrialResultPrompt<'a> {
     situation: &'a str,
@@ -212,7 +223,7 @@ impl QuestGenerator {
         let client = openrouter::Client::new(api_key)?;
         let description_memory = make_memory();
         let description_agent = client
-            .agent("openrouter/free:")
+            .agent("openrouter/free")
             .preamble([WORLD_BUILDING_CONTEXT, DESCRIPTION_SYSTEM_CONTEXT].join("\n\n").as_str())
             .build();
         let trial_memory = make_memory();
@@ -235,13 +246,30 @@ impl QuestGenerator {
             if let Some(end) = inner.rfind("```") {
                 inner[..end].trim()
             } else {
-                s
+                inner.trim()
             }
         } else {
             s
         };
         // TODO: use a crate like text_sanitizer to clean this more comprehensively https://docs.rs/text-sanitizer/latest/text_sanitizer/
         stripped.replace('\u{2019}', "'").replace('\u{2011}', "-")
+    }
+
+    fn truncate_for_log(s: &str, max: usize) -> String {
+        if s.len() <= max {
+            s.to_string()
+        } else {
+            format!("{}...", &s[..max])
+        }
+    }
+
+    fn yaml_correction(kind: &str, error: &str, raw_preview: &str) -> String {
+        format!(
+            "Your previous response was invalid ({kind}): {error}\n\
+             Reply again with ONLY valid YAML matching the required fields. \
+             Use block scalars (|) or double-quoted strings for long text or text containing colons.\n\
+             Previous response (truncated):\n{raw_preview}"
+        )
     }
 
     fn parse_retry_delay(msg: &str) -> Option<u64> {
@@ -264,18 +292,25 @@ impl QuestGenerator {
 
     async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(agent: &OpenRouterAgent, memory: &InMemoryConversationMemory, prompt: &str, expected_trials: Option<usize>, conversation_id: &str) -> anyhow::Result<T> {
         const MAX_RETRIES: u32 = 5;
-        let mut retries = 0;
+        let mut retries = 0u32;
+        let mut correction = String::new();
         loop {
             let history = memory.load(conversation_id).await.unwrap_or_default();
-            // tracing::info!("PROMPT:\n{}", prompt);
-            let raw = Self::prompt_with_retry(agent, prompt, &history).await?;
-            // tracing::info!("RESPONSE:\n{}", raw);
+            let effective_prompt = if correction.is_empty() {
+                prompt.to_string()
+            } else {
+                format!("{prompt}\n\n{correction}")
+            };
+            let raw = Self::prompt_with_retry(agent, &effective_prompt, &history).await?;
             let parsed = serde_yaml::from_str::<serde_yaml::Value>(&raw);
             match parsed {
                 Err(e) => {
                     if retries < MAX_RETRIES {
                         retries += 1;
+                        let preview = Self::truncate_for_log(&raw, 500);
                         tracing::warn!(error = %e, retries, MAX_RETRIES, "malformed YAML from LLM, retrying");
+                        tracing::debug!(raw_preview = %preview, "LLM response that failed YAML parse");
+                        correction = Self::yaml_correction("malformed YAML", &e.to_string(), &preview);
                         continue;
                     }
                     return Err(anyhow::anyhow!("LLM returned malformed YAML after {} retries: {}", MAX_RETRIES, e));
@@ -286,7 +321,11 @@ impl QuestGenerator {
                         if actual != Some(expected) {
                             if retries < MAX_RETRIES {
                                 retries += 1;
+                                let preview = Self::truncate_for_log(&raw, 500);
                                 tracing::warn!(expected, actual = ?actual, retries, MAX_RETRIES, "wrong trial count from LLM, retrying");
+                                tracing::debug!(raw_preview = %preview, "LLM response with wrong trial count");
+                                let msg = format!("expected {expected} trial strings, got {:?}", actual);
+                                correction = Self::yaml_correction("wrong trial count", &msg, &preview);
                                 continue;
                             }
                             return Err(anyhow::anyhow!("LLM returned wrong trial count after {} retries: expected {}, got {:?}", MAX_RETRIES, expected, actual));
@@ -304,7 +343,10 @@ impl QuestGenerator {
                         Err(e) => {
                             if retries < MAX_RETRIES {
                                 retries += 1;
+                                let preview = Self::truncate_for_log(&raw, 500);
                                 tracing::warn!(error = %e, retries, MAX_RETRIES, "unexpected YAML structure from LLM, retrying");
+                                tracing::debug!(raw_preview = %preview, "LLM response with unexpected YAML structure");
+                                correction = Self::yaml_correction("unexpected YAML structure", &e.to_string(), &preview);
                                 continue;
                             }
                             return Err(anyhow::anyhow!("LLM returned unexpected YAML structure after {} retries: {}", MAX_RETRIES, e));
@@ -381,8 +423,8 @@ impl QuestGenerator {
         tracing::info!("quest goal is {quest_goal}");
 
         let trial_scaffold = {
-            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - *Trial {} Description Here*", i + 1)).collect::<Vec<_>>().join("\n");
-            format!("\nThe response should only contain a yaml of this structure:\n```\ntrials:\n{}\n```", slots)
+            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - REPLACE_TRIAL_{}", i + 1)).collect::<Vec<_>>().join("\n");
+            format!("\nThe response should only contain a yaml of this structure:\n```yaml\ntrials:\n{}\n```", slots)
         };
         let trial_yaml = format!("{}{trial_scaffold}", serde_yaml::to_string(&TrialPrompt {
             quest_description: &quest.quest_description,
@@ -407,8 +449,8 @@ impl QuestGenerator {
     ) -> anyhow::Result<GeneratedQuest> {
 
         let trial_scaffold = {
-            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - *Trial {} Description Here*", i + 1)).collect::<Vec<_>>().join("\n");
-            format!("\nThe response should only contain a yaml of this structure:\n```\ntrials:\n{}\n```", slots)
+            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - REPLACE_TRIAL_{}", i + 1)).collect::<Vec<_>>().join("\n");
+            format!("\nThe response should only contain a yaml of this structure:\n```yaml\ntrials:\n{}\n```", slots)
         };
         let trial_yaml = format!("{}{trial_scaffold}", serde_yaml::to_string(&TrialPrompt {
             quest_description: &quest.quest_description,
@@ -455,8 +497,8 @@ impl QuestGenerator {
     ) -> anyhow::Result<QuestResults> {
 
         let scaffold = {
-            let slots = outcomes.iter().enumerate().map(|(i, _)| format!("  - *Trial {} Narrative Here*", i + 1)).collect::<Vec<_>>().join("\n");
-            format!("\nThe response should only contain a yaml of this structure:\n```\ntrials:\n{}\nsummary: *Quest Summary Here*\n```", slots)
+            let slots = outcomes.iter().enumerate().map(|(i, _)| format!("  - REPLACE_TRIAL_{}", i + 1)).collect::<Vec<_>>().join("\n");
+            format!("\nThe response should only contain a yaml of this structure:\n```yaml\ntrials:\n{}\nsummary: REPLACE_QUEST_SUMMARY\n```", slots)
         };
         let results_yaml = serde_yaml::to_string(&ResultsPrompt {
             adventurer_name: chud_name,
