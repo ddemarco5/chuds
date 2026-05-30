@@ -72,6 +72,7 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
     tick::execute_tick(
         &ctx.serenity_context().http,
         &ctx.data().board,
+        &ctx.data().job_queue,
         ctx.data().channel_id,
         ctx.data().max_buffer_messages,
         ctx.data().max_jobs,

@@ -36,12 +36,12 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
         }
     };
     {
-        let board = ctx.data().board.lock().await;
+        let queue = ctx.data().job_queue.lock().await;
         let pending = ctx.data().pending_quests.load(Ordering::SeqCst);
-        if board.quests.len() + pending >= ctx.data().max_jobs {
+        if queue.entries.len() + pending >= ctx.data().max_job_queue {
             say_ephemeral(
                 ctx,
-                format!("Board is full ({} jobs max).", ctx.data().max_jobs),
+                format!("Job queue is full ({} queued max).", ctx.data().max_job_queue),
             )
             .await?;
             return Ok(());
@@ -95,23 +95,26 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
             return Ok(());
         }
     };
-    let mut board = ctx.data().board.lock().await;
-    if board.quests.len() >= ctx.data().max_jobs {
-        say_ephemeral(
-            ctx,
-            format!("Board is full ({} jobs max).", ctx.data().max_jobs),
-        )
-        .await?;
-        return Ok(());
+    {
+        let queue = ctx.data().job_queue.lock().await;
+        if queue.entries.len() >= ctx.data().max_job_queue {
+            say_ephemeral(
+                ctx,
+                format!("Job queue is full ({} queued max).", ctx.data().max_job_queue),
+            )
+            .await?;
+            return Ok(());
+        }
     }
     tracing::info!(
         "{} submitted write_job with description '{}'",
         ctx.author().name,
         data.description
     );
+    let mut queue = ctx.data().job_queue.lock().await;
     engine::write_job(
         &ctx.data().generator,
-        &mut *board,
+        &mut *queue,
         data.title,
         data.giver,
         data.description,
@@ -119,6 +122,13 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
         difficulty,
     )
     .await?;
+    drop(queue);
+
+    let mut board = ctx.data().board.lock().await;
+    let mut queue = ctx.data().job_queue.lock().await;
+    engine::refill_board_from_queue(&mut *board, &mut *queue, ctx.data().max_jobs);
+    storage::save_board(&*board)?;
+    storage::save_job_queue(&*queue)?;
     board_ui::update_board_message(
         &ctx.serenity_context().http,
         ctx.data().channel_id,
@@ -137,7 +147,10 @@ pub async fn delete_job(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
         return Ok(());
     }
     let mut board = ctx.data().board.lock().await;
+    let mut queue = ctx.data().job_queue.lock().await;
     engine::delete_quest(&mut *board, quest_id)?;
+    engine::refill_board_from_queue(&mut *board, &mut *queue, ctx.data().max_jobs);
+    storage::save_job_queue(&*queue)?;
     board_ui::update_board_message(
         &ctx.serenity_context().http,
         ctx.data().channel_id,

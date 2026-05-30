@@ -5,6 +5,7 @@ use chuds::discord::{
     handle_heal_button, handle_scout_button, handle_take_button, update_board_message,
     validate_cached_messages_exist, Data,
 };
+use chuds::game::engine;
 use chuds::game::generation::worker::{spawn_generation_worker, WorkerEffect};
 use chuds::game::persistence::storage;
 use chuds::game::state::GameState;
@@ -45,6 +46,10 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("MAX_JOBS not set"))?
         .parse()
         .map_err(|_| anyhow::anyhow!("MAX_JOBS must be a positive integer"))?;
+    let max_job_queue: usize = std::env::var("MAX_JOB_QUEUE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
     let max_non_bot_messages: usize = std::env::var("MAX_NON_BOT_MESSAGES")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -59,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
     )?);
     let game_state = GameState::load()?;
     let board = Arc::new(tokio::sync::Mutex::new(game_state.board));
+    let job_queue = Arc::new(tokio::sync::Mutex::new(game_state.job_queue));
     let pending_quests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     tracing::info!(tick_time_s, "chuds bot starting");
@@ -146,6 +152,10 @@ async fn main() -> anyhow::Result<()> {
                 .await;
                 {
                     let mut b = board.lock().await;
+                    let mut q = job_queue.lock().await;
+                    engine::refill_board_from_queue(&mut *b, &mut *q, max_jobs);
+                    storage::save_board(&*b)?;
+                    storage::save_job_queue(&*q)?;
                     update_board_message(&ctx.http, channel_id, &mut b, max_jobs).await?;
                 }
 
@@ -154,20 +164,23 @@ async fn main() -> anyhow::Result<()> {
 
                 {
                     let worker_board = Arc::clone(&board);
+                    let worker_queue = Arc::clone(&job_queue);
                     let worker_generator = Arc::clone(&generator);
                     let worker_http = Arc::clone(&ctx.http);
                     let worker_pending = Arc::clone(&pending_quests);
                     spawn_generation_worker(
                         generation_rx,
                         Arc::clone(&worker_board),
+                        Arc::clone(&worker_queue),
                         worker_generator,
+                        max_jobs,
                         worker_pending,
                         move |effects| {
                             let worker_http = Arc::clone(&worker_http);
                             let worker_board = Arc::clone(&worker_board);
                             Box::pin(async move {
                                 if effects.iter().any(|e| {
-                                    matches!(e, WorkerEffect::QuestAdded { .. })
+                                    matches!(e, WorkerEffect::BoardRefilled { .. })
                                 }) {
                                     let mut b = worker_board.lock().await;
                                     if let Err(e) = update_board_message(
@@ -187,6 +200,7 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 let tick_board = Arc::clone(&board);
+                let tick_queue = Arc::clone(&job_queue);
                 let tick_http = Arc::clone(&ctx.http);
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
@@ -198,6 +212,7 @@ async fn main() -> anyhow::Result<()> {
                         if let Err(e) = execute_tick(
                             &tick_http,
                             &tick_board,
+                            &tick_queue,
                             channel_id,
                             max_buffer_messages,
                             max_jobs,
@@ -214,11 +229,13 @@ async fn main() -> anyhow::Result<()> {
                 Ok(Data {
                     generator,
                     board,
+                    job_queue,
                     admin_user_id,
                     bot_user_id,
                     channel_id,
                     max_buffer_messages,
                     max_jobs,
+                    max_job_queue,
                     max_non_bot_messages,
                     generation_queue: generation_tx,
                     pending_quests,

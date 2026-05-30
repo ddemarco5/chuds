@@ -4,17 +4,20 @@ use std::sync::{
 };
 
 use crate::game::domain::board::Board;
+use crate::game::domain::job_queue::JobQueue;
 use crate::game::engine::GenerationJob;
 use crate::game::generation::quest_generator::QuestGenerator;
 
 pub struct Data {
     pub generator: Arc<QuestGenerator>,
     pub board: Arc<tokio::sync::Mutex<Board>>,
+    pub job_queue: Arc<tokio::sync::Mutex<JobQueue>>,
     pub admin_user_id: u64,
     pub bot_user_id: u64,
     pub channel_id: u64,
     pub max_buffer_messages: usize,
     pub max_jobs: usize,
+    pub max_job_queue: usize,
     pub max_non_bot_messages: usize,
     pub generation_queue: tokio::sync::mpsc::UnboundedSender<GenerationJob>,
     pub pending_quests: Arc<AtomicUsize>,

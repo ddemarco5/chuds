@@ -1,7 +1,8 @@
 use crate::game::domain::board::{Board, BoardQuest};
+use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{create_chud, Player};
 use crate::game::domain::quest_result::QuestResult;
-use crate::game::generation::quest_generator::{QuestData, QuestGenerator, QuestResults, TrialResult};
+use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator, QuestResults, TrialResult};
 use crate::game::mechanics::quest_builder::roll_trials;
 use crate::game::mechanics::simulation::play_quest;
 use crate::game::persistence::storage;
@@ -25,6 +26,34 @@ pub enum GenerationJob {
     },
 }
 
+/// Move quests from the front of the queue onto the board until full or queue empty.
+pub fn refill_board_from_queue(
+    board: &mut Board,
+    queue: &mut JobQueue,
+    max_jobs: usize,
+) -> usize {
+    let mut added = 0usize;
+    while board.quests.len() < max_jobs && !queue.entries.is_empty() {
+        let entry = queue.entries.remove(0);
+        board.add_quest(entry.quest_data, entry.generated);
+        added += 1;
+    }
+    if added > 0 {
+        tracing::info!(added, "board refilled from queue");
+    }
+    added
+}
+
+/// Push a fully generated quest onto the job queue and persist.
+pub fn enqueue_quest(
+    queue: &mut JobQueue,
+    quest_data: QuestData,
+    generated: GeneratedQuest,
+) -> anyhow::Result<()> {
+    queue.push(quest_data, generated);
+    storage::save_job_queue(queue)
+}
+
 /// Build a [`GenerationJob::QuestCreation`] from a raw description and difficulty.
 pub fn make_quest_creation_job(
     description: String,
@@ -40,16 +69,16 @@ pub fn make_quest_creation_job(
     GenerationJob::QuestCreation { quest_data }
 }
 
-/// Add a user-authored quest; only trial situations are LLM-generated. Returns the new quest id.
+/// Generate trial flavor via LLM and enqueue the quest (does not add directly to board).
 pub async fn write_job(
     generator: &QuestGenerator,
-    board: &mut Board,
+    queue: &mut JobQueue,
     title: String,
     giver: String,
     description: String,
     goal: String,
     difficulty: u8,
-) -> anyhow::Result<u32> {
+) -> anyhow::Result<()> {
     let quest_data = QuestData {
         quest_description: description,
         quest_goal: Some(goal),
@@ -60,10 +89,9 @@ pub async fn write_job(
         .generate_from_explicit(&quest_data, title, giver)
         .await?;
     tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest written");
-    let id = board.add_quest(quest_data, generated);
-    storage::save_board(board)?;
-    tracing::info!(id, "quest added to board");
-    Ok(id)
+    enqueue_quest(queue, quest_data, generated)?;
+    tracing::info!(queued = queue.entries.len(), "quest added to queue");
+    Ok(())
 }
 
 /// Remove a quest from the board by id (any state). Errors if not found.

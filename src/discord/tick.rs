@@ -5,6 +5,7 @@ use crate::discord::board_ui;
 use crate::discord::channel::{cleanup_non_bot_messages, post_buffered_message};
 use crate::discord::formatting;
 use crate::game::domain::board::Board;
+use crate::game::domain::job_queue::JobQueue;
 use crate::game::persistence::storage;
 use crate::game::tick::{run_tick, TickContext};
 
@@ -12,6 +13,7 @@ use crate::game::tick::{run_tick, TickContext};
 pub async fn execute_tick(
     http: &serenity::Http,
     board: &tokio::sync::Mutex<Board>,
+    job_queue: &tokio::sync::Mutex<JobQueue>,
     channel_id: u64,
     max_buffer: usize,
     max_jobs: usize,
@@ -30,10 +32,13 @@ pub async fn execute_tick(
 
     let mut hospital = storage::load_hospital()?;
     let mut board = board.lock().await;
+    let mut queue = job_queue.lock().await;
 
     let outcome = run_tick(&mut TickContext {
         board: &mut *board,
         hospital: &mut hospital,
+        queue: &mut *queue,
+        max_jobs,
     })?;
 
     storage::save_hospital(&hospital)?;
@@ -179,7 +184,10 @@ pub async fn execute_tick(
         }
     }
 
-    if !outcome.quest_resolved.is_empty() || !outcome.scout_results.is_empty() {
+    if !outcome.quest_resolved.is_empty()
+        || !outcome.scout_results.is_empty()
+        || outcome.slots_filled > 0
+    {
         storage::save_board(&*board)?;
         board_ui::update_board_message(http, channel_id, &mut *board, max_jobs).await?;
     }

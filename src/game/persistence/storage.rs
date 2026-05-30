@@ -4,10 +4,12 @@ use anyhow::Context;
 
 use crate::game::domain::board::Board;
 use crate::game::domain::hospital::Hospital;
+use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::Player;
 use crate::game::persistence::chudmasters::Chudmasters;
 use crate::game::persistence::message_cache::MessageCache;
 
+const JOB_QUEUE_PATH: &str = "data/job_queue.yaml";
 const PLAYERS_DIR: &str = "data/players";
 const BOARD_PATH: &str = "data/board.yaml";
 const HOSPITAL_PATH: &str = "data/hospital.yaml";
@@ -66,6 +68,22 @@ pub fn load_hospital() -> anyhow::Result<Hospital> {
     }
     let yaml = std::fs::read_to_string(HOSPITAL_PATH).context("reading hospital")?;
     serde_yaml::from_str(&yaml).context("parsing hospital")
+}
+
+/// Persist the job queue to `data/job_queue.yaml`.
+pub fn save_job_queue(queue: &JobQueue) -> anyhow::Result<()> {
+    std::fs::create_dir_all("data")?;
+    let yaml = serde_yaml::to_string(queue).context("serializing job queue")?;
+    std::fs::write(JOB_QUEUE_PATH, yaml).context("writing job queue")
+}
+
+/// Load the job queue, returning empty if no file exists yet.
+pub fn load_job_queue() -> anyhow::Result<JobQueue> {
+    if !Path::new(JOB_QUEUE_PATH).exists() {
+        return Ok(JobQueue::default());
+    }
+    let yaml = std::fs::read_to_string(JOB_QUEUE_PATH).context("reading job queue")?;
+    serde_yaml::from_str(&yaml).context("parsing job queue")
 }
 
 /// Return the Discord user IDs of all players that have a save file.

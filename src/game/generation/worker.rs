@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use crate::game::domain::board::Board;
+use crate::game::domain::job_queue::JobQueue;
 use crate::game::engine::{self, GenerationJob};
 use crate::game::generation::quest_generator::QuestGenerator;
 use crate::game::persistence::storage;
@@ -11,16 +12,18 @@ use crate::game::persistence::storage;
 /// Side effect from processing a generation job that the Discord layer may need to react to.
 pub enum WorkerEffect {
     QuestResultStored { quest_id: u32 },
-    QuestAdded { quest_id: u32 },
+    BoardRefilled { added: usize },
     QuestCreationFailed,
     GenerateResultFailed { quest_id: u32 },
 }
 
-/// Process a single generation job. Mutates `board` and returns any side effects.
+/// Process a single generation job. Mutates `board` and `queue`, returns side effects.
 pub async fn process_job(
     job: GenerationJob,
     generator: &QuestGenerator,
     board: &mut Board,
+    queue: &mut JobQueue,
+    max_jobs: usize,
     pending_quests: &AtomicUsize,
 ) -> anyhow::Result<Vec<WorkerEffect>> {
     match job {
@@ -49,11 +52,13 @@ pub async fn process_job(
             match generator.generate_from_description(&quest_data).await {
                 Ok(generated) => {
                     tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest generated");
-                    let id = board.add_quest(quest_data, generated);
+                    engine::enqueue_quest(queue, quest_data, generated)?;
                     pending_quests.fetch_sub(1, Ordering::SeqCst);
+                    let added = engine::refill_board_from_queue(board, queue, max_jobs);
                     storage::save_board(board)?;
-                    tracing::info!(quest_id = id, "quest added to board");
-                    Ok(vec![WorkerEffect::QuestAdded { quest_id: id }])
+                    storage::save_job_queue(queue)?;
+                    tracing::info!(queued = queue.entries.len(), added, "quest queued");
+                    Ok(vec![WorkerEffect::BoardRefilled { added }])
                 }
                 Err(e) => {
                     pending_quests.fetch_sub(1, Ordering::SeqCst);
@@ -69,7 +74,9 @@ pub async fn process_job(
 pub fn spawn_generation_worker(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<GenerationJob>,
     board: Arc<tokio::sync::Mutex<Board>>,
+    job_queue: Arc<tokio::sync::Mutex<JobQueue>>,
     generator: Arc<QuestGenerator>,
+    max_jobs: usize,
     pending_quests: Arc<AtomicUsize>,
     on_effects: impl Fn(Vec<WorkerEffect>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
         + Send
@@ -80,7 +87,9 @@ pub fn spawn_generation_worker(
         while let Some(job) = rx.recv().await {
             let effects = {
                 let mut b = board.lock().await;
-                match process_job(job, &generator, &mut *b, &pending_quests).await {
+                let mut q = job_queue.lock().await;
+                match process_job(job, &generator, &mut *b, &mut *q, max_jobs, &pending_quests).await
+                {
                     Ok(effects) => effects,
                     Err(e) => {
                         tracing::error!(err = %e, "generation worker job failed");
