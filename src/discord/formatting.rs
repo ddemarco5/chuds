@@ -36,7 +36,7 @@ pub fn format_dm_completion_report(
             pass_str,
             trial.stat_used.label(),
             player_name,
-            trial.player_roll,
+            trial.format_player_roll(),
             trial.trial_roll,
             brain,
             markdown_italic_line(&trial.narrative),

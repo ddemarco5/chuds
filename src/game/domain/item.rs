@@ -26,11 +26,19 @@ impl ItemStats {
         }
     }
 
-    pub fn total_bonus(&self) -> (i16, i16, i16) {
+    pub fn total_floor(&self) -> (u8, u8, u8) {
         (
-            parse_stat_contribution(&self.strength),
-            parse_stat_contribution(&self.smarts),
-            parse_stat_contribution(&self.stealth),
+            parse_stat_floor(&self.strength),
+            parse_stat_floor(&self.smarts),
+            parse_stat_floor(&self.stealth),
+        )
+    }
+
+    pub fn total_modifier(&self) -> (i16, i16, i16) {
+        (
+            parse_stat_modifier(&self.strength),
+            parse_stat_modifier(&self.smarts),
+            parse_stat_modifier(&self.stealth),
         )
     }
 
@@ -58,8 +66,20 @@ pub fn format_stat_display(s: &str) -> String {
     }
 }
 
-/// Positive/negative prefix = offset; bare positive integer = floor (additive bonus).
-pub fn parse_stat_contribution(s: &str) -> i16 {
+/// Bare positive integer = roll floor; signed prefix = post-roll modifier.
+pub fn parse_stat_floor(s: &str) -> u8 {
+    if is_neutral_stat(s) {
+        return 0;
+    }
+    let s = s.trim();
+    if s.starts_with('+') || s.starts_with('-') {
+        0
+    } else {
+        s.parse().unwrap_or(0)
+    }
+}
+
+pub fn parse_stat_modifier(s: &str) -> i16 {
     if is_neutral_stat(s) {
         return 0;
     }
@@ -67,7 +87,20 @@ pub fn parse_stat_contribution(s: &str) -> i16 {
     if s.starts_with('+') || s.starts_with('-') {
         s.parse().unwrap_or(0)
     } else {
-        s.parse::<u8>().unwrap_or(0) as i16
+        0
+    }
+}
+
+/// Format a player roll for display: ↑/↓ with final when modified, ⌊⌋ when floor-only.
+pub fn format_roll_breakdown(modifier: i16, floor_applied: bool, final_roll: u8) -> String {
+    if modifier > 0 {
+        format!("\u{2191}{final_roll}")
+    } else if modifier < 0 {
+        format!("\u{2193}{final_roll}")
+    } else if floor_applied {
+        format!("\u{230a}{final_roll}\u{230b}")
+    } else {
+        final_roll.to_string()
     }
 }
 

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::game::domain::item::Item;
+use crate::game::domain::item::{format_roll_breakdown, Item};
 use crate::game::generation::quest_generator::GeneratedQuest;
 use crate::game::mechanics::quest_builder::{PlayedQuest, StatChoice, TrialOutcome};
 
@@ -26,10 +26,18 @@ pub struct CompletedTrial {
     pub stat_used: StatChoice,
     pub player_roll: u8,
     pub trial_roll: u8,
+    pub roll_modifier: i16,
+    pub floor_applied: bool,
     pub margin: i16,
     pub passed: bool,
     pub chose_optimal: bool,
     pub narrative: String,
+}
+
+impl CompletedTrial {
+    pub fn format_player_roll(&self) -> String {
+        format_roll_breakdown(self.roll_modifier, self.floor_applied, self.player_roll)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -65,6 +73,8 @@ impl QuestResult {
                     stat_used: outcome.stat_used,
                     player_roll: outcome.player_roll,
                     trial_roll: outcome.trial_roll,
+                    roll_modifier: outcome.roll_modifier,
+                    floor_applied: outcome.floor_applied,
                     margin,
                     passed: outcome.passed,
                     chose_optimal,

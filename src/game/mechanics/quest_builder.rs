@@ -70,6 +70,9 @@ impl StatChoice {
 pub struct TrialOutcome {
     pub stats: TrialStats,
     pub stat_used: StatChoice,
+    pub raw_roll: u8,
+    pub roll_modifier: i16,
+    pub floor_applied: bool,
     pub player_roll: u8,
     pub trial_roll: u8,
     pub player_stat: u8,

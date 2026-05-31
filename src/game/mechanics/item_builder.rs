@@ -1,6 +1,6 @@
 use rand::Rng;
 
-use crate::game::domain::item::{parse_stat_contribution, ItemSeed, ItemStats, ItemType};
+use crate::game::domain::item::{parse_stat_floor, parse_stat_modifier, ItemSeed, ItemStats, ItemType};
 
 pub const ITEM_DROP_CHANCE: f64 = 0.10;
 
@@ -59,9 +59,12 @@ fn roll_item_stats(difficulty: u8, rng: &mut impl Rng) -> ItemStats {
 }
 
 fn has_positive_stat(stats: &ItemStats) -> bool {
-    parse_stat_contribution(&stats.strength) > 0
-        || parse_stat_contribution(&stats.smarts) > 0
-        || parse_stat_contribution(&stats.stealth) > 0
+    parse_stat_floor(&stats.strength) > 0
+        || parse_stat_floor(&stats.smarts) > 0
+        || parse_stat_floor(&stats.stealth) > 0
+        || parse_stat_modifier(&stats.strength) > 0
+        || parse_stat_modifier(&stats.smarts) > 0
+        || parse_stat_modifier(&stats.stealth) > 0
 }
 
 fn roll_positive_stat(cap: u8, rng: &mut impl Rng) -> String {

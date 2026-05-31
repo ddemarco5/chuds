@@ -20,7 +20,7 @@ pub fn effective_stats(player: &Player, registry: &ItemRegistry) -> (u8, u8, u8)
 
     for id in player.chud.equipment.all_ids() {
         if let Some(item) = registry.get(id) {
-            let (a, b, c) = item.stats.total_bonus();
+            let (a, b, c) = item.stats.total_modifier();
             strength += a;
             smarts += b;
             stealth += c;
@@ -32,6 +32,34 @@ pub fn effective_stats(player: &Player, registry: &ItemRegistry) -> (u8, u8, u8)
         smarts.clamp(MIN_STAT as i16, MAX_STAT as i16) as u8,
         stealth.clamp(MIN_STAT as i16, MAX_STAT as i16) as u8,
     )
+}
+
+fn roll_aids(player: &Player, registry: &ItemRegistry, stat: StatChoice) -> (u8, i16) {
+    let mut floor = 0u8;
+    let mut modifier = 0i16;
+
+    for id in player.chud.equipment.all_ids() {
+        if let Some(item) = registry.get(id) {
+            let (f_str, f_smt, f_sth) = item.stats.total_floor();
+            let (m_str, m_smt, m_sth) = item.stats.total_modifier();
+            match stat {
+                StatChoice::Strength => {
+                    floor = floor.saturating_add(f_str);
+                    modifier += m_str;
+                }
+                StatChoice::Smarts => {
+                    floor = floor.saturating_add(f_smt);
+                    modifier += m_smt;
+                }
+                StatChoice::Stealth => {
+                    floor = floor.saturating_add(f_sth);
+                    modifier += m_sth;
+                }
+            }
+        }
+    }
+
+    (floor, modifier)
 }
 
 fn effective_stat(player: &Player, registry: &ItemRegistry, stat: StatChoice) -> u8 {
@@ -93,13 +121,21 @@ pub fn try_quest(
         let stat_used = choose_stat(stats, player, registry, &mut rng);
         let effective = effective_stat(player, registry, stat_used);
         let required = stat_used.trial_required(stats);
-        let player_roll: u8 = rng.gen_range(1..=effective);
+        let (floor, modifier) = roll_aids(player, registry, stat_used);
+        let base = stat_used.player_stat(player);
+        let raw_roll = rng.gen_range(1..=base);
+        let after_modifier = (raw_roll as i16 + modifier).max(1) as u8;
+        let player_roll = after_modifier.max(floor);
+        let floor_applied = modifier == 0 && player_roll > after_modifier;
         let trial_roll: u8 = rng.gen_range(1..=required + 1);
         let passed = player_roll >= trial_roll;
 
         outcomes.push(TrialOutcome {
             stats: stats.clone(),
             stat_used,
+            raw_roll,
+            roll_modifier: modifier,
+            floor_applied,
             player_roll,
             trial_roll,
             player_stat: effective,
