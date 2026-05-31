@@ -41,7 +41,13 @@ pub fn scouting_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyho
                 continue;
             }
         };
-        let chance = simulation::check_job(&quest.quest_data, &quest.generated, &player, 20)?;
+        let chance = simulation::check_job(
+            &quest.quest_data,
+            &quest.generated,
+            &player,
+            ctx.item_registry,
+            20,
+        )?;
         tracing::info!(
             "{} checked job {} and sees a {:.2}% chance of success.",
             player.name,

@@ -7,6 +7,7 @@ use crate::discord::channel::{
 };
 use crate::discord::formatting;
 use crate::game::domain::board::Board;
+use crate::game::domain::item::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::persistence::storage;
 use crate::game::tick::{run_tick, TickContext};
@@ -16,6 +17,7 @@ pub async fn execute_tick(
     http: &serenity::Http,
     board: &tokio::sync::Mutex<Board>,
     job_queue: &tokio::sync::Mutex<JobQueue>,
+    item_registry: &tokio::sync::Mutex<ItemRegistry>,
     channel_id: u64,
     max_buffer: usize,
     max_jobs: usize,
@@ -35,11 +37,13 @@ pub async fn execute_tick(
     let mut hospital = storage::load_hospital()?;
     let mut board = board.lock().await;
     let mut queue = job_queue.lock().await;
+    let mut registry = item_registry.lock().await;
 
     let outcome = run_tick(&mut TickContext {
         board: &mut *board,
         hospital: &mut hospital,
         queue: &mut *queue,
+        item_registry: &mut *registry,
         max_jobs,
     })?;
 
@@ -101,6 +105,7 @@ pub async fn execute_tick(
             &qr.player,
             &qr.level_up,
             qr.reward,
+            qr.item_awarded.as_ref(),
         );
         let dm_map = serde_json::json!({ "recipient_id": qr.discord_user_id.to_string() });
         match http.create_private_channel(&dm_map).await {

@@ -4,8 +4,10 @@ use std::sync::{
 };
 
 use crate::game::domain::board::Board;
+use crate::game::domain::item::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::engine::{self, GenerationJob};
+use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::QuestGenerator;
 use crate::game::persistence::storage;
 
@@ -21,14 +23,29 @@ pub enum WorkerEffect {
 pub async fn process_job(
     job: GenerationJob,
     generator: &QuestGenerator,
+    item_generator: &ItemGenerator,
+    item_registry: &ItemRegistry,
     board: &mut Board,
     queue: &mut JobQueue,
     max_jobs: usize,
     pending_quests: &AtomicUsize,
 ) -> anyhow::Result<Vec<WorkerEffect>> {
     match job {
-        GenerationJob::QuestResult { board_quest, player } => {
-            match engine::generate_result(generator, &board_quest, &player).await {
+        GenerationJob::QuestResult {
+            board_quest,
+            player,
+            force_item_drop,
+        } => {
+            match engine::generate_result(
+                generator,
+                item_generator,
+                item_registry,
+                &board_quest,
+                &player,
+                force_item_drop,
+            )
+            .await
+            {
                 Ok(result) => {
                     let quest_id = board_quest.id;
                     board.completed_results.insert(quest_id, result);
@@ -75,7 +92,9 @@ pub fn spawn_generation_worker(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<GenerationJob>,
     board: Arc<tokio::sync::Mutex<Board>>,
     job_queue: Arc<tokio::sync::Mutex<JobQueue>>,
+    item_registry: Arc<tokio::sync::Mutex<ItemRegistry>>,
     generator: Arc<QuestGenerator>,
+    item_generator: Arc<ItemGenerator>,
     max_jobs: usize,
     pending_quests: Arc<AtomicUsize>,
     on_effects: impl Fn(Vec<WorkerEffect>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
@@ -88,7 +107,18 @@ pub fn spawn_generation_worker(
             let effects = {
                 let mut b = board.lock().await;
                 let mut q = job_queue.lock().await;
-                match process_job(job, &generator, &mut *b, &mut *q, max_jobs, &pending_quests).await
+                let registry = item_registry.lock().await;
+                match process_job(
+                    job,
+                    &generator,
+                    &item_generator,
+                    &registry,
+                    &mut *b,
+                    &mut *q,
+                    max_jobs,
+                    &pending_quests,
+                )
+                .await
                 {
                     Ok(effects) => effects,
                     Err(e) => {

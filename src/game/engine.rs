@@ -1,10 +1,14 @@
 use crate::game::domain::board::{Board, BoardQuest};
+use crate::game::domain::hospital::Hospital;
+use crate::game::domain::item::{equip_item, ItemRegistry};
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{create_chud, Player};
 use crate::game::domain::quest_result::QuestResult;
+use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator, QuestResults, TrialResult};
+use crate::game::mechanics::item_builder::{roll_item, roll_item_drop};
 use crate::game::mechanics::quest_builder::roll_trials;
-use crate::game::mechanics::simulation::play_quest;
+use crate::game::mechanics::simulation::{effective_stats, play_quest};
 use crate::game::persistence::storage;
 
 /// Info returned after a chud accepts a quest.
@@ -19,11 +23,48 @@ pub enum GenerationJob {
     QuestResult {
         board_quest: BoardQuest,
         player: Player,
+        force_item_drop: bool,
     },
     /// Fully generate a new quest from a description and add it to the board.
     QuestCreation {
         quest_data: QuestData,
     },
+}
+
+/// Enqueue background quest result generation after assignment.
+pub fn enqueue_quest_result(
+    generation_queue: &tokio::sync::mpsc::UnboundedSender<GenerationJob>,
+    board_quest: BoardQuest,
+    player: Player,
+    force_item_drop: bool,
+) -> anyhow::Result<()> {
+    generation_queue
+        .send(GenerationJob::QuestResult {
+            board_quest,
+            player,
+            force_item_drop,
+        })
+        .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))
+}
+
+/// Assign a chud to a quest and enqueue result generation.
+pub fn take_and_enqueue_quest(
+    board: &mut Board,
+    hospital: &Hospital,
+    discord_user_id: u64,
+    quest_id: u32,
+    generation_queue: &tokio::sync::mpsc::UnboundedSender<GenerationJob>,
+    force_item_drop: bool,
+) -> anyhow::Result<AssignInfo> {
+    let info = assign_chud_to_quest(board, hospital, discord_user_id, quest_id)?;
+    let board_quest = board
+        .quests
+        .iter()
+        .find(|q| q.id == quest_id)
+        .ok_or_else(|| anyhow::anyhow!("quest {} not found after assignment", quest_id))?
+        .clone();
+    enqueue_quest_result(generation_queue, board_quest, info.player.clone(), force_item_drop)?;
+    Ok(info)
 }
 
 /// Move quests from the front of the queue onto the board until full or queue empty.
@@ -125,7 +166,7 @@ pub fn delete_chud(discord_user_id: u64) -> anyhow::Result<()> {
 /// Assign a chud to an open board quest.
 pub fn assign_chud_to_quest(
     board: &mut Board,
-    hospital: &crate::game::domain::hospital::Hospital,
+    hospital: &Hospital,
     discord_user_id: u64,
     quest_id: u32,
 ) -> anyhow::Result<AssignInfo> {
@@ -158,13 +199,42 @@ pub fn assign_chud_to_quest(
     })
 }
 
+/// Register a pending item, equip it on the player, and remove any replaced item from the registry.
+pub fn award_pending_item(
+    registry: &mut ItemRegistry,
+    player: &mut Player,
+    item: crate::game::domain::item::Item,
+) -> anyhow::Result<crate::game::domain::item::Item> {
+    let id = registry.add_item(item);
+    let awarded = registry
+        .get(id)
+        .ok_or_else(|| anyhow::anyhow!("item {} missing after add", id))?
+        .clone();
+    if let Some(old_id) = equip_item(player, awarded.clone()) {
+        registry.remove(old_id);
+        tracing::info!(replaced = old_id, "old item removed from registry");
+    }
+    storage::save_item_registry(registry)?;
+    Ok(awarded)
+}
+
 /// Run the full LLM pipeline for a single quest and return the result.
 pub async fn generate_result(
     generator: &QuestGenerator,
+    item_generator: &ItemGenerator,
+    item_registry: &ItemRegistry,
     board_quest: &BoardQuest,
     player: &Player,
+    force_item_drop: bool,
 ) -> anyhow::Result<QuestResult> {
-    let played = play_quest(&board_quest.quest_data, &board_quest.generated, player)?;
+    let played = play_quest(
+        &board_quest.quest_data,
+        &board_quest.generated,
+        player,
+        item_registry,
+    )?;
+
+    let effective = effective_stats(player, item_registry);
 
     let trial_results: Vec<TrialResult> = played
         .outcomes
@@ -188,13 +258,34 @@ pub async fn generate_result(
         )
         .await?;
 
-    let result = QuestResult::build(&board_quest.generated, &played, player, trials, summary);
+    let mut result = QuestResult::build(
+        &board_quest.generated,
+        &played,
+        effective,
+        trials,
+        summary,
+    );
+
+    if result.passed && (force_item_drop || roll_item_drop(&mut rand::thread_rng())) {
+        let seed = roll_item(board_quest.quest_data.quest_difficulty, &mut rand::thread_rng());
+        let (name, description) = item_generator
+            .generate_from_quest(&seed, &result, board_quest)
+            .await?;
+        result.pending_item = Some(seed.into_item(name, description));
+        tracing::info!(
+            name = %result.pending_item.as_ref().unwrap().name,
+            item_type = ?result.pending_item.as_ref().unwrap().item_type,
+            "item generated for quest result"
+        );
+    }
+
     result.log();
     Ok(result)
 }
 
-pub fn save_all(board: &Board) -> anyhow::Result<()> {
+pub fn save_all(board: &Board, item_registry: &ItemRegistry) -> anyhow::Result<()> {
     storage::save_board(board)?;
+    storage::save_item_registry(item_registry)?;
     let ids = storage::list_player_ids()?;
     let count = ids.len();
     for id in ids {

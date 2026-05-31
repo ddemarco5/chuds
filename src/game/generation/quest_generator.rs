@@ -1,12 +1,9 @@
 use rand_distr::{Distribution, Normal};
-use rig::client::CompletionClient;
-use rig::completion::{CompletionError, Prompt, PromptError};
-use rig::completion::message::Message;
-use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+use rig::memory::InMemoryConversationMemory;
 use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
 
-const WORLD_BUILDING_CONTEXT: &str = "You are operating in a fantasy world that is lighthearted, full of satire, and often crude. Adventurers are known as 'Chuds' and are often exceptionally bizarre";
+use crate::game::generation::generators::{build_agent, make_memory, prompt_parse_retry, OpenRouterAgent};
 
 const DESCRIPTION_SYSTEM_CONTEXT: &str = r#"You will be the be the person described in the prompts that follow writing a job for the town job board.
 
@@ -33,6 +30,7 @@ You will receive quest_description and quest_difficulty in YAML format. quest_go
 YAML OUTPUT:
 - Reply with ONLY valid YAML (no preamble or commentary). You may wrap the YAML in ```yaml fences.
 - Use block scalars (|) or double-quoted strings for 'description' and 'goal' when they contain colons, quotes, or multiple lines."#;
+
 #[derive(Serialize)]
 struct DescPrompt<'a> {
     quest_description: &'a str,
@@ -40,8 +38,14 @@ struct DescPrompt<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     quest_goal: Option<&'a str>,
 }
+
 #[derive(Deserialize)]
-struct DescResponse { quest_title: String, quest_giver: String, description: String, goal: String }
+struct DescResponse {
+    quest_title: String,
+    quest_giver: String,
+    description: String,
+    goal: String,
+}
 
 const TRIAL_SYSTEM_CONTEXT: &str = r#"You are a fantasy quest generator. Write in THIRD PERSON/OBJECTIVE narrator point of view.
 
@@ -65,6 +69,7 @@ The input 'trials' list contains stat numbers only; your output 'trials' must be
 YAML OUTPUT:
 - Reply with ONLY valid YAML (no preamble or commentary). You may wrap the YAML in ```yaml fences.
 - Each trial entry must be a single YAML string; use a block scalar (|) or double-quoted string if needed."#;
+
 #[derive(Serialize)]
 struct TrialPrompt<'a> {
     quest_description: &'a str,
@@ -73,8 +78,11 @@ struct TrialPrompt<'a> {
     trials: &'a [TrialStats],
     quest_giver_description: &'a str,
 }
+
 #[derive(Deserialize)]
-struct TrialsResponse { trials: Vec<String> }
+struct TrialsResponse {
+    trials: Vec<String>,
+}
 
 const RESULTS_SYSTEM_CONTEXT: &str = r#"You will be narrating a Chud's attempt to overcome this job and its trials. 
 
@@ -114,6 +122,7 @@ Respond with the exact YAML template shown in the user message. Replace each REP
 YAML OUTPUT:
 - Reply with ONLY valid YAML (no preamble or commentary). You may wrap the YAML in ```yaml fences.
 - Each trial entry and 'summary' must be YAML strings; use block scalars (|) or double-quoted strings when needed."#;
+
 #[derive(Serialize)]
 struct TrialResultPrompt<'a> {
     situation: &'a str,
@@ -121,6 +130,7 @@ struct TrialResultPrompt<'a> {
     margin: i16,
     passed: bool,
 }
+
 #[derive(Serialize)]
 struct ResultsPrompt<'a> {
     adventurer_name: &'a str,
@@ -131,45 +141,16 @@ struct ResultsPrompt<'a> {
     quest_goal: &'a str,
     trials: Vec<TrialResultPrompt<'a>>,
 }
+
 #[derive(Deserialize)]
-struct ResultsResponse { trials: Vec<String>, summary: String }
+struct ResultsResponse {
+    trials: Vec<String>,
+    summary: String,
+}
 
-// Per-attempt timeout for LLM requests. Raise if using slow free-tier models.
-const PROMPT_TIMEOUT_SECS: u64 = 90;
-
-// Token budget for each agent's in-memory conversation history (approximate; 1 token ≈ 4 chars).
-// Raise to give agents more context; lower to reduce prompt size.
-const MEMORY_TOKEN_BUDGET: usize = 50_000;
-
-// Reward formula: REWARD_QUADRATIC * cumulative^2 + REWARD_LINEAR * cumulative
-// Increasing REWARD_QUADRATIC steepens the curve so high-difficulty quests pay out much more relative to easy ones.
-// Increasing REWARD_LINEAR raises the baseline payout across all difficulties.
 const REWARD_QUADRATIC: f64 = 0.3;
 const REWARD_LINEAR: f64 = 3.0;
-// Reward jitter: multiplier sampled from Normal(mean=1.0, stddev=REWARD_JITTER_STDDEV).
-// 0.10 means ~68% of jobs pay within ±10% of base, ~95% within ±20%. Raise to widen the spread.
 const REWARD_JITTER_STDDEV: f64 = 0.10;
-
-type OpenRouterAgent = rig::agent::Agent<openrouter::completion::CompletionModel, ()>;
-
-fn make_memory() -> InMemoryConversationMemory {
-    InMemoryConversationMemory::new().with_filter(|msgs: Vec<rig::completion::message::Message>| {
-        let mut out = msgs;
-        let char_budget = MEMORY_TOKEN_BUDGET * 4;
-        let mut total: usize = out.iter().map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0)).sum();
-        tracing::info!(history_msgs = out.len(), history_chars = total, budget_chars = char_budget, "memory loaded");
-        let msgs_before = out.len();
-        while total > char_budget && out.len() > 1 {
-            let removed_size = serde_json::to_string(&out[0]).map(|s| s.len()).unwrap_or(0);
-            out.remove(0);
-            total = total.saturating_sub(removed_size);
-        }
-        if out.len() < msgs_before {
-            tracing::warn!(trimmed = msgs_before - out.len(), history_msgs = out.len(), history_chars = total, budget_chars = char_budget, "memory trimmed");
-        }
-        out
-    })
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TrialStats {
@@ -221,189 +202,17 @@ pub struct QuestGenerator {
 impl QuestGenerator {
     pub fn new(api_key: &str) -> anyhow::Result<Self> {
         let client = openrouter::Client::new(api_key)?;
-        let description_memory = make_memory();
-        let description_agent = client
-            .agent("openrouter/free")
-            .preamble([WORLD_BUILDING_CONTEXT, DESCRIPTION_SYSTEM_CONTEXT].join("\n\n").as_str())
-            .build();
-        let trial_memory = make_memory();
-        let trial_agent = client
-            .agent("openrouter/free")
-            .preamble([WORLD_BUILDING_CONTEXT, TRIAL_SYSTEM_CONTEXT].join("\n\n").as_str())
-            .build();
-        let results_memory = make_memory();
-        let results_agent = client
-            .agent("openrouter/free")
-            .preamble([WORLD_BUILDING_CONTEXT, RESULTS_SYSTEM_CONTEXT].join("\n\n").as_str())
-            .build();
-        Ok(Self { description_agent, trial_agent, results_agent, description_memory, trial_memory, results_memory })
-    }
-
-    fn sanitize(s: &str) -> String {
-        let s = s.trim();
-        let inner = s.strip_prefix("```yaml").or_else(|| s.strip_prefix("```")).unwrap_or(s);
-        let stripped = if inner != s {
-            if let Some(end) = inner.rfind("```") {
-                inner[..end].trim()
-            } else {
-                inner.trim()
-            }
-        } else {
-            s
-        };
-        // TODO: use a crate like text_sanitizer to clean this more comprehensively https://docs.rs/text-sanitizer/latest/text_sanitizer/
-        stripped.replace('\u{2019}', "'").replace('\u{2011}', "-")
-    }
-
-    fn truncate_for_log(s: &str, max: usize) -> String {
-        if s.len() <= max {
-            s.to_string()
-        } else {
-            format!("{}...", &s[..max])
-        }
-    }
-
-    fn yaml_correction(kind: &str, error: &str, raw_preview: &str) -> String {
-        format!(
-            "Your previous response was invalid ({kind}): {error}\n\
-             Reply again with ONLY valid YAML matching the required fields. \
-             Use block scalars (|) or double-quoted strings for long text or text containing colons.\n\
-             Previous response (truncated):\n{raw_preview}"
-        )
-    }
-
-    fn parse_retry_delay(msg: &str) -> Option<u64> {
-        let json_str = &msg[msg.find("with message: ")? + "with message: ".len()..];
-        let body: serde_json::Value = serde_json::from_str(json_str).ok()?;
-        // Gemini
-        if let Some(details) = body["error"]["details"].as_array() {
-            for detail in details {
-                if let Some(delay) = detail["retryDelay"].as_str() {
-                    return delay.trim_end_matches('s').parse::<f64>().ok().map(|s| s.ceil() as u64);
-                }
-            }
-        }
-        // Meta llama
-        if let Some(secs) = body["error"]["metadata"]["retry_after_seconds"].as_u64() {
-            return Some(secs);
-        }
-        None
-    }
-
-    async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(agent: &OpenRouterAgent, memory: &InMemoryConversationMemory, prompt: &str, expected_trials: Option<usize>, conversation_id: &str) -> anyhow::Result<T> {
-        const MAX_RETRIES: u32 = 5;
-        let mut retries = 0u32;
-        let mut correction = String::new();
-        loop {
-            let history = memory.load(conversation_id).await.unwrap_or_default();
-            let effective_prompt = if correction.is_empty() {
-                prompt.to_string()
-            } else {
-                format!("{prompt}\n\n{correction}")
-            };
-            let raw = Self::prompt_with_retry(agent, &effective_prompt, &history).await?;
-            let parsed = serde_yaml::from_str::<serde_yaml::Value>(&raw);
-            match parsed {
-                Err(e) => {
-                    if retries < MAX_RETRIES {
-                        retries += 1;
-                        let preview = Self::truncate_for_log(&raw, 500);
-                        tracing::warn!(error = %e, retries, MAX_RETRIES, "malformed YAML from LLM, retrying");
-                        tracing::debug!(raw_preview = %preview, "LLM response that failed YAML parse");
-                        correction = Self::yaml_correction("malformed YAML", &e.to_string(), &preview);
-                        continue;
-                    }
-                    return Err(anyhow::anyhow!("LLM returned malformed YAML after {} retries: {}", MAX_RETRIES, e));
-                }
-                Ok(value) => {
-                    if let Some(expected) = expected_trials {
-                        let actual = value.get("trials").and_then(|t| t.as_sequence()).map(|s| s.len());
-                        if actual != Some(expected) {
-                            if retries < MAX_RETRIES {
-                                retries += 1;
-                                let preview = Self::truncate_for_log(&raw, 500);
-                                tracing::warn!(expected, actual = ?actual, retries, MAX_RETRIES, "wrong trial count from LLM, retrying");
-                                tracing::debug!(raw_preview = %preview, "LLM response with wrong trial count");
-                                let msg = format!("expected {expected} trial strings, got {:?}", actual);
-                                correction = Self::yaml_correction("wrong trial count", &msg, &preview);
-                                continue;
-                            }
-                            return Err(anyhow::anyhow!("LLM returned wrong trial count after {} retries: expected {}, got {:?}", MAX_RETRIES, expected, actual));
-                        }
-                    }
-                    match serde_yaml::from_value(value) {
-                        Ok(result) => {
-                            let _ = memory.append(conversation_id, vec![
-                                Message::user(prompt),
-                                Message::assistant(&raw),
-                            ]).await;
-                            tracing::info!(conversation_id, "committed to memory");
-                            return Ok(result);
-                        }
-                        Err(e) => {
-                            if retries < MAX_RETRIES {
-                                retries += 1;
-                                let preview = Self::truncate_for_log(&raw, 500);
-                                tracing::warn!(error = %e, retries, MAX_RETRIES, "unexpected YAML structure from LLM, retrying");
-                                tracing::debug!(raw_preview = %preview, "LLM response with unexpected YAML structure");
-                                correction = Self::yaml_correction("unexpected YAML structure", &e.to_string(), &preview);
-                                continue;
-                            }
-                            return Err(anyhow::anyhow!("LLM returned unexpected YAML structure after {} retries: {}", MAX_RETRIES, e));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    async fn prompt_with_retry(agent: &OpenRouterAgent, prompt: &str, history: &[Message]) -> anyhow::Result<String> {
-        const MAX_RETRIES: u32 = 12;
-        let mut retries = 0;
-        loop {
-            match tokio::time::timeout(
-                tokio::time::Duration::from_secs(PROMPT_TIMEOUT_SECS),
-                agent.prompt(prompt).without_memory().with_history(history.iter().cloned()),
-            ).await {
-                Err(_elapsed) => {
-                    if retries < MAX_RETRIES {
-                        retries += 1;
-                        tracing::warn!(PROMPT_TIMEOUT_SECS, retries, MAX_RETRIES, "request timed out, retrying");
-                        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                        continue;
-                    }
-                    return Err(anyhow::anyhow!("LLM request timed out after {} retries", MAX_RETRIES));
-                }
-                Ok(Ok(response)) => return Ok(Self::sanitize(&response)),
-                Ok(Err(e)) => {
-                    let msg = e.to_string();
-                    let (wait_secs, label) = if msg.contains("404") {
-                        (10, "404 model not found")
-                    } else if msg.contains("503") {
-                        (10, "503 model overloaded")
-                    } else if msg.contains("500") {
-                        (15, "500 internal server error")
-                    } else if msg.contains("429") {
-                        (Self::parse_retry_delay(&msg).unwrap_or(5) * 2, "429 quota exceeded")
-                    } else if matches!(e, PromptError::CompletionError(CompletionError::ResponseError(_))) {
-                        (5, "malformed OpenRouter response")
-                    } else {
-                        return Err(e.into());
-                    };
-                    if retries >= MAX_RETRIES {
-                        return Err(e.into());
-                    }
-                    tracing::warn!(msg);
-                    retries += 1;
-                    tracing::warn!(error = label, wait_secs, retries, MAX_RETRIES, "retryable error, waiting before retry");
-                    tokio::time::sleep(tokio::time::Duration::from_secs(wait_secs)).await;
-                }
-            }
-        }
+        Ok(Self {
+            description_agent: build_agent(&client, DESCRIPTION_SYSTEM_CONTEXT),
+            description_memory: make_memory(),
+            trial_agent: build_agent(&client, TRIAL_SYSTEM_CONTEXT),
+            trial_memory: make_memory(),
+            results_agent: build_agent(&client, RESULTS_SYSTEM_CONTEXT),
+            results_memory: make_memory(),
+        })
     }
 
     pub async fn generate_from_description(&self, quest: &QuestData) -> anyhow::Result<GeneratedQuest> {
-
         let desc_yaml = serde_yaml::to_string(&DescPrompt {
             quest_description: &quest.quest_description,
             quest_difficulty: quest.quest_difficulty,
@@ -414,7 +223,14 @@ impl QuestGenerator {
         } else {
             tracing::info!("generating quest description");
         }
-        let desc_response = Self::prompt_parse_retry::<DescResponse>(&self.description_agent, &self.description_memory, &desc_yaml, None, "description").await?;
+        let desc_response = prompt_parse_retry::<DescResponse>(
+            &self.description_agent,
+            &self.description_memory,
+            &desc_yaml,
+            None,
+            "description",
+        )
+        .await?;
         tracing::info!("quest description received");
         let quest_title = desc_response.quest_title;
         let quest_giver = desc_response.quest_giver;
@@ -423,22 +239,48 @@ impl QuestGenerator {
         tracing::info!("quest goal is {quest_goal}");
 
         let trial_scaffold = {
-            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - REPLACE_TRIAL_{}", i + 1)).collect::<Vec<_>>().join("\n");
-            format!("\nThe response should only contain a yaml of this structure:\n```yaml\ntrials:\n{}\n```", slots)
+            let slots = quest
+                .trials
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("  - REPLACE_TRIAL_{}", i + 1))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "\nThe response should only contain a yaml of this structure:\n```yaml\ntrials:\n{slots}\n```"
+            )
         };
-        let trial_yaml = format!("{}{trial_scaffold}", serde_yaml::to_string(&TrialPrompt {
-            quest_description: &quest.quest_description,
-            quest_goal: &quest_goal,
-            quest_difficulty: quest.quest_difficulty,
-            quest_giver_description: &description,
-            trials: &quest.trials,      
-        })?);
+        let trial_yaml = format!(
+            "{}{trial_scaffold}",
+            serde_yaml::to_string(&TrialPrompt {
+                quest_description: &quest.quest_description,
+                quest_goal: &quest_goal,
+                quest_difficulty: quest.quest_difficulty,
+                quest_giver_description: &description,
+                trials: &quest.trials,
+            })?
+        );
         tracing::info!("generating quest trials");
-        let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &self.trial_memory, &trial_yaml, Some(quest.trials.len()), "trials").await?.trials;
+        let trials = prompt_parse_retry::<TrialsResponse>(
+            &self.trial_agent,
+            &self.trial_memory,
+            &trial_yaml,
+            Some(quest.trials.len()),
+            "trials",
+        )
+        .await?
+        .trials;
         tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
 
         let reward = Self::calculate_reward(&quest.trials);
-        Ok(GeneratedQuest { quest_title, quest_giver, description, trials, quest_goal, reward })
+        Ok(GeneratedQuest {
+            quest_title,
+            quest_giver,
+            description,
+            trials,
+            quest_goal,
+            reward,
+        })
     }
 
     pub async fn generate_from_explicit(
@@ -447,20 +289,38 @@ impl QuestGenerator {
         title: String,
         giver: String,
     ) -> anyhow::Result<GeneratedQuest> {
-
         let trial_scaffold = {
-            let slots = quest.trials.iter().enumerate().map(|(i, _)| format!("  - REPLACE_TRIAL_{}", i + 1)).collect::<Vec<_>>().join("\n");
-            format!("\nThe response should only contain a yaml of this structure:\n```yaml\ntrials:\n{}\n```", slots)
+            let slots = quest
+                .trials
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("  - REPLACE_TRIAL_{}", i + 1))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "\nThe response should only contain a yaml of this structure:\n```yaml\ntrials:\n{slots}\n```"
+            )
         };
-        let trial_yaml = format!("{}{trial_scaffold}", serde_yaml::to_string(&TrialPrompt {
-            quest_description: &quest.quest_description,
-            quest_goal: &quest.quest_goal.as_ref().unwrap(),
-            quest_difficulty: quest.quest_difficulty,
-            quest_giver_description: &quest.quest_description,
-            trials: &quest.trials,
-        })?);
+        let trial_yaml = format!(
+            "{}{trial_scaffold}",
+            serde_yaml::to_string(&TrialPrompt {
+                quest_description: &quest.quest_description,
+                quest_goal: quest.quest_goal.as_ref().unwrap(),
+                quest_difficulty: quest.quest_difficulty,
+                quest_giver_description: &quest.quest_description,
+                trials: &quest.trials,
+            })?
+        );
         tracing::info!("generating quest trials (description provided)");
-        let trials = Self::prompt_parse_retry::<TrialsResponse>(&self.trial_agent, &self.trial_memory, &trial_yaml, Some(quest.trials.len()), "trials").await?.trials;
+        let trials = prompt_parse_retry::<TrialsResponse>(
+            &self.trial_agent,
+            &self.trial_memory,
+            &trial_yaml,
+            Some(quest.trials.len()),
+            "trials",
+        )
+        .await?
+        .trials;
         tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
 
         let reward = Self::calculate_reward(&quest.trials);
@@ -475,11 +335,22 @@ impl QuestGenerator {
     }
 
     fn calculate_reward(trials: &[TrialStats]) -> u32 {
-        let cumulative: f64 = trials.iter().map(|t| {
-            let vals = [t.strength, t.smarts, t.stealth];
-            let nonzero: Vec<f64> = vals.iter().filter(|&&v| v != 0).map(|&v| v as f64).collect();
-            if nonzero.is_empty() { 0.0 } else { nonzero.iter().sum::<f64>() / nonzero.len() as f64 }
-        }).sum();
+        let cumulative: f64 = trials
+            .iter()
+            .map(|t| {
+                let vals = [t.strength, t.smarts, t.stealth];
+                let nonzero: Vec<f64> = vals
+                    .iter()
+                    .filter(|&&v| v != 0)
+                    .map(|&v| v as f64)
+                    .collect();
+                if nonzero.is_empty() {
+                    0.0
+                } else {
+                    nonzero.iter().sum::<f64>() / nonzero.len() as f64
+                }
+            })
+            .sum();
         let base = REWARD_QUADRATIC * cumulative * cumulative + REWARD_LINEAR * cumulative;
         let mut rng = rand::thread_rng();
         let normal = Normal::new(1.0, REWARD_JITTER_STDDEV).expect("valid normal distribution");
@@ -495,10 +366,16 @@ impl QuestGenerator {
         chud_name: &str,
         chud_description: &str,
     ) -> anyhow::Result<QuestResults> {
-
         let scaffold = {
-            let slots = outcomes.iter().enumerate().map(|(i, _)| format!("  - REPLACE_TRIAL_{}", i + 1)).collect::<Vec<_>>().join("\n");
-            format!("\nThe response should only contain a yaml of this structure:\n```yaml\ntrials:\n{}\nsummary: REPLACE_QUEST_SUMMARY\n```", slots)
+            let slots = outcomes
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("  - REPLACE_TRIAL_{}", i + 1))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "\nThe response should only contain a yaml of this structure:\n```yaml\ntrials:\n{slots}\nsummary: REPLACE_QUEST_SUMMARY\n```"
+            )
         };
         let results_yaml = serde_yaml::to_string(&ResultsPrompt {
             adventurer_name: chud_name,
@@ -507,19 +384,32 @@ impl QuestGenerator {
             quest_giver: &generated.quest_giver,
             quest_giver_description: &generated.description,
             quest_goal: &generated.quest_goal,
-            trials: outcomes.iter().map(|o| TrialResultPrompt {
-                situation: &o.situation,
-                stat_used: &o.stat_used,
-                margin: o.margin,
-                passed: o.passed,
-            }).collect(),
+            trials: outcomes
+                .iter()
+                .map(|o| TrialResultPrompt {
+                    situation: &o.situation,
+                    stat_used: &o.stat_used,
+                    margin: o.margin,
+                    passed: o.passed,
+                })
+                .collect(),
         })?;
         let results_prompt = format!("{results_yaml}{scaffold}");
 
         tracing::info!("generating quest results");
-        let r = Self::prompt_parse_retry::<ResultsResponse>(&self.results_agent, &self.results_memory, &results_prompt, Some(outcomes.len()), "results").await?;
+        let r = prompt_parse_retry::<ResultsResponse>(
+            &self.results_agent,
+            &self.results_memory,
+            &results_prompt,
+            Some(outcomes.len()),
+            "results",
+        )
+        .await?;
         tracing::info!(count = r.trials.len(), "quest results received");
 
-        Ok(QuestResults { trials: r.trials, summary: r.summary })
+        Ok(QuestResults {
+            trials: r.trials,
+            summary: r.summary,
+        })
     }
 }

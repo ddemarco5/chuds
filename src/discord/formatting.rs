@@ -1,3 +1,4 @@
+use crate::game::domain::item::{Item, ItemType};
 use crate::game::domain::player::Player;
 use crate::game::domain::quest_result::QuestResult;
 use crate::chud_msg;
@@ -13,6 +14,7 @@ pub fn format_dm_completion_report(
     player: &Player,
     level_up: &crate::game::domain::player::LevelUp,
     reward: u32,
+    item_awarded: Option<&Item>,
 ) -> String {
     let mut out = String::new();
     let outcome = if result.passed { "PASSED" } else { "FAILED" };
@@ -44,6 +46,20 @@ pub fn format_dm_completion_report(
     if result.passed && reward > 0 {
         out.push_str(&format!("\n{}", chud_msg!("chud_brings_money", reward)));
     }
+    if let Some(item) = item_awarded {
+        let subtype = if item.subtype.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", item.subtype)
+        };
+        out.push_str(&format!(
+            "\n\n**Item found:** {} ({}{subtype})\nStats: {}\n_{}_",
+            item.name,
+            item_type_label(item.item_type),
+            item.stats.format_triplet(),
+            item.description,
+        ));
+    }
 
     if level_up.any() {
         fn fmt_stat(levelled: bool, val: u8) -> String {
@@ -63,6 +79,14 @@ pub fn format_dm_completion_report(
         ));
     }
     out
+}
+
+fn item_type_label(item_type: ItemType) -> &'static str {
+    match item_type {
+        ItemType::Gear => "gear",
+        ItemType::Weapon => "weapon",
+        ItemType::Misc => "misc",
+    }
 }
 
 fn oxford_join(names: &[&str]) -> String {

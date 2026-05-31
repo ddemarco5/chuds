@@ -1,4 +1,5 @@
 use crate::game::domain::board::{Board, BoardQuest};
+use crate::game::engine;
 use crate::game::persistence::storage;
 use crate::game::tick::{QuestResolved, TickContext, TickOutcome};
 
@@ -7,7 +8,12 @@ pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::
     tracing::info!(quests_due = due.len(), "quest phase complete");
 
     for board_quest in due {
-        if let Some(resolved) = resolve_quest(ctx.board, &mut ctx.hospital, board_quest)? {
+        if let Some(resolved) = resolve_quest(
+            ctx.board,
+            &mut ctx.hospital,
+            ctx.item_registry,
+            board_quest,
+        )? {
             outcome.quest_resolved.push(resolved);
         }
     }
@@ -20,6 +26,7 @@ pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::
 fn resolve_quest(
     board: &mut Board,
     hospital: &mut crate::game::domain::hospital::Hospital,
+    item_registry: &mut crate::game::domain::item::ItemRegistry,
     board_quest: BoardQuest,
 ) -> anyhow::Result<Option<QuestResolved>> {
     let discord_user_id = match board_quest.assigned_to() {
@@ -30,7 +37,7 @@ fn resolve_quest(
         }
     };
 
-    let result = match board.completed_results.remove(&board_quest.id) {
+    let mut result = match board.completed_results.remove(&board_quest.id) {
         Some(r) => r,
         None => {
             tracing::warn!(quest_id = board_quest.id, "no completed result found, skipping");
@@ -61,6 +68,17 @@ fn resolve_quest(
         tracing::info!("{} made ${}", player_name, reward);
         player.cash += reward;
     }
+
+    let item_awarded = if passed {
+        result
+            .pending_item
+            .take()
+            .map(|item| engine::award_pending_item(item_registry, &mut player, item))
+            .transpose()?
+    } else {
+        None
+    };
+
     storage::save_player(&player)?;
 
     tracing::info!(
@@ -100,5 +118,6 @@ fn resolve_quest(
         level_up,
         reward,
         hospitalized,
+        item_awarded,
     }))
 }

@@ -7,7 +7,7 @@ use crate::discord::context::{
     admin_guard, chudmaster_check, parse_difficulty, say_ephemeral, Context, Error,
     GenerateJobModal, WriteJobModal,
 };
-use crate::game::engine::{self, GenerationJob};
+use crate::game::engine;
 use crate::game::persistence::storage;
 
 #[poise::command(slash_command)]
@@ -192,24 +192,15 @@ pub async fn assign(
     let channel_id = ctx.data().channel_id;
     let hospital = storage::load_hospital()?;
     let mut board = ctx.data().board.lock().await;
-    let info = engine::assign_chud_to_quest(&mut *board, &hospital, target_user_id, quest_id)?;
+    engine::take_and_enqueue_quest(
+        &mut *board,
+        &hospital,
+        target_user_id,
+        quest_id,
+        &ctx.data().generation_queue,
+        false,
+    )?;
 
-    let board_quest = board
-        .quests
-        .iter()
-        .find(|q| q.id == quest_id)
-        .ok_or_else(|| anyhow::anyhow!("quest {} not found after assignment", quest_id))?
-        .clone();
-
-    ctx.data()
-        .generation_queue
-        .send(GenerationJob::QuestResult {
-            board_quest,
-            player: info.player,
-        })
-        .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
-
-    storage::save_board(&*board)?;
     board_ui::update_board_message(http, channel_id, &mut *board, ctx.data().max_jobs).await?;
     ctx.say("ok").await?;
     Ok(())

@@ -47,7 +47,15 @@ pub const STAT_LEVEL_BASE: u32 = 3;
 ///   4  │   4    8   12   16   20  │     60
 pub const EXP_LEVEL_BASE: u32 = 2;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ChudEquipment {
+    pub gear: Option<u32>,
+    pub weapon: Option<u32>,
+    #[serde(default)]
+    pub misc: [Option<u32>; 2],
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chud {
     pub name: String,
     pub description: String,
@@ -61,9 +69,11 @@ pub struct Chud {
     pub job_successes: u32,
     pub total_job_successes: u32,
     pub total_job_failures: u32,
+    #[serde(default)]
+    pub equipment: ChudEquipment,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Player {
     pub discord_user_id: u64,
     pub cash: u32,
@@ -80,6 +90,14 @@ impl Deref for Player {
 impl DerefMut for Player {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.chud
+    }
+}
+
+fn format_stat_value(label: &str, raw: u8, effective: u8) -> String {
+    if raw != effective {
+        format!("{label} ~~{raw}~~ {effective}")
+    } else {
+        format!("{label} {raw}")
     }
 }
 
@@ -101,6 +119,25 @@ impl Player {
             "{} -- *Strength {}, Smarts {}, Stealth {}, Experience {}*\n{} job completed, {} failed",
             self.name, self.strength, self.smarts, self.stealth, self.experience,
             self.total_job_successes, self.total_job_failures
+        )
+    }
+
+    pub fn format_job_record(&self) -> String {
+        format!(
+            "{} job completed, {} failed",
+            self.total_job_successes, self.total_job_failures
+        )
+    }
+
+    /// Discord stats line with strikethrough on raw values when equipment modifies them.
+    pub fn format_effective_stats_line(&self, effective: (u8, u8, u8)) -> String {
+        let (eff_str, eff_smt, eff_sth) = effective;
+        format!(
+            "Stats: {}, {}, {}, Experience {}",
+            format_stat_value("Strength", self.strength, eff_str),
+            format_stat_value("Smarts", self.smarts, eff_smt),
+            format_stat_value("Stealth", self.stealth, eff_sth),
+            self.experience,
         )
     }
 
@@ -172,6 +209,7 @@ pub fn create_chud(discord_user_id: u64, name: String, description: String) -> P
             job_successes: 0,
             total_job_successes: 0,
             total_job_failures: 0,
+            equipment: ChudEquipment::default(),
         },
     }
 }

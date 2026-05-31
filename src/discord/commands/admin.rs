@@ -1,5 +1,6 @@
 use poise::serenity_prelude as serenity;
 
+use crate::discord::buttons::post_quest_taken_announcement;
 use crate::discord::channel::post_buffered_message;
 use crate::discord::context::{admin_guard, Context, Error};
 use crate::discord::tick;
@@ -73,6 +74,7 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
         &ctx.serenity_context().http,
         &ctx.data().board,
         &ctx.data().job_queue,
+        &ctx.data().item_registry,
         ctx.data().channel_id,
         ctx.data().max_buffer_messages,
         ctx.data().max_jobs,
@@ -80,6 +82,40 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
         ctx.data().max_non_bot_messages,
     )
     .await?;
+    ctx.say("ok").await?;
+    Ok(())
+}
+
+#[poise::command(slash_command)]
+pub async fn admin_take_gen_item(
+    ctx: Context<'_>,
+    target_user_id: String,
+    quest_id: u32,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let target_user_id: u64 = match target_user_id.trim().parse() {
+        Ok(id) => id,
+        Err(_) => {
+            ctx.say("invalid Discord user ID").await?;
+            return Ok(());
+        }
+    };
+    let http = &ctx.serenity_context().http;
+    let hospital = storage::load_hospital()?;
+    let mut board = ctx.data().board.lock().await;
+    let info = engine::take_and_enqueue_quest(
+        &mut *board,
+        &hospital,
+        target_user_id,
+        quest_id,
+        &ctx.data().generation_queue,
+        true,
+    )?;
+
+    post_quest_taken_announcement(http, &mut *board, ctx.data(), &info).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -125,7 +161,8 @@ pub async fn save(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     }
     let board = ctx.data().board.lock().await;
-    engine::save_all(&*board)?;
+    let registry = ctx.data().item_registry.lock().await;
+    engine::save_all(&*board, &*registry)?;
     ctx.say("ok").await?;
     Ok(())
 }

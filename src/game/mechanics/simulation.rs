@@ -1,19 +1,58 @@
 use rand::Rng;
 
+use crate::game::domain::item::ItemRegistry;
 use crate::game::domain::player::Player;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, TrialStats};
 use crate::game::mechanics::quest_builder::{PlayedQuest, StatChoice, TrialOutcome};
+
+const MIN_STAT: u8 = 1;
+const MAX_STAT: u8 = 10;
 
 /// Probability (0.0-1.0) that a non-optimal valid stat is dropped at maximum experience (10).
 const EXP_DROPOUT_MAX: f64 = 0.70;
 /// Probability (0.0-1.0) that a non-optimal valid stat is dropped at minimum experience (1).
 const EXP_DROPOUT_MIN: f64 = 0.05;
 
-fn choose_stat(stats: &TrialStats, player: &Player, rng: &mut impl Rng) -> StatChoice {
+pub fn effective_stats(player: &Player, registry: &ItemRegistry) -> (u8, u8, u8) {
+    let mut strength = player.strength as i16;
+    let mut smarts = player.smarts as i16;
+    let mut stealth = player.stealth as i16;
+
+    for id in player.chud.equipment.all_ids() {
+        if let Some(item) = registry.get(id) {
+            let (a, b, c) = item.stats.total_bonus();
+            strength += a;
+            smarts += b;
+            stealth += c;
+        }
+    }
+
+    (
+        strength.clamp(MIN_STAT as i16, MAX_STAT as i16) as u8,
+        smarts.clamp(MIN_STAT as i16, MAX_STAT as i16) as u8,
+        stealth.clamp(MIN_STAT as i16, MAX_STAT as i16) as u8,
+    )
+}
+
+fn effective_stat(player: &Player, registry: &ItemRegistry, stat: StatChoice) -> u8 {
+    let (str, smt, sth) = effective_stats(player, registry);
+    match stat {
+        StatChoice::Strength => str,
+        StatChoice::Smarts => smt,
+        StatChoice::Stealth => sth,
+    }
+}
+
+fn choose_stat(
+    stats: &TrialStats,
+    player: &Player,
+    registry: &ItemRegistry,
+    rng: &mut impl Rng,
+) -> StatChoice {
     let candidates = [
-        (StatChoice::Strength, stats.strength, player.strength),
-        (StatChoice::Smarts, stats.smarts, player.smarts),
-        (StatChoice::Stealth, stats.stealth, player.stealth),
+        (StatChoice::Strength, stats.strength, effective_stat(player, registry, StatChoice::Strength)),
+        (StatChoice::Smarts, stats.smarts, effective_stat(player, registry, StatChoice::Smarts)),
+        (StatChoice::Stealth, stats.stealth, effective_stat(player, registry, StatChoice::Stealth)),
     ];
 
     let valid: Vec<(StatChoice, i16)> = candidates
@@ -45,15 +84,16 @@ pub fn try_quest(
     quest: &QuestData,
     generated: &GeneratedQuest,
     player: &Player,
+    registry: &ItemRegistry,
 ) -> anyhow::Result<PlayedQuest> {
     let mut rng = rand::thread_rng();
     let mut outcomes = Vec::new();
 
     for (stats, _situation) in quest.trials.iter().zip(generated.trials.iter()) {
-        let stat_used = choose_stat(stats, player, &mut rng);
-        let player_stat = stat_used.player_stat(player);
+        let stat_used = choose_stat(stats, player, registry, &mut rng);
+        let effective = effective_stat(player, registry, stat_used);
         let required = stat_used.trial_required(stats);
-        let player_roll: u8 = rng.gen_range(1..=player_stat);
+        let player_roll: u8 = rng.gen_range(1..=effective);
         let trial_roll: u8 = rng.gen_range(1..=required + 1);
         let passed = player_roll >= trial_roll;
 
@@ -62,7 +102,7 @@ pub fn try_quest(
             stat_used,
             player_roll,
             trial_roll,
-            player_stat,
+            player_stat: effective,
             required,
             passed,
         });
@@ -79,8 +119,9 @@ pub fn play_quest(
     quest: &QuestData,
     generated: &GeneratedQuest,
     player: &Player,
+    registry: &ItemRegistry,
 ) -> anyhow::Result<PlayedQuest> {
-    try_quest(quest, generated, player)
+    try_quest(quest, generated, player, registry)
 }
 
 /// Run `trials` simulations of the quest for `player` and return the fraction
@@ -89,12 +130,13 @@ pub fn check_job(
     quest: &QuestData,
     generated: &GeneratedQuest,
     player: &Player,
+    registry: &ItemRegistry,
     trials: u32,
 ) -> anyhow::Result<f64> {
     let count = trials.max(1);
     let mut successes = 0u32;
     for _ in 0..count {
-        let played = try_quest(quest, generated, player)?;
+        let played = try_quest(quest, generated, player, registry)?;
         if played.outcomes.last().map_or(false, |o| o.passed) {
             successes += 1;
         }

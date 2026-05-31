@@ -4,14 +4,18 @@ use std::sync::{
 };
 
 use crate::game::domain::board::Board;
+use crate::game::domain::item::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::engine::GenerationJob;
+use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::QuestGenerator;
 
 pub struct Data {
     pub generator: Arc<QuestGenerator>,
+    pub item_generator: Arc<ItemGenerator>,
     pub board: Arc<tokio::sync::Mutex<Board>>,
     pub job_queue: Arc<tokio::sync::Mutex<JobQueue>>,
+    pub item_registry: Arc<tokio::sync::Mutex<ItemRegistry>>,
     pub admin_user_id: u64,
     pub bot_user_id: u64,
     pub channel_id: u64,

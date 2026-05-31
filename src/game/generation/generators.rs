@@ -1,0 +1,300 @@
+use rig::completion::{CompletionError, Prompt, PromptError};
+use rig::completion::message::Message;
+use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+use rig::providers::openrouter;
+use rig::client::CompletionClient;
+
+pub const WORLD_BUILDING_CONTEXT: &str = "You are operating in a fantasy world that is lighthearted, full of satire, and often crude. Adventurers are known as 'Chuds' and are often exceptionally bizarre";
+
+/// Per-attempt timeout for LLM requests. Raise if using slow free-tier models.
+pub const PROMPT_TIMEOUT_SECS: u64 = 90;
+
+/// Token budget for each agent's in-memory conversation history (approximate; 1 token ≈ 4 chars).
+pub const MEMORY_TOKEN_BUDGET: usize = 50_000;
+
+pub type OpenRouterAgent = rig::agent::Agent<openrouter::completion::CompletionModel, ()>;
+
+pub fn make_memory() -> InMemoryConversationMemory {
+    InMemoryConversationMemory::new().with_filter(|msgs: Vec<Message>| {
+        let mut out = msgs;
+        let char_budget = MEMORY_TOKEN_BUDGET * 4;
+        let mut total: usize = out
+            .iter()
+            .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
+            .sum();
+        tracing::info!(
+            history_msgs = out.len(),
+            history_chars = total,
+            budget_chars = char_budget,
+            "memory loaded"
+        );
+        let msgs_before = out.len();
+        while total > char_budget && out.len() > 1 {
+            let removed_size = serde_json::to_string(&out[0])
+                .map(|s| s.len())
+                .unwrap_or(0);
+            out.remove(0);
+            total = total.saturating_sub(removed_size);
+        }
+        if out.len() < msgs_before {
+            tracing::warn!(
+                trimmed = msgs_before - out.len(),
+                history_msgs = out.len(),
+                history_chars = total,
+                budget_chars = char_budget,
+                "memory trimmed"
+            );
+        }
+        out
+    })
+}
+
+pub fn build_agent(client: &openrouter::Client, system_context: &str) -> OpenRouterAgent {
+    client
+        .agent("openrouter/free")
+        .preamble([WORLD_BUILDING_CONTEXT, system_context].join("\n\n").as_str())
+        .build()
+}
+
+pub fn sanitize(s: &str) -> String {
+    let s = s.trim();
+    let inner = s
+        .strip_prefix("```yaml")
+        .or_else(|| s.strip_prefix("```"))
+        .unwrap_or(s);
+    let stripped = if inner != s {
+        if let Some(end) = inner.rfind("```") {
+            inner[..end].trim()
+        } else {
+            inner.trim()
+        }
+    } else {
+        s
+    };
+    stripped
+        .replace('\u{2019}', "'")
+        .replace('\u{2011}', "-")
+}
+
+pub fn truncate_for_log(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max])
+    }
+}
+
+pub fn yaml_correction(kind: &str, error: &str, raw_preview: &str) -> String {
+    format!(
+        "Your previous response was invalid ({kind}): {error}\n\
+         Reply again with ONLY valid YAML matching the required fields. \
+         Use block scalars (|) or double-quoted strings for long text or text containing colons.\n\
+         Previous response (truncated):\n{raw_preview}"
+    )
+}
+
+fn parse_retry_delay(msg: &str) -> Option<u64> {
+    let json_str = &msg[msg.find("with message: ")? + "with message: ".len()..];
+    let body: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    if let Some(details) = body["error"]["details"].as_array() {
+        for detail in details {
+            if let Some(delay) = detail["retryDelay"].as_str() {
+                return delay
+                    .trim_end_matches('s')
+                    .parse::<f64>()
+                    .ok()
+                    .map(|s| s.ceil() as u64);
+            }
+        }
+    }
+    if let Some(secs) = body["error"]["metadata"]["retry_after_seconds"].as_u64() {
+        return Some(secs);
+    }
+    None
+}
+
+pub async fn prompt_with_retry(
+    agent: &OpenRouterAgent,
+    prompt: &str,
+    history: &[Message],
+) -> anyhow::Result<String> {
+    const MAX_RETRIES: u32 = 12;
+    let mut retries = 0;
+    loop {
+        match tokio::time::timeout(
+            tokio::time::Duration::from_secs(PROMPT_TIMEOUT_SECS),
+            agent
+                .prompt(prompt)
+                .without_memory()
+                .with_history(history.iter().cloned()),
+        )
+        .await
+        {
+            Err(_elapsed) => {
+                if retries < MAX_RETRIES {
+                    retries += 1;
+                    tracing::warn!(
+                        PROMPT_TIMEOUT_SECS,
+                        retries,
+                        MAX_RETRIES,
+                        "LLM request timed out, retrying"
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                    continue;
+                }
+                return Err(anyhow::anyhow!(
+                    "LLM request timed out after {} retries",
+                    MAX_RETRIES
+                ));
+            }
+            Ok(Ok(response)) => return Ok(sanitize(&response)),
+            Ok(Err(e)) => {
+                let msg = e.to_string();
+                let (wait_secs, label) = if msg.contains("404") {
+                    (10, "404 model not found")
+                } else if msg.contains("503") {
+                    (10, "503 model overloaded")
+                } else if msg.contains("500") {
+                    (15, "500 internal server error")
+                } else if msg.contains("429") {
+                    (parse_retry_delay(&msg).unwrap_or(5) * 2, "429 quota exceeded")
+                } else if matches!(
+                    e,
+                    PromptError::CompletionError(CompletionError::ResponseError(_))
+                ) {
+                    (5, "malformed OpenRouter response")
+                } else {
+                    return Err(e.into());
+                };
+                if retries >= MAX_RETRIES {
+                    return Err(e.into());
+                }
+                tracing::warn!(msg);
+                retries += 1;
+                tracing::warn!(
+                    error = label,
+                    wait_secs,
+                    retries,
+                    MAX_RETRIES,
+                    "retryable LLM error, waiting before retry"
+                );
+                tokio::time::sleep(tokio::time::Duration::from_secs(wait_secs)).await;
+            }
+        }
+    }
+}
+
+pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
+    agent: &OpenRouterAgent,
+    memory: &InMemoryConversationMemory,
+    prompt: &str,
+    expected_trials: Option<usize>,
+    conversation_id: &str,
+) -> anyhow::Result<T> {
+    const MAX_RETRIES: u32 = 5;
+    let mut retries = 0u32;
+    let mut correction = String::new();
+    loop {
+        let history = memory.load(conversation_id).await.unwrap_or_default();
+        let effective_prompt = if correction.is_empty() {
+            prompt.to_string()
+        } else {
+            format!("{prompt}\n\n{correction}")
+        };
+        let raw = prompt_with_retry(agent, &effective_prompt, &history).await?;
+        let parsed = serde_yaml::from_str::<serde_yaml::Value>(&raw);
+        match parsed {
+            Err(e) => {
+                if retries < MAX_RETRIES {
+                    retries += 1;
+                    let preview = truncate_for_log(&raw, 500);
+                    tracing::warn!(
+                        error = %e,
+                        retries,
+                        MAX_RETRIES,
+                        "malformed YAML from LLM, retrying"
+                    );
+                    tracing::debug!(raw_preview = %preview, "LLM response that failed YAML parse");
+                    correction = yaml_correction("malformed YAML", &e.to_string(), &preview);
+                    continue;
+                }
+                return Err(anyhow::anyhow!(
+                    "LLM returned malformed YAML after {} retries: {}",
+                    MAX_RETRIES,
+                    e
+                ));
+            }
+            Ok(value) => {
+                if let Some(expected) = expected_trials {
+                    let actual = value
+                        .get("trials")
+                        .and_then(|t| t.as_sequence())
+                        .map(|s| s.len());
+                    if actual != Some(expected) {
+                        if retries < MAX_RETRIES {
+                            retries += 1;
+                            let preview = truncate_for_log(&raw, 500);
+                            tracing::warn!(
+                                expected,
+                                actual = ?actual,
+                                retries,
+                                MAX_RETRIES,
+                                "wrong trial count from LLM, retrying"
+                            );
+                            tracing::debug!(
+                                raw_preview = %preview,
+                                "LLM response with wrong trial count"
+                            );
+                            let msg =
+                                format!("expected {expected} trial strings, got {:?}", actual);
+                            correction = yaml_correction("wrong trial count", &msg, &preview);
+                            continue;
+                        }
+                        return Err(anyhow::anyhow!(
+                            "LLM returned wrong trial count after {} retries: expected {}, got {:?}",
+                            MAX_RETRIES,
+                            expected,
+                            actual
+                        ));
+                    }
+                }
+                match serde_yaml::from_value(value) {
+                    Ok(result) => {
+                        let _ = memory
+                            .append(
+                                conversation_id,
+                                vec![Message::user(prompt), Message::assistant(&raw)],
+                            )
+                            .await;
+                        tracing::info!(conversation_id, "committed to memory");
+                        return Ok(result);
+                    }
+                    Err(e) => {
+                        if retries < MAX_RETRIES {
+                            retries += 1;
+                            let preview = truncate_for_log(&raw, 500);
+                            tracing::warn!(
+                                error = %e,
+                                retries,
+                                MAX_RETRIES,
+                                "unexpected YAML structure from LLM, retrying"
+                            );
+                            tracing::debug!(
+                                raw_preview = %preview,
+                                "LLM response with unexpected YAML structure"
+                            );
+                            correction =
+                                yaml_correction("unexpected YAML structure", &e.to_string(), &preview);
+                            continue;
+                        }
+                        return Err(anyhow::anyhow!(
+                            "LLM returned unexpected YAML structure after {} retries: {}",
+                            MAX_RETRIES,
+                            e
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}

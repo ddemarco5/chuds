@@ -6,6 +6,7 @@ use tokio::sync::{Mutex, MutexGuard};
 
 use crate::game::domain::board::Board;
 use crate::game::domain::hospital::Hospital;
+use crate::game::domain::item::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::Player;
 use crate::game::persistence::chudmasters::Chudmasters;
@@ -17,6 +18,7 @@ const BOARD_PATH: &str = "data/board.yaml";
 const HOSPITAL_PATH: &str = "data/hospital.yaml";
 const MESSAGE_CACHE_PATH: &str = "data/message_cache.yaml";
 const CHUDMASTERS_PATH: &str = "data/chudmasters.yaml";
+const ITEM_REGISTRY_PATH: &str = "data/item_registry.yaml";
 
 static MESSAGE_CACHE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -156,6 +158,22 @@ pub fn load_chudmasters() -> anyhow::Result<Chudmasters> {
     }
     let yaml = std::fs::read_to_string(CHUDMASTERS_PATH).context("reading chudmasters")?;
     serde_yaml::from_str(&yaml).context("parsing chudmasters")
+}
+
+/// Load the item registry, returning empty if no file exists yet.
+pub fn load_item_registry() -> anyhow::Result<ItemRegistry> {
+    if !Path::new(ITEM_REGISTRY_PATH).exists() {
+        return Ok(ItemRegistry::default());
+    }
+    let yaml = std::fs::read_to_string(ITEM_REGISTRY_PATH).context("reading item registry")?;
+    serde_yaml::from_str(&yaml).context("parsing item registry")
+}
+
+/// Persist the item registry to `data/item_registry.yaml`.
+pub fn save_item_registry(registry: &ItemRegistry) -> anyhow::Result<()> {
+    std::fs::create_dir_all("data")?;
+    let yaml = serde_yaml::to_string(registry).context("serializing item registry")?;
+    std::fs::write(ITEM_REGISTRY_PATH, yaml).context("writing item registry")
 }
 
 /// Return `true` if the given Discord user ID is a Chudmaster.

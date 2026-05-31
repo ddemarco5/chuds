@@ -1,5 +1,7 @@
 use crate::game::domain::board::Board;
 use crate::game::domain::hospital::Hospital;
+use crate::game::domain::item::Item;
+use crate::game::domain::item::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{LevelUp, Player};
 use crate::game::domain::quest_result::QuestResult;
@@ -28,12 +30,14 @@ pub struct QuestResolved {
     pub level_up: LevelUp,
     pub reward: u32,
     pub hospitalized: bool,
+    pub item_awarded: Option<Item>,
 }
 
 pub struct TickContext<'a> {
     pub board: &'a mut Board,
     pub hospital: &'a mut Hospital,
     pub queue: &'a mut JobQueue,
+    pub item_registry: &'a mut ItemRegistry,
     pub max_jobs: usize,
 }
 

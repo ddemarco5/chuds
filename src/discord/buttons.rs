@@ -9,7 +9,7 @@ use crate::discord::channel::post_buffered_message;
 use crate::discord::context::Data;
 use crate::game::busy::{self, BusyReason};
 use crate::game::domain::player::Player;
-use crate::game::engine::{self, GenerationJob};
+use crate::game::engine;
 use crate::game::persistence::storage;
 
 async fn ephemeral_followup(
@@ -84,16 +84,8 @@ async fn announce_taken_quest(
     http: &serenity::Http,
     board: &mut crate::game::domain::board::Board,
     data: &Data,
-    info: engine::AssignInfo,
-    quest_id: u32,
+    info: &engine::AssignInfo,
 ) -> anyhow::Result<()> {
-    let board_quest = board
-        .quests
-        .iter()
-        .find(|q| q.id == quest_id)
-        .ok_or_else(|| anyhow::anyhow!("quest {} not found after assignment", quest_id))?
-        .clone();
-
     let first_name = info
         .player
         .name
@@ -103,16 +95,18 @@ async fn announce_taken_quest(
         .to_string();
     let content = chud_msg!("chud_takes_job", first_name, info.quest_title);
 
-    data.generation_queue
-        .send(GenerationJob::QuestResult {
-            board_quest,
-            player: info.player,
-        })
-        .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
-
     post_buffered_message(http, data.channel_id, data.max_buffer_messages, &content).await;
     board_ui::update_board_message(http, data.channel_id, board, data.max_jobs).await?;
     Ok(())
+}
+
+pub async fn post_quest_taken_announcement(
+    http: &serenity::Http,
+    board: &mut crate::game::domain::board::Board,
+    data: &Data,
+    info: &engine::AssignInfo,
+) -> anyhow::Result<()> {
+    announce_taken_quest(http, board, data, info).await
 }
 
 pub async fn handle_take_button(
@@ -162,7 +156,14 @@ pub async fn handle_take_button(
         return Ok(());
     }
 
-    let info = match engine::assign_chud_to_quest(&mut *board, &hospital, user_id, quest_id) {
+    let info = match engine::take_and_enqueue_quest(
+        &mut *board,
+        &hospital,
+        user_id,
+        quest_id,
+        &data.generation_queue,
+        false,
+    ) {
         Ok(info) => info,
         Err(_) => {
             ephemeral_followup(ctx, interaction, "That job is no longer available.").await?;
@@ -170,7 +171,7 @@ pub async fn handle_take_button(
         }
     };
 
-    announce_taken_quest(&ctx.http, &mut *board, data, info, quest_id).await?;
+    post_quest_taken_announcement(&ctx.http, &mut *board, data, &info).await?;
     Ok(())
 }
 

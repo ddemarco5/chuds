@@ -1,6 +1,7 @@
 use crate::discord::channel::post_buffered_message;
 use crate::discord::context::{Context, Error};
 use crate::game::engine;
+use crate::game::mechanics::simulation::effective_stats;
 use crate::game::persistence::storage;
 
 #[poise::command(slash_command)]
@@ -35,13 +36,67 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     match player {
         None => ctx.say("You don't have a chud.").await?,
         Some(p) => {
-            let msg = format!(
-                "**{}**\n{}\n{}\n\nYou've got ${} worth of loose change.",
-                p.name,
-                p.description,
-                p.format_stats(),
-                p.cash,
-            );
+            let registry = storage::load_item_registry().unwrap_or_default();
+            let mut equipment_lines = Vec::new();
+            if let Some(id) = p.chud.equipment.gear {
+                if let Some(item) = registry.get(id) {
+                    equipment_lines.push(format!(
+                        "Gear: **{}** ({}) [{}]",
+                        item.name,
+                        item.subtype,
+                        item.stats.format_triplet(),
+                    ));
+                }
+            }
+            if let Some(id) = p.chud.equipment.weapon {
+                if let Some(item) = registry.get(id) {
+                    equipment_lines.push(format!(
+                        "Weapon: **{}** [{}]",
+                        item.name,
+                        item.stats.format_triplet(),
+                    ));
+                }
+            }
+            for (i, slot) in p.chud.equipment.misc.iter().enumerate() {
+                if let Some(id) = slot {
+                    if let Some(item) = registry.get(*id) {
+                        equipment_lines.push(format!(
+                            "Misc {}: **{}** ({}) [{}]",
+                            i + 1,
+                            item.name,
+                            item.subtype,
+                            item.stats.format_triplet(),
+                        ));
+                    }
+                }
+            }
+            let equipment = if equipment_lines.is_empty() {
+                String::new()
+            } else {
+                equipment_lines.join("\n")
+            };
+            let effective = effective_stats(&p, &registry);
+            let stats_line = p.format_effective_stats_line(effective);
+            let msg = if equipment.is_empty() {
+                format!(
+                    "**{}**\n{}\n\n{}\n{}\n\nYou've got ${} worth of loose change.",
+                    p.name,
+                    p.description,
+                    stats_line,
+                    p.format_job_record(),
+                    p.cash,
+                )
+            } else {
+                format!(
+                    "**{}**\n{}\n\n{}\n\n{}\n{}\n\nYou've got ${} worth of loose change.",
+                    p.name,
+                    p.description,
+                    equipment,
+                    stats_line,
+                    p.format_job_record(),
+                    p.cash,
+                )
+            };
             ctx.say(msg).await?
         }
     };

@@ -1,15 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-use crate::game::domain::player::Player;
+use crate::game::domain::item::Item;
 use crate::game::generation::quest_generator::GeneratedQuest;
 use crate::game::mechanics::quest_builder::{PlayedQuest, StatChoice, TrialOutcome};
 
-fn is_optimal(outcome: &TrialOutcome, player: &Player) -> bool {
+fn is_optimal(outcome: &TrialOutcome, effective: (u8, u8, u8)) -> bool {
+    let (eff_str, eff_smt, eff_sth) = effective;
     let chosen_score = outcome.player_stat as i16 - outcome.required as i16;
     let best_score = [
-        (outcome.stats.strength, player.strength),
-        (outcome.stats.smarts,   player.smarts),
-        (outcome.stats.stealth,  player.stealth),
+        (outcome.stats.strength, eff_str),
+        (outcome.stats.smarts, eff_smt),
+        (outcome.stats.stealth, eff_sth),
     ]
     .iter()
     .filter(|&&(req, _)| req > 0)
@@ -39,13 +40,15 @@ pub struct QuestResult {
     pub trials: Vec<CompletedTrial>,
     pub passed: bool,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_item: Option<Item>,
 }
 
 impl QuestResult {
     pub fn build(
         generated: &GeneratedQuest,
         played: &PlayedQuest,
-        player: &Player,
+        effective: (u8, u8, u8),
         narratives: Vec<String>,
         summary: String,
     ) -> Self {
@@ -56,7 +59,7 @@ impl QuestResult {
             .zip(narratives.into_iter())
             .map(|((outcome, situation), narrative)| {
                 let margin = outcome.player_roll as i16 - outcome.trial_roll as i16;
-                let chose_optimal = is_optimal(outcome, player);
+                let chose_optimal = is_optimal(outcome, effective);
                 CompletedTrial {
                     situation: situation.clone(),
                     stat_used: outcome.stat_used,
@@ -77,6 +80,7 @@ impl QuestResult {
             trials,
             passed,
             summary,
+            pending_item: None,
         }
     }
 

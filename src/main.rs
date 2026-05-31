@@ -62,9 +62,13 @@ async fn main() -> anyhow::Result<()> {
     let generator = Arc::new(chuds::game::generation::quest_generator::QuestGenerator::new(
         &api_key,
     )?);
+    let item_generator = Arc::new(chuds::game::generation::item_generator::ItemGenerator::new(
+        &api_key,
+    )?);
     let game_state = GameState::load()?;
     let board = Arc::new(tokio::sync::Mutex::new(game_state.board));
     let job_queue = Arc::new(tokio::sync::Mutex::new(game_state.job_queue));
+    let item_registry = Arc::new(tokio::sync::Mutex::new(game_state.item_registry));
     let pending_quests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     tracing::info!(tick_time_s, "chuds bot starting");
@@ -87,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::load(),
                 discord::commands::add_cm(),
                 discord::commands::delete_cm(),
+                discord::commands::admin_take_gen_item(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
@@ -167,14 +172,18 @@ async fn main() -> anyhow::Result<()> {
                 {
                     let worker_board = Arc::clone(&board);
                     let worker_queue = Arc::clone(&job_queue);
+                    let worker_registry = Arc::clone(&item_registry);
                     let worker_generator = Arc::clone(&generator);
+                    let worker_item_generator = Arc::clone(&item_generator);
                     let worker_http = Arc::clone(&ctx.http);
                     let worker_pending = Arc::clone(&pending_quests);
                     spawn_generation_worker(
                         generation_rx,
                         Arc::clone(&worker_board),
                         Arc::clone(&worker_queue),
+                        Arc::clone(&worker_registry),
                         worker_generator,
+                        worker_item_generator,
                         max_jobs,
                         worker_pending,
                         move |effects| {
@@ -203,6 +212,7 @@ async fn main() -> anyhow::Result<()> {
 
                 let tick_board = Arc::clone(&board);
                 let tick_queue = Arc::clone(&job_queue);
+                let tick_registry = Arc::clone(&item_registry);
                 let tick_http = Arc::clone(&ctx.http);
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
@@ -215,6 +225,7 @@ async fn main() -> anyhow::Result<()> {
                             &tick_http,
                             &tick_board,
                             &tick_queue,
+                            &tick_registry,
                             channel_id,
                             max_buffer_messages,
                             max_jobs,
@@ -230,8 +241,10 @@ async fn main() -> anyhow::Result<()> {
 
                 Ok(Data {
                     generator,
+                    item_generator,
                     board,
                     job_queue,
+                    item_registry,
                     admin_user_id,
                     bot_user_id,
                     channel_id,
