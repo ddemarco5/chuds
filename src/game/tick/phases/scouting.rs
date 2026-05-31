@@ -56,6 +56,7 @@ pub fn scouting_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyho
         );
         let active_discord_user_id = quest.assigned_to();
         let quest_title = quest.generated.quest_title.clone();
+        let quest_days = quest.quest_data.trials.len() as u32;
         let other_scouting_discord_user_ids: Vec<u64> = scouting
             .iter()
             .filter(|&&(qid, uid)| qid == quest_id && uid != discord_user_id)
@@ -65,6 +66,7 @@ pub fn scouting_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyho
             discord_user_id,
             player_name: player.name.clone(),
             quest_title,
+            quest_days,
             chance,
             active_discord_user_id,
             other_scouting_discord_user_ids,

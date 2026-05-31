@@ -81,6 +81,15 @@ scout_returned_cocky:
   - "{} returns smirking confidently."
   - "{} bounces in, completely unfazed."
 
+scout_days:
+  - "They say it'll take {} days."
+  - "Word is it's a {}-day job."
+  - "They reckon you're looking at {} days."
+  - "They estimate {} days, give or take."
+  - "According to them, it'll run {} days."
+  - "They mutter it'll be {} days before anyone's done."
+  - "They figure {} days start to finish."
+
 chud_hospital_admit:
   - "{} has been admitted to the hospital."
   - "{} took a beating and is being patched up."

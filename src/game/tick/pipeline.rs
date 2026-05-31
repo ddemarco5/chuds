@@ -12,6 +12,8 @@ pub struct ScoutResult {
     pub discord_user_id: u64,
     pub player_name: String,
     pub quest_title: String,
+    /// How many ticks the job would take if taken (one per trial).
+    pub quest_days: u32,
     pub chance: f64,
     /// Discord user ID of the player currently active on this quest, if any.
     pub active_discord_user_id: Option<u64>,

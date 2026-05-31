@@ -104,6 +104,7 @@ fn oxford_join(names: &[&str]) -> String {
 pub fn format_dm_scouting_report(
     player_name: &str,
     quest_title: &str,
+    quest_days: u32,
     chance: f64,
     active_player_name: Option<&str>,
     scouting_player_names: &[&str],
@@ -132,6 +133,10 @@ pub fn format_dm_scouting_report(
     if !scouting_player_names.is_empty() {
         let names_str = oxford_join(scouting_player_names);
         out.push_str(&format!("\nThey also spotted {} checking it out.", names_str));
+    }
+
+    if quest_days > 0 {
+        out.push_str(&format!("\n{}", chud_msg!("scout_days", quest_days)));
     }
 
     out

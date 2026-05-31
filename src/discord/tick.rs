@@ -173,6 +173,7 @@ pub async fn execute_tick(
         let dm_content = formatting::format_dm_scouting_report(
             &sr.player_name,
             &sr.quest_title,
+            sr.quest_days,
             sr.chance,
             active_player_name.as_deref(),
             &scouting_name_refs,
