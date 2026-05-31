@@ -2,7 +2,7 @@ use rand::Rng;
 
 use crate::game::domain::item::{parse_stat_contribution, ItemSeed, ItemStats, ItemType};
 
-pub const ITEM_DROP_CHANCE: f64 = 0.08;
+pub const ITEM_DROP_CHANCE: f64 = 0.10;
 
 const GEAR_SUBTYPES: &[&str] = &["helmet", "chest", "legs", "feet", "hands"];
 const MISC_SUBTYPES: &[&str] = &["trinket"]; // we want to add consumables and others in the future
