@@ -104,6 +104,62 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 #[poise::command(slash_command)]
+pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let user_id = ctx.author().id.get();
+    let player = storage::load_player(user_id)?;
+    match player {
+        None => ctx.say("You don't have a chud.").await?,
+        Some(p) => {
+            let registry = ctx.data().item_registry.lock().await;
+            let mut equipment_lines = Vec::new();
+            if let Some(id) = p.chud.equipment.gear {
+                if let Some(item) = registry.get(id) {
+                    equipment_lines.push(format!(
+                        "Gear: **{}** ({}) [{}]\n{}",
+                        item.name,
+                        item.subtype,
+                        item.stats.format_triplet(),
+                        item.description,
+                    ));
+                }
+            }
+            if let Some(id) = p.chud.equipment.weapon {
+                if let Some(item) = registry.get(id) {
+                    equipment_lines.push(format!(
+                        "Weapon: **{}** [{}]\n{}",
+                        item.name,
+                        item.stats.format_triplet(),
+                        item.description,
+                    ));
+                }
+            }
+            for (i, slot) in p.chud.equipment.misc.iter().enumerate() {
+                if let Some(id) = slot {
+                    if let Some(item) = registry.get(*id) {
+                        equipment_lines.push(format!(
+                            "Misc {}: **{}** ({}) [{}]\n{}",
+                            i + 1,
+                            item.name,
+                            item.subtype,
+                            item.stats.format_triplet(),
+                            item.description,
+                        ));
+                    }
+                }
+            }
+            let msg = if equipment_lines.is_empty() {
+                "Not wearing any gear.".into()
+            } else {
+                equipment_lines.join("\n\n")
+            };
+            ctx.say(msg).await?
+        }
+    };
+    Ok(())
+}
+
+#[poise::command(slash_command)]
 pub async fn cash(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let user_id = ctx.author().id.get();
