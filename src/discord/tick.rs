@@ -7,7 +7,7 @@ use crate::discord::channel::{
 };
 use crate::discord::formatting;
 use crate::game::domain::board::Board;
-use crate::game::domain::item::ItemRegistry;
+use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::persistence::storage;
 use crate::game::tick::{run_tick, TickContext};

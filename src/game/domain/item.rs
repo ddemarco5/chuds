@@ -96,6 +96,19 @@ pub struct ItemSeed {
     pub effect: Option<String>,
 }
 
+impl Item {
+    /// e.g. "Wearing A pair of translucent clogs..."
+    pub fn equipped_description_sentence(&self) -> Option<String> {
+        let verb = match self.item_type {
+            ItemType::Weapon => "Holding",
+            ItemType::Gear => "Wearing",
+            ItemType::Misc if self.subtype == "trinket" => "Wearing",
+            ItemType::Misc => return None,
+        };
+        Some(format!("{verb} {}", self.description))
+    }
+}
+
 impl ItemSeed {
     pub fn into_item(self, name: String, description: String) -> Item {
         Item {
@@ -107,34 +120,6 @@ impl ItemSeed {
             description,
             trigger: self.trigger,
             effect: self.effect,
-        }
-    }
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct ItemRegistry {
-    pub items: Vec<Item>,
-    pub next_id: u32,
-}
-
-impl ItemRegistry {
-    pub fn get(&self, id: u32) -> Option<&Item> {
-        self.items.iter().find(|i| i.id == id)
-    }
-
-    pub fn add_item(&mut self, mut item: Item) -> u32 {
-        let id = self.next_id;
-        self.next_id += 1;
-        item.id = id;
-        self.items.push(item);
-        id
-    }
-
-    pub fn remove(&mut self, id: u32) -> Option<Item> {
-        if let Some(pos) = self.items.iter().position(|i| i.id == id) {
-            Some(self.items.remove(pos))
-        } else {
-            None
         }
     }
 }

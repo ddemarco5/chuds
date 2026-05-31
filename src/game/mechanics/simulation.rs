@@ -1,6 +1,6 @@
 use rand::Rng;
 
-use crate::game::domain::item::ItemRegistry;
+use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::player::Player;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, TrialStats};
 use crate::game::mechanics::quest_builder::{PlayedQuest, StatChoice, TrialOutcome};

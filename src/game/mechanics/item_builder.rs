@@ -5,7 +5,7 @@ use crate::game::domain::item::{parse_stat_contribution, ItemSeed, ItemStats, It
 pub const ITEM_DROP_CHANCE: f64 = 0.08;
 
 const GEAR_SUBTYPES: &[&str] = &["helmet", "chest", "legs", "feet", "hands"];
-const MISC_SUBTYPES: &[&str] = &["trinket", "consumable"];
+const MISC_SUBTYPES: &[&str] = &["trinket"]; // we want to add consumables and others in the future
 
 pub fn roll_item_drop(rng: &mut impl Rng) -> bool {
     rng.gen_bool(ITEM_DROP_CHANCE)

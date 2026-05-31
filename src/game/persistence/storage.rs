@@ -6,7 +6,7 @@ use tokio::sync::{Mutex, MutexGuard};
 
 use crate::game::domain::board::Board;
 use crate::game::domain::hospital::Hospital;
-use crate::game::domain::item::ItemRegistry;
+use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::Player;
 use crate::game::persistence::chudmasters::Chudmasters;

@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use crate::game::domain::board::Board;
-use crate::game::domain::item::ItemRegistry;
+use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::engine::GenerationJob;
 use crate::game::generation::item_generator::ItemGenerator;

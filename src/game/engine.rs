@@ -1,6 +1,7 @@
 use crate::game::domain::board::{Board, BoardQuest};
 use crate::game::domain::hospital::Hospital;
-use crate::game::domain::item::{equip_item, ItemRegistry};
+use crate::game::domain::item::equip_item;
+use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{create_chud, Player};
 use crate::game::domain::quest_result::QuestResult;
@@ -248,13 +249,21 @@ pub async fn generate_result(
         })
         .collect();
 
+    let equipped: Vec<_> = player
+        .chud
+        .equipment
+        .all_ids()
+        .filter_map(|id| item_registry.get(id))
+        .collect();
+    let adventurer_description = player.generate_description(equipped.iter().copied());
+
     let QuestResults { trials, summary } = generator
         .generate_results(
             &board_quest.quest_data,
             &board_quest.generated,
             &trial_results,
             &player.name,
-            &player.description,
+            &adventurer_description,
         )
         .await?;
 
@@ -297,6 +306,6 @@ pub fn save_all(board: &Board, item_registry: &ItemRegistry) -> anyhow::Result<(
     Ok(())
 }
 
-pub fn load_all() -> anyhow::Result<Board> {
-    storage::load_board()
+pub fn load_all() -> anyhow::Result<(Board, ItemRegistry)> {
+    Ok((storage::load_board()?, storage::load_item_registry()?))
 }

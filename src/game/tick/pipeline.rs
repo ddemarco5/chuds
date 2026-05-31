@@ -1,7 +1,7 @@
 use crate::game::domain::board::Board;
 use crate::game::domain::hospital::Hospital;
 use crate::game::domain::item::Item;
-use crate::game::domain::item::ItemRegistry;
+use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{LevelUp, Player};
 use crate::game::domain::quest_result::QuestResult;

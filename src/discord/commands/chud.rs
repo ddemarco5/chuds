@@ -36,7 +36,7 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     match player {
         None => ctx.say("You don't have a chud.").await?,
         Some(p) => {
-            let registry = storage::load_item_registry().unwrap_or_default();
+            let registry = ctx.data().item_registry.lock().await;
             let mut equipment_lines = Vec::new();
             if let Some(id) = p.chud.equipment.gear {
                 if let Some(item) = registry.get(id) {

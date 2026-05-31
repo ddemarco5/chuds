@@ -20,13 +20,14 @@ pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::
 
     storage::save_board(ctx.board)?;
     storage::save_hospital(&ctx.hospital)?;
+    storage::save_item_registry(ctx.item_registry)?;
     Ok(())
 }
 
 fn resolve_quest(
     board: &mut Board,
     hospital: &mut crate::game::domain::hospital::Hospital,
-    item_registry: &mut crate::game::domain::item::ItemRegistry,
+    item_registry: &mut crate::game::persistence::item_registry::ItemRegistry,
     board_quest: BoardQuest,
 ) -> anyhow::Result<Option<QuestResolved>> {
     let discord_user_id = match board_quest.assigned_to() {

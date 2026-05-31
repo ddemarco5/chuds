@@ -173,10 +173,12 @@ pub async fn load(ctx: Context<'_>) -> Result<(), Error> {
     if !admin_guard(ctx).await {
         return Ok(());
     }
-    let new_board = engine::load_all()?;
+    let (new_board, new_registry) = engine::load_all()?;
     let mut board = ctx.data().board.lock().await;
     *board = new_board;
-    tracing::info!("board reloaded from disk");
+    let mut registry = ctx.data().item_registry.lock().await;
+    *registry = new_registry;
+    tracing::info!("board and item registry reloaded from disk");
     ctx.say("ok").await?;
     Ok(())
 }

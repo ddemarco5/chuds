@@ -3,6 +3,7 @@ use std::ops::{Deref, DerefMut};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::game::domain::item::Item;
 use crate::game::domain::quest_result::QuestResult;
 
 const MAX_STAT: u8 = 10;
@@ -127,6 +128,23 @@ impl Player {
             "{} job completed, {} failed",
             self.total_job_successes, self.total_job_failures
         )
+    }
+
+    /// Base chud bio plus one sentence per equipped item (gear → weapon → misc slots).
+    pub fn generate_description<'a>(
+        &self,
+        equipped_items: impl IntoIterator<Item = &'a Item>,
+    ) -> String {
+        let mut out = self.description.clone();
+        for item in equipped_items {
+            if let Some(sentence) = item.equipped_description_sentence() {
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(&sentence);
+            }
+        }
+        out
     }
 
     /// Discord stats line with strikethrough on raw values when equipment modifies them.
