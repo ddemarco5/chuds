@@ -13,6 +13,25 @@ const EXP_DROPOUT_MAX: f64 = 0.70;
 /// Probability (0.0-1.0) that a non-optimal valid stat is dropped at minimum experience (1).
 const EXP_DROPOUT_MIN: f64 = 0.05;
 
+// P(optimal stat chosen) by experience level.
+// dropout_prob = EXP_DROPOUT_MIN + ((exp - 1) / 9) * (EXP_DROPOUT_MAX - EXP_DROPOUT_MIN)
+// Non-optimal valid stats are each dropped independently with `dropout_prob`; the optimal stat
+// is always kept. The surviving pool is then sampled uniformly at random.
+// Closed forms (d = dropout_prob): 2 valid → (1 + d) / 2,  3 valid → (1 + d + d²) / 3
+//
+// | Exp | dropout | 2 valid stats | 3 valid stats |
+// |-----|---------|---------------|---------------|
+// |   1 |   5.0%  |       52.5%   |       35.1%   |
+// |   2 |  12.2%  |       56.1%   |       37.9%   |
+// |   3 |  19.4%  |       59.7%   |       41.1%   |
+// |   4 |  26.7%  |       63.3%   |       44.6%   |
+// |   5 |  33.9%  |       66.9%   |       48.5%   |
+// |   6 |  41.1%  |       70.6%   |       52.7%   |
+// |   7 |  48.3%  |       74.2%   |       57.2%   |
+// |   8 |  55.6%  |       77.8%   |       62.1%   |
+// |   9 |  62.8%  |       81.4%   |       67.4%   |
+// |  10 |  70.0%  |       85.0%   |       73.0%   |
+
 pub fn effective_stats(player: &Player, registry: &ItemRegistry) -> (u8, u8, u8) {
     let mut strength = player.strength as i16;
     let mut smarts = player.smarts as i16;
