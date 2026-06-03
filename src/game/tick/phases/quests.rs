@@ -71,11 +71,15 @@ fn resolve_quest(
     }
 
     let item_awarded = if passed {
-        result
-            .pending_item
-            .take()
-            .map(|item| engine::award_pending_item(item_registry, &mut player, item))
-            .transpose()?
+        result.pending_item.take().and_then(|item| {
+            match engine::award_pending_item(item_registry, &mut player, item) {
+                Ok(item) => Some(item),
+                Err(e) => {
+                    tracing::warn!(err = %e, player = %player_name, "could not award item to stash");
+                    None
+                }
+            }
+        })
     } else {
         None
     };

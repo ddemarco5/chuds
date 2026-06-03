@@ -157,12 +157,74 @@ impl ItemSeed {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EquipmentSlot {
+    Gear,
+    Weapon,
+    Misc0,
+    Misc1,
+}
+
+impl EquipmentSlot {
+    pub const ALL: [Self; 4] = [Self::Gear, Self::Weapon, Self::Misc0, Self::Misc1];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Gear => "Gear",
+            Self::Weapon => "Weapon",
+            Self::Misc0 => "Misc 1",
+            Self::Misc1 => "Misc 2",
+        }
+    }
+
+    pub fn custom_id_suffix(self) -> &'static str {
+        match self {
+            Self::Gear => "gear",
+            Self::Weapon => "weapon",
+            Self::Misc0 => "misc0",
+            Self::Misc1 => "misc1",
+        }
+    }
+
+    pub fn parse_suffix(s: &str) -> Option<Self> {
+        match s {
+            "gear" => Some(Self::Gear),
+            "weapon" => Some(Self::Weapon),
+            "misc0" => Some(Self::Misc0),
+            "misc1" => Some(Self::Misc1),
+            _ => None,
+        }
+    }
+}
+
 impl ChudEquipment {
     pub fn all_ids(&self) -> impl Iterator<Item = u32> + '_ {
         self.gear
             .into_iter()
             .chain(self.weapon)
             .chain(self.misc.into_iter().flatten())
+    }
+
+    pub fn item_id_in_slot(&self, slot: EquipmentSlot) -> Option<u32> {
+        *self.slot_ref(slot)
+    }
+
+    pub fn slot_ref(&self, slot: EquipmentSlot) -> &Option<u32> {
+        match slot {
+            EquipmentSlot::Gear => &self.gear,
+            EquipmentSlot::Weapon => &self.weapon,
+            EquipmentSlot::Misc0 => &self.misc[0],
+            EquipmentSlot::Misc1 => &self.misc[1],
+        }
+    }
+
+    pub fn slot_mut(&mut self, slot: EquipmentSlot) -> &mut Option<u32> {
+        match slot {
+            EquipmentSlot::Gear => &mut self.gear,
+            EquipmentSlot::Weapon => &mut self.weapon,
+            EquipmentSlot::Misc0 => &mut self.misc[0],
+            EquipmentSlot::Misc1 => &mut self.misc[1],
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::game::domain::board::{Board, BoardQuest};
 use crate::game::domain::hospital::Hospital;
-use crate::game::domain::item::equip_item;
+use crate::game::domain::item::{equip_item, EquipmentSlot};
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{create_chud, Player};
@@ -200,23 +200,58 @@ pub fn assign_chud_to_quest(
     })
 }
 
-/// Register a pending item, equip it on the player, and remove any replaced item from the registry.
+/// Register a pending item and add it to the player's stash.
 pub fn award_pending_item(
     registry: &mut ItemRegistry,
     player: &mut Player,
     item: crate::game::domain::item::Item,
 ) -> anyhow::Result<crate::game::domain::item::Item> {
+    if !player.stash.has_room() {
+        anyhow::bail!("stash is full, cannot award item");
+    }
     let id = registry.add_item(item);
     let awarded = registry
         .get(id)
         .ok_or_else(|| anyhow::anyhow!("item {} missing after add", id))?
         .clone();
-    if let Some(old_id) = equip_item(player, awarded.clone()) {
-        registry.remove(old_id);
-        tracing::info!(replaced = old_id, "old item removed from registry");
-    }
+    player.stash.push(id)?;
+    storage::save_player(player)?;
     storage::save_item_registry(registry)?;
     Ok(awarded)
+}
+
+/// Move an item from stash into the appropriate equipment slot, swapping any displaced item into stash.
+pub fn equip_from_stash(
+    player: &mut Player,
+    item_id: u32,
+    registry: &ItemRegistry,
+) -> anyhow::Result<()> {
+    if !player.stash.contains(item_id) {
+        anyhow::bail!("item not in stash");
+    }
+    let item = registry
+        .get(item_id)
+        .ok_or_else(|| anyhow::anyhow!("item {} not found", item_id))?
+        .clone();
+    player.stash.remove(item_id);
+    if let Some(displaced) = equip_item(player, item) {
+        player.stash.push(displaced)?;
+    }
+    storage::save_player(player)?;
+    Ok(())
+}
+
+/// Move an equipped item into the stash.
+pub fn unequip_slot(player: &mut Player, slot: EquipmentSlot) -> anyhow::Result<()> {
+    let item_id = player
+        .chud
+        .equipment
+        .item_id_in_slot(slot)
+        .ok_or_else(|| anyhow::anyhow!("slot is empty"))?;
+    player.stash.push(item_id)?;
+    *player.chud.equipment.slot_mut(slot) = None;
+    storage::save_player(player)?;
+    Ok(())
 }
 
 /// Run the full LLM pipeline for a single quest and return the result.

@@ -53,7 +53,7 @@ pub fn format_dm_completion_report(
             format!(", {}", item.subtype)
         };
         out.push_str(&format!(
-            "\n\n**Item found:** {} ({}{subtype})\nStats: {}\n_{}_",
+            "\n\n**Item stashed:** {} ({}{subtype})\nStats: {}\n_{}_\nUse /gear to equip.",
             item.name,
             item_type_label(item.item_type),
             item.stats.format_triplet(),

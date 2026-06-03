@@ -1,5 +1,6 @@
 use crate::discord::channel::post_buffered_message;
 use crate::discord::context::{Context, Error};
+use crate::game::domain::stash::STASH_CAPACITY;
 use crate::game::engine;
 use crate::game::mechanics::simulation::effective_stats;
 use crate::game::persistence::storage;
@@ -75,23 +76,34 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
             } else {
                 equipment_lines.join("\n")
             };
+            let stash_line = if p.stash.is_empty() {
+                format!("Stash: empty (0/{STASH_CAPACITY}) — use /gear to manage loadout")
+            } else {
+                format!(
+                    "Stash: {}/{} items — use /gear to manage loadout",
+                    p.stash.len(),
+                    STASH_CAPACITY
+                )
+            };
             let effective = effective_stats(&p, &registry);
             let stats_line = p.format_effective_stats_line(effective);
             let msg = if equipment.is_empty() {
                 format!(
-                    "**{}**\n{}\n\n{}\n{}\n\nYou've got ${} worth of loose change.",
+                    "**{}**\n{}\n\n{}\n{}\n{}\n\nYou've got ${} worth of loose change.",
                     p.name,
                     p.description,
+                    stash_line,
                     stats_line,
                     p.format_job_record(),
                     p.cash,
                 )
             } else {
                 format!(
-                    "**{}**\n{}\n\n{}\n\n{}\n{}\n\nYou've got ${} worth of loose change.",
+                    "**{}**\n{}\n\n{}\n\n{}\n{}\n{}\n\nYou've got ${} worth of loose change.",
                     p.name,
                     p.description,
                     equipment,
+                    stash_line,
                     stats_line,
                     p.format_job_record(),
                     p.cash,
@@ -105,57 +117,27 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
 
 #[poise::command(slash_command)]
 pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
+    let token = match &ctx {
+        poise::Context::Application(app) => app.interaction.token.clone(),
+        _ => return Ok(()),
+    };
+    let http = ctx.serenity_context().http.clone();
+
     ctx.defer_ephemeral().await?;
     let user_id = ctx.author().id.get();
     let player = storage::load_player(user_id)?;
-    match player {
-        None => ctx.say("You don't have a chud.").await?,
-        Some(p) => {
-            let registry = ctx.data().item_registry.lock().await;
-            let mut equipment_lines = Vec::new();
-            if let Some(id) = p.chud.equipment.gear {
-                if let Some(item) = registry.get(id) {
-                    equipment_lines.push(format!(
-                        "Gear: **{}** ({}) [{}]\n{}",
-                        item.name,
-                        item.subtype,
-                        item.stats.format_triplet(),
-                        item.description,
-                    ));
-                }
-            }
-            if let Some(id) = p.chud.equipment.weapon {
-                if let Some(item) = registry.get(id) {
-                    equipment_lines.push(format!(
-                        "Weapon: **{}** [{}]\n{}",
-                        item.name,
-                        item.stats.format_triplet(),
-                        item.description,
-                    ));
-                }
-            }
-            for (i, slot) in p.chud.equipment.misc.iter().enumerate() {
-                if let Some(id) = slot {
-                    if let Some(item) = registry.get(*id) {
-                        equipment_lines.push(format!(
-                            "Misc {}: **{}** ({}) [{}]\n{}",
-                            i + 1,
-                            item.name,
-                            item.subtype,
-                            item.stats.format_triplet(),
-                            item.description,
-                        ));
-                    }
-                }
-            }
-            let msg = if equipment_lines.is_empty() {
-                "Not wearing any gear.".into()
-            } else {
-                equipment_lines.join("\n\n")
-            };
-            ctx.say(msg).await?
-        }
+    let Some(player) = player else {
+        ctx.say("You don't have a chud.").await?;
+        return Ok(());
     };
+
+    let registry = ctx.data().item_registry.lock().await;
+    let message = crate::discord::gear_ui::build_gear_message(&player, &registry, None);
+    drop(registry);
+
+    if let Err(e) = crate::discord::gear_ui::edit_gear_message(&http, &token, &message).await {
+        tracing::debug!(err = %e, user_id, "gear command edit failed (ephemeral may be dismissed)");
+    }
     Ok(())
 }
 

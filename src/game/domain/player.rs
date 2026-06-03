@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::game::domain::item::Item;
 use crate::game::domain::quest_result::QuestResult;
+use crate::game::domain::stash::Stash;
 
 const MAX_STAT: u8 = 10;
 
@@ -78,6 +79,8 @@ pub struct Chud {
 pub struct Player {
     pub discord_user_id: u64,
     pub cash: u32,
+    #[serde(default)]
+    pub stash: Stash,
     pub chud: Chud,
 }
 
@@ -115,6 +118,10 @@ fn apply_wins(val: &mut u8, counter: &mut u32, wins: u32, base: u32) -> bool {
 }
 
 impl Player {
+    pub fn owns_item(&self, id: u32) -> bool {
+        self.stash.contains(id) || self.chud.equipment.all_ids().any(|owned| owned == id)
+    }
+
     pub fn format_stats(&self) -> String {
         format!(
             "{} -- *Strength {}, Smarts {}, Stealth {}, Experience {}*\n{} job completed, {} failed",
@@ -214,6 +221,7 @@ pub fn create_chud(discord_user_id: u64, name: String, description: String) -> P
     Player {
         discord_user_id,
         cash: 0,
+        stash: Stash::default(),
         chud: Chud {
             name,
             description,

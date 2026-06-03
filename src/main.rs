@@ -2,8 +2,8 @@ use std::{sync::Arc, time::Duration};
 
 use chuds::discord::{
     self, cleanup_non_bot_messages, delete_all_messages_in_channel, execute_tick,
-    handle_heal_button, handle_scout_button, handle_take_button, update_board_message,
-    validate_cached_messages_exist, Data,
+    handle_gear_button, handle_heal_button, handle_scout_button, handle_take_button,
+    update_board_message, validate_cached_messages_exist, Data,
 };
 use chuds::game::engine;
 use chuds::game::generation::worker::{spawn_generation_worker, WorkerEffect};
@@ -105,6 +105,8 @@ async fn main() -> anyhow::Result<()> {
                                 Some(handle_scout_button(ctx, component, data).await)
                             } else if id.starts_with("heal:") {
                                 Some(handle_heal_button(ctx, component, data).await)
+                            } else if id.starts_with("g_equip:") || id.starts_with("g_unequip:") {
+                                Some(handle_gear_button(ctx, component, data).await)
                             } else {
                                 None
                             };

@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+There is no need to cd to the root of the project directory before running a command. They will always be run from there. Just run cargo checks and git logs without prefixing it with a cd command
