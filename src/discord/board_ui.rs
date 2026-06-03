@@ -12,12 +12,12 @@ fn format_job_slot(quest: Option<&BoardQuest>) -> String {
     match quest {
         Some(q) => {
             let title = &q.generated.quest_title;
+            let giver = &q.generated.quest_giver;
+            let desc = &q.generated.description;
+            let reward = q.generated.reward;
             if q.has_active() {
-                format!("~~{}~~", title)
+                format!("~~**{}** - *{}* | ${}~~\n~~{}~~", title, giver, reward, desc)
             } else {
-                let giver = &q.generated.quest_giver;
-                let desc = &q.generated.description;
-                let reward = q.generated.reward;
                 format!("**{}** - *{}* | ${}\n{}", title, giver, reward, desc)
             }
         }
