@@ -30,6 +30,19 @@ pub async fn chud(ctx: Context<'_>, name: String, description: String) -> Result
 }
 
 #[poise::command(slash_command)]
+pub async fn chudlerboard(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let content = crate::discord::board_ui::format_chudlerboard(&ctx.serenity_context().http).await;
+    let msg = if content.is_empty() {
+        "*No chuds yet.*".to_string()
+    } else {
+        content
+    };
+    ctx.say(msg).await?;
+    Ok(())
+}
+
+#[poise::command(slash_command)]
 pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let user_id = ctx.author().id.get();

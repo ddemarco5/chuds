@@ -81,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::write_job(),
                 discord::commands::delete_job(),
                 discord::commands::chud(),
+                discord::commands::chudlerboard(),
                 discord::commands::add_chud(),
                 discord::commands::delete_chud(),
                 discord::commands::assign(),
@@ -144,13 +145,11 @@ async fn main() -> anyhow::Result<()> {
                 {
                     let _cache_guard = storage::message_cache_lock().await;
                     let cache = storage::load_message_cache().unwrap_or_default();
-                    let mut b = board.lock().await;
                     let messages_exist =
-                        validate_cached_messages_exist(&ctx.http, channel_id, &*b, &cache).await;
+                        validate_cached_messages_exist(&ctx.http, channel_id, &cache).await;
                     if !messages_exist {
                         tracing::warn!("cached messages missing, purging channel and resetting message cache");
                         delete_all_messages_in_channel(&ctx.http, channel_id).await;
-                        b.chudlerboard_message_id = None;
                         if let Err(e) = storage::save_message_cache(&Default::default()) {
                             tracing::warn!(err = %e, "failed to clear message cache");
                         }

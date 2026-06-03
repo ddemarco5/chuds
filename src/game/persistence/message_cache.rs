@@ -14,15 +14,12 @@ pub struct JobSlot {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MessageCache {
-    /// Last content string sent to the chudlerboard Discord message.
-    #[serde(default)]
-    pub chudlerboard: String,
     /// Persistent job-slot state: one entry per slot, length ≤ MAX_JOBS.
     /// Each slot tracks its Discord message ID, last-sent content, and the
     /// quest ID currently assigned to it (None = empty).
     #[serde(default)]
     pub slots: Vec<JobSlot>,
-    /// Discord message ID of the persistent header posted between the chudlerboard and job slots.
+    /// Discord message ID of the persistent job board header message.
     #[serde(default)]
     pub header_message_id: Option<u64>,
     /// Last content string sent to the job board header message.

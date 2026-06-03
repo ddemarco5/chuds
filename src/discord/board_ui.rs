@@ -47,7 +47,7 @@ fn job_slot_components(quest: Option<&BoardQuest>) -> Vec<CreateActionRow> {
     }
 }
 
-async fn format_chudlerboard(http: &serenity::Http) -> String {
+pub async fn format_chudlerboard(http: &serenity::Http) -> String {
     let ids = match storage::list_player_ids() {
         Ok(ids) => ids,
         Err(e) => {
@@ -133,65 +133,9 @@ pub async fn update_board_message(
 ) -> anyhow::Result<()> {
     let _cache_guard = storage::message_cache_lock().await;
     let ch = serenity::ChannelId::new(channel_id);
-    let mut board_dirty = false;
 
     let mut cache = storage::load_message_cache().unwrap_or_default();
     let mut cache_dirty = false;
-
-    let cb_content = {
-        let cb = format_chudlerboard(http).await;
-        if cb.is_empty() {
-            "*No chuds yet.*".to_string()
-        } else {
-            cb
-        }
-    };
-    if cb_content != cache.chudlerboard {
-        if let Some(msg_id) = board.chudlerboard_message_id {
-            let ok = http
-                .edit_message(
-                    ch,
-                    MessageId::new(msg_id),
-                    &EditMessage::new().content(&cb_content),
-                    vec![],
-                )
-                .await
-                .is_ok();
-            if !ok {
-                tracing::warn!(msg_id, "failed to edit chudlerboard message, posting new one");
-                match http
-                    .send_message(ch, vec![], &CreateMessage::new().content(&cb_content))
-                    .await
-                {
-                    Ok(msg) => {
-                        board.chudlerboard_message_id = Some(msg.id.get());
-                        cache.chudlerboard = cb_content.clone();
-                        board_dirty = true;
-                        cache_dirty = true;
-                    }
-                    Err(e) => tracing::warn!(err = %e, "failed to post chudlerboard message"),
-                }
-            } else {
-                cache.chudlerboard = cb_content.clone();
-                cache_dirty = true;
-                tracing::debug!(msg_id, "chudlerboard message edited");
-            }
-        } else {
-            match http
-                .send_message(ch, vec![], &CreateMessage::new().content(&cb_content))
-                .await
-            {
-                Ok(msg) => {
-                    tracing::info!(msg_id = msg.id.get(), "chudlerboard message posted");
-                    board.chudlerboard_message_id = Some(msg.id.get());
-                    cache.chudlerboard = cb_content.clone();
-                    board_dirty = true;
-                    cache_dirty = true;
-                }
-                Err(e) => tracing::warn!(err = %e, "failed to post chudlerboard message"),
-            }
-        }
-    }
 
     let filled = board.quests.len();
     let header_content = format!(
@@ -357,9 +301,6 @@ pub async fn update_board_message(
         if let Err(e) = storage::save_message_cache(&cache) {
             tracing::warn!(err = %e, "failed to save message cache");
         }
-    }
-    if board_dirty {
-        storage::save_board(board)?;
     }
     Ok(())
 }

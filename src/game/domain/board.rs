@@ -48,9 +48,6 @@ impl BoardQuest {
 pub struct Board {
     pub quests: Vec<BoardQuest>,
     pub next_id: u32,
-    /// Discord message ID of the persistent chudlerboard post.
-    #[serde(default)]
-    pub chudlerboard_message_id: Option<u64>,
     /// Completed quest results written by the background worker, keyed by quest id.
     /// Tick applies a result only when ticks_remaining reaches zero AND an entry is present here.
     #[serde(default)]

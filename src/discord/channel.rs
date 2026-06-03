@@ -1,6 +1,5 @@
 use poise::serenity_prelude::{self as serenity, GetMessages, MessageId};
 
-use crate::game::domain::board::Board;
 use crate::game::persistence::message_cache::MessageCache;
 use crate::game::persistence::storage;
 
@@ -29,16 +28,11 @@ pub async fn delete_all_messages_in_channel(http: &serenity::Http, channel_id: u
 pub async fn validate_cached_messages_exist(
     http: &serenity::Http,
     channel_id: u64,
-    board: &Board,
     cache: &MessageCache,
 ) -> bool {
     let ch = serenity::ChannelId::new(channel_id);
 
     let mut message_ids = Vec::new();
-
-    if let Some(id) = board.chudlerboard_message_id {
-        message_ids.push(("chudlerboard", id));
-    }
 
     if let Some(id) = cache.header_message_id {
         message_ids.push(("header", id));
