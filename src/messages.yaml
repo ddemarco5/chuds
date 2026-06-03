@@ -5,6 +5,7 @@ new_day:
   - "*A fresh day dawns over the job board.*"
   - "*The clock ticks. A new day is here.*"
   - "*Wake up and smell the chuds*"
+  - "*Another day, another chud*"
 
 chud_takes_job:
   - "**{}** ripped **{}** off the board"
@@ -39,6 +40,14 @@ return_passed:
   - "{} strolls through the door looking pleased with themselves."
   - "{} bursts in, clearly proud of their work."
   - "{} returns with a confident swagger."
+  - "{} walks back in, job well done."
+  - "{} struts in like they've never failed a day in their life."
+  - "{} reappears, dusting off their hands."
+  - "{} kicks the door open, radiating smug satisfaction."
+  - "{} slides back into the guild hall with an unmistakable glow."
+  - "{} comes back whistling, practically floating."
+  - "{} waltzes in like the whole thing was easy money."
+  - "{} returns, chest puffed out, absolutely no notes."
 
 return_failed:
   - "{} stumbles back in with their head hung low."
@@ -46,12 +55,27 @@ return_failed:
   - "{} returns looking like they've seen better days."
   - "{} shuffles in, avoiding eye contact."
   - "{} sheepishly walks in, they fucked it up again."
+  - "{} slinks back in, pretending nothing happened."
+  - "{} returns with a thousand-yard stare and nothing to show for it."
+  - "{} creeps through the door like they're hoping nobody noticed."
+  - "{} comes back empty-handed and visibly embarrassed."
+  - "{} trudges in, shoulders slumped, job in shambles."
+  - "{} returns looking like they lost an argument with the job itself."
+  - "{} walks in slow, already bracing for your disappointment."
 
 return_hospitalized:
   - "{} is carted off to the hospital."
   - "{} took a beating and was rushed to the infirmary."
   - "The medics dragged {} away on a stretcher."
   - "Ew someone stepped in {}, they were scraped off the floor and taken to the hospital"
+  - "{} got absolutely wrecked and is headed straight to the infirmary."
+  - "Someone had to hose {} off the pavement before the ambulance could take them."
+  - "{} is wheeled out looking like a crumpled receipt."
+  - "The guild hall falls quiet as {} is carried off for emergency treatment."
+  - "{} didn't make it back in one piece. The medics have them now."
+  - "A stretcher rolls through the door. It's {}. Barely."
+  - "{} got folded in half out there and is off to the hospital."
+  - "They had to scrape {} up and send them to the infirmary."
 
 scout_returned_impossible:
   - "{} saunters back in with poop in their pants."
