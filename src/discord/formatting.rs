@@ -11,40 +11,15 @@ fn markdown_italic_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Pass/fail headline, narrative summary, rewards, and optional hospital note.
-fn build_dm_summary_plain(
-    player_name: &str,
-    result: &QuestResult,
-    player: &Player,
-    level_up: &crate::game::domain::player::LevelUp,
-    reward: u32,
-    item_awarded: Option<&Item>,
-    item_auto_sold_gold: Option<u32>,
-    hospitalized: bool,
-) -> String {
-    let outcome = if result.passed { "PASSED" } else { "FAILED" };
-    let footer = format_completion_footer(
-        player_name,
-        player,
-        level_up,
-        result.passed,
-        reward,
-        item_awarded,
-        item_auto_sold_gold,
-    );
-    let hospital_msg = hospitalized.then(|| chud_msg!("dm_hospitalized", player_name));
-    format_completion_outcome_box(
-        outcome,
-        &result.summary,
-        &footer,
-        hospital_msg.as_deref(),
-    )
-}
+/// Accent colors for quest outcome containers (RGB integers).
+const ACCENT_PASSED: u32 = 0x57F287;
+const ACCENT_FAILED: u32 = 0xED4245;
 
 /// Preamble, outcome, and ordered mobile segments — built once for every DM delivery path.
 pub struct DmCompletionContent {
     pub preamble: String,
     pub summary: String,
+    passed: bool,
     segments: Vec<String>,
 }
 
@@ -66,39 +41,52 @@ pub fn build_dm_completion_content(
 ) -> DmCompletionContent {
     let segments = build_dm_preamble_segments(player_name, result, player);
     let preamble = segments.join("");
-    let summary = build_dm_summary_plain(
+    let outcome = if result.passed { "PASSED" } else { "FAILED" };
+    let footer = format_completion_footer(
         player_name,
-        result,
         player,
         level_up,
+        result.passed,
         reward,
         item_awarded,
         item_auto_sold_gold,
-        hospitalized,
+    );
+    let hospital_msg = hospitalized.then(|| chud_msg!("dm_hospitalized", player_name));
+    let summary = format_completion_outcome_box(
+        outcome,
+        &result.summary,
+        &footer,
+        hospital_msg.as_deref(),
     );
     DmCompletionContent {
         preamble,
         summary,
+        passed: result.passed,
         segments,
     }
 }
 
-fn summary_container(summary: &str) -> Component {
-    Component::Container(Container::new(vec![ContainerChild::Text(TextDisplay::new(
-        summary.to_string(),
-    ))]))
+fn summary_container(summary: &str, passed: bool) -> Component {
+    let accent = if passed { ACCENT_PASSED } else { ACCENT_FAILED };
+    Component::Container(Container::with_accent(
+        accent,
+        vec![ContainerChild::Text(TextDisplay::new(summary.to_string()))],
+    ))
 }
 
 pub fn build_dm_completion_components(content: &DmCompletionContent) -> ComponentsV2Message {
     ComponentsV2Message::channel(vec![
         Component::Text(TextDisplay::new(content.preamble.clone())),
-        summary_container(&content.summary),
+        summary_container(&content.summary, content.passed),
     ])
 }
 
 /// Outcome block only — same container as the short DM path.
 pub fn build_dm_summary_components(content: &DmCompletionContent) -> ComponentsV2Message {
-    ComponentsV2Message::channel(vec![summary_container(&content.summary)])
+    ComponentsV2Message::channel(vec![summary_container(
+        &content.summary,
+        content.passed,
+    )])
 }
 
 /// Header → quest → trials as plain text chunks, packed under `limit` (outcome sent separately).
