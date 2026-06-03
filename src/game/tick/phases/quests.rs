@@ -70,19 +70,21 @@ fn resolve_quest(
         player.cash += reward;
     }
 
-    let item_awarded = if passed {
-        result.pending_item.take().and_then(|item| {
+    let mut item_awarded = None;
+    let mut item_auto_sold_gold = None;
+    if passed {
+        if let Some(item) = result.pending_item.take() {
             match engine::award_pending_item(item_registry, &mut player, item) {
-                Ok(item) => Some(item),
+                Ok((item, sold)) => {
+                    item_awarded = Some(item);
+                    item_auto_sold_gold = sold;
+                }
                 Err(e) => {
-                    tracing::warn!(err = %e, player = %player_name, "could not award item to stash");
-                    None
+                    tracing::warn!(err = %e, player = %player_name, "could not award quest item");
                 }
             }
-        })
-    } else {
-        None
-    };
+        }
+    }
 
     storage::save_player(&player)?;
 
@@ -124,5 +126,6 @@ fn resolve_quest(
         reward,
         hospitalized,
         item_awarded,
+        item_auto_sold_gold,
     }))
 }

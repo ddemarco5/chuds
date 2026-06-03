@@ -33,6 +33,8 @@ pub struct QuestResolved {
     pub reward: u32,
     pub hospitalized: bool,
     pub item_awarded: Option<Item>,
+    /// Set when `item_awarded` was auto-sold because stash was full.
+    pub item_auto_sold_gold: Option<u32>,
 }
 
 pub struct TickContext<'a> {

@@ -200,24 +200,40 @@ pub fn assign_chud_to_quest(
     })
 }
 
-/// Register a quest item and add it to the player's stash.
+/// Register a quest item. Stashes it when there is room; otherwise auto-sells for `item.value`.
+/// Returns the item and, if sold, the gold credited.
 pub fn award_pending_item(
     registry: &mut ItemRegistry,
     player: &mut Player,
     item: crate::game::domain::item::Item,
-) -> anyhow::Result<crate::game::domain::item::Item> {
-    if !player.stash.has_room() {
-        anyhow::bail!("stash is full, cannot award item");
-    }
+) -> anyhow::Result<(crate::game::domain::item::Item, Option<u32>)> {
     let id = registry.add_item(item);
     let awarded = registry
         .get(id)
         .ok_or_else(|| anyhow::anyhow!("item {} missing after add", id))?
         .clone();
-    player.stash.push(id)?;
+
+    if player.stash.has_room() {
+        player.stash.push(id)?;
+        storage::save_player(player)?;
+        storage::save_item_registry(registry)?;
+        return Ok((awarded, None));
+    }
+
+    let gold = awarded.value;
+    registry
+        .remove(id)
+        .ok_or_else(|| anyhow::anyhow!("item {} missing from registry", id))?;
+    player.cash = player.cash.saturating_add(gold);
     storage::save_player(player)?;
     storage::save_item_registry(registry)?;
-    Ok(awarded)
+    tracing::info!(
+        player = %player.name,
+        item = %awarded.name,
+        gold,
+        "stash full, auto-sold quest item"
+    );
+    Ok((awarded, Some(gold)))
 }
 
 fn equip_item_id(player: &mut Player, item_id: u32, item_type: ItemType) -> Option<u32> {

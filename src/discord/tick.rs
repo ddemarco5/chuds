@@ -106,6 +106,7 @@ pub async fn execute_tick(
             &qr.level_up,
             qr.reward,
             qr.item_awarded.as_ref(),
+            qr.item_auto_sold_gold,
         );
         let dm_map = serde_json::json!({ "recipient_id": qr.discord_user_id.to_string() });
         match http.create_private_channel(&dm_map).await {

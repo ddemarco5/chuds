@@ -15,6 +15,7 @@ pub fn format_dm_completion_report(
     level_up: &crate::game::domain::player::LevelUp,
     reward: u32,
     item_awarded: Option<&Item>,
+    item_auto_sold_gold: Option<u32>,
 ) -> String {
     let mut out = String::new();
     let outcome = if result.passed { "PASSED" } else { "FAILED" };
@@ -52,13 +53,23 @@ pub fn format_dm_completion_report(
         } else {
             format!(", {}", item.subtype)
         };
-        out.push_str(&format!(
-            "\n\n**Item stashed:** {} ({}{subtype})\nStats: {}\n_{}_\nUse /gear to equip.",
-            item.name,
-            item_type_label(item.item_type),
-            item.stats.format_triplet(),
-            item.description,
-        ));
+        if let Some(gold) = item_auto_sold_gold {
+            out.push_str(&format!(
+                "\n\n**Stash full — sold {} for ${gold}:** ({}{subtype})\nStats: {}\n_{}_",
+                item.name,
+                item_type_label(item.item_type),
+                item.stats.format_triplet(),
+                item.description,
+            ));
+        } else {
+            out.push_str(&format!(
+                "\n\n**Item stashed:** {} ({}{subtype})\nStats: {}\n_{}_\nUse /gear to equip.",
+                item.name,
+                item_type_label(item.item_type),
+                item.stats.format_triplet(),
+                item.description,
+            ));
+        }
     }
 
     if level_up.any() {
