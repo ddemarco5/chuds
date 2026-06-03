@@ -7,8 +7,11 @@ use crate::discord::components_v2::{
 /// Accent colors for job-slot containers (RGB integers).
 const ACCENT_INACTIVE: u32 = 0x4E5058; // empty slots and taken jobs
 const ACCENT_JOB_OPEN: u32 = 0x57F287;
+use crate::discord::channel::{cleanup_non_bot_messages, delete_all_messages_in_channel};
 use crate::game::domain::board::{Board, BoardQuest};
+use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::Player;
+use crate::game::engine;
 use crate::game::persistence::message_cache::JobSlot;
 use crate::game::persistence::storage;
 
@@ -177,6 +180,33 @@ pub async fn format_chudlerboard(http: &serenity::Http) -> String {
     }
 
     format!("```\n----- Chudlerboard -----\n{}\n```", lines.join("\n"))
+}
+
+/// Purge the channel, reset the message cache, and re-post all persistent board UI.
+pub async fn recover_persistent_board_messages(
+    http: &serenity::Http,
+    channel_id: u64,
+    board: &mut Board,
+    job_queue: &mut JobQueue,
+    bot_user_id: u64,
+    max_non_bot_messages: usize,
+    max_jobs: usize,
+) -> anyhow::Result<()> {
+    {
+        let _cache_guard = storage::message_cache_lock().await;
+        tracing::info!("channel redraw triggered");
+        delete_all_messages_in_channel(http, channel_id).await;
+        if let Err(e) = storage::save_message_cache(&Default::default()) {
+            tracing::warn!(err = %e, "failed to clear message cache");
+        }
+    }
+
+    cleanup_non_bot_messages(http, channel_id, bot_user_id, max_non_bot_messages).await;
+
+    engine::refill_board_from_queue(board, job_queue, max_jobs);
+    storage::save_board(board)?;
+    storage::save_job_queue(job_queue)?;
+    update_board_message(http, channel_id, board, max_jobs).await
 }
 
 pub async fn update_board_message(

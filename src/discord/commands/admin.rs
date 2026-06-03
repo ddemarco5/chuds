@@ -1,5 +1,6 @@
 use poise::serenity_prelude as serenity;
 
+use crate::discord::board_ui::recover_persistent_board_messages;
 use crate::discord::buttons::post_quest_taken_announcement;
 use crate::discord::channel::post_buffered_message;
 use crate::discord::context::{admin_guard, Context, Error};
@@ -60,6 +61,29 @@ pub async fn delete_cm(ctx: Context<'_>, discord_user_id: String) -> Result<(), 
         ctx.say("that user is not a Chudmaster™").await?;
         return Ok(());
     }
+    ctx.say("ok").await?;
+    Ok(())
+}
+
+#[poise::command(slash_command)]
+pub async fn admin_redraw(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let http = &ctx.serenity_context().http;
+    let mut board = ctx.data().board.lock().await;
+    let mut queue = ctx.data().job_queue.lock().await;
+    recover_persistent_board_messages(
+        http,
+        ctx.data().channel_id,
+        &mut *board,
+        &mut *queue,
+        ctx.data().bot_user_id,
+        ctx.data().max_non_bot_messages,
+        ctx.data().max_jobs,
+    )
+    .await?;
     ctx.say("ok").await?;
     Ok(())
 }

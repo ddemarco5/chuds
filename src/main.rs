@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use chuds::discord::{
-    self, cleanup_non_bot_messages, delete_all_messages_in_channel, execute_tick,
-    handle_gear_button, handle_heal_button, handle_scout_button, handle_take_button,
+    self, cleanup_non_bot_messages, execute_tick, handle_gear_button, handle_heal_button,
+    handle_scout_button, handle_take_button, recover_persistent_board_messages,
     update_board_message, validate_cached_messages_exist, Data,
 };
 use chuds::game::engine;
@@ -94,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::add_cm(),
                 discord::commands::delete_cm(),
                 discord::commands::admin_take_gen_item(),
+                discord::commands::admin_redraw(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
@@ -142,28 +143,32 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!(guild_id, "slash commands registered");
                 let bot_user_id = ready.user.id.get();
 
-                {
+                let messages_exist = {
                     let _cache_guard = storage::message_cache_lock().await;
                     let cache = storage::load_message_cache().unwrap_or_default();
-                    let messages_exist =
-                        validate_cached_messages_exist(&ctx.http, channel_id, &cache).await;
-                    if !messages_exist {
-                        tracing::warn!("cached messages missing, purging channel and resetting message cache");
-                        delete_all_messages_in_channel(&ctx.http, channel_id).await;
-                        if let Err(e) = storage::save_message_cache(&Default::default()) {
-                            tracing::warn!(err = %e, "failed to clear message cache");
-                        }
-                    }
-                }
-
-                cleanup_non_bot_messages(
-                    &ctx.http,
-                    channel_id,
-                    bot_user_id,
-                    max_non_bot_messages,
-                )
-                .await;
-                {
+                    validate_cached_messages_exist(&ctx.http, channel_id, &cache).await
+                };
+                if !messages_exist {
+                    let mut b = board.lock().await;
+                    let mut q = job_queue.lock().await;
+                    recover_persistent_board_messages(
+                        &ctx.http,
+                        channel_id,
+                        &mut *b,
+                        &mut *q,
+                        bot_user_id,
+                        max_non_bot_messages,
+                        max_jobs,
+                    )
+                    .await?;
+                } else {
+                    cleanup_non_bot_messages(
+                        &ctx.http,
+                        channel_id,
+                        bot_user_id,
+                        max_non_bot_messages,
+                    )
+                    .await;
                     let mut b = board.lock().await;
                     let mut q = job_queue.lock().await;
                     engine::refill_board_from_queue(&mut *b, &mut *q, max_jobs);
