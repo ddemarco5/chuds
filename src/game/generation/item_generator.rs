@@ -34,21 +34,11 @@ RULES:
 - Use block scalars (|) or double-quoted strings when needed"#;
 
 #[derive(Serialize)]
-struct MissionTrialContext<'a> {
-    situation: &'a str,
-    stat_used: &'a str,
-    passed: bool,
-    narrative: &'a str,
-}
-
-#[derive(Serialize)]
 struct MissionContext<'a> {
     quest_title: &'a str,
     quest_giver: &'a str,
     quest_description: &'a str,
-    passed: bool,
-    summary: &'a str,
-    trials: Vec<MissionTrialContext<'a>>,
+    trials: Vec<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -88,18 +78,7 @@ impl ItemGenerator {
             quest_title: &result.quest_title,
             quest_giver: &result.quest_giver,
             quest_description: &result.quest_description,
-            passed: result.passed,
-            summary: &result.summary,
-            trials: result
-                .trials
-                .iter()
-                .map(|t| MissionTrialContext {
-                    situation: &t.situation,
-                    stat_used: t.stat_used.label(),
-                    passed: t.passed,
-                    narrative: &t.narrative,
-                })
-                .collect(),
+            trials: result.trials.iter().map(|t| t.situation.as_str()).collect(),
         };
         let prompt = format!(
             "{}{scaffold}",
