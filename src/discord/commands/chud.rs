@@ -132,7 +132,7 @@ pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
     };
 
     let registry = ctx.data().item_registry.lock().await;
-    let message = crate::discord::gear_ui::build_gear_message(&player, &registry, None);
+    let message = crate::discord::gear_ui::build_gear_message(&player, &registry, None, None);
     drop(registry);
 
     if let Err(e) = crate::discord::gear_ui::edit_gear_message(&http, &token, &message).await {

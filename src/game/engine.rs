@@ -1,6 +1,6 @@
 use crate::game::domain::board::{Board, BoardQuest};
 use crate::game::domain::hospital::Hospital;
-use crate::game::domain::item::{EquipmentSlot, ItemType};
+use crate::game::domain::item::{roll_item_value, EquipmentSlot, ItemType};
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{create_chud, Player};
@@ -262,6 +262,57 @@ pub fn unequip_slot(player: &mut Player, slot: EquipmentSlot) -> anyhow::Result<
     Ok(())
 }
 
+fn player_owns_item(player: &Player, item_id: u32) -> bool {
+    player.stash.contains(item_id)
+        || player
+            .chud
+            .equipment
+            .all_ids()
+            .any(|id| id == item_id)
+}
+
+fn clear_equipped_item(player: &mut Player, item_id: u32) {
+    let eq = &mut player.chud.equipment;
+    if eq.gear == Some(item_id) {
+        eq.gear = None;
+    } else if eq.weapon == Some(item_id) {
+        eq.weapon = None;
+    } else {
+        for slot in &mut eq.misc {
+            if *slot == Some(item_id) {
+                *slot = None;
+            }
+        }
+    }
+}
+
+/// Sell an item the player owns: credit `cash`, remove from stash/equipment and registry.
+pub fn sell_item(
+    player: &mut Player,
+    registry: &mut ItemRegistry,
+    item_id: u32,
+) -> anyhow::Result<u32> {
+    if !player_owns_item(player, item_id) {
+        anyhow::bail!("item not owned");
+    }
+    let item = registry
+        .get(item_id)
+        .ok_or_else(|| anyhow::anyhow!("item {} not found", item_id))?
+        .clone();
+    let gold = item.value;
+
+    // TODO: vendor/transfer logic (market fees, soulbound checks, etc.) before payout/removal.
+    player.stash.remove(item_id);
+    clear_equipped_item(player, item_id);
+    registry
+        .remove(item_id)
+        .ok_or_else(|| anyhow::anyhow!("item {} missing from registry", item_id))?;
+    player.cash = player.cash.saturating_add(gold);
+    storage::save_player(player)?;
+    storage::save_item_registry(registry)?;
+    Ok(gold)
+}
+
 /// Run the full LLM pipeline for a single quest and return the result.
 pub async fn generate_result(
     generator: &QuestGenerator,
@@ -323,12 +374,16 @@ pub async fn generate_result(
         let (name, description) = item_generator
             .generate_from_quest(&seed, &result, board_quest)
             .await?;
-        result.pending_item = Some(seed.into_item(name, description));
+        let mut item = seed.into_item(name, description);
+        item.value = roll_item_value(&item.stats, &mut rand::thread_rng());
         tracing::info!(
-            name = %result.pending_item.as_ref().unwrap().name,
-            item_type = ?result.pending_item.as_ref().unwrap().item_type,
+            name = %item.name,
+            item_type = ?item.item_type,
+            net_stat = item.stats.net_stat_value(),
+            value = item.value,
             "item generated for quest result"
         );
+        result.pending_item = Some(item);
     }
 
     result.log();

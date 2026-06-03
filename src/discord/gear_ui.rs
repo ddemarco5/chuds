@@ -21,10 +21,11 @@ fn format_item_block(item: &Item) -> String {
         format!(" ({})", item.subtype)
     };
     format!(
-        "**{}**{} [{}]\n{}",
+        "**{}**{} [{}] - ${}\n{}",
         item.name,
         subtype,
         item.stats.format_triplet(),
+        item.value,
         item.description,
     )
 }
@@ -36,14 +37,30 @@ fn format_equipped_block(slot: EquipmentSlot, item: Option<&Item>) -> String {
     }
 }
 
-fn push_entry(
-    components: &mut Vec<Component>,
-    text: impl Into<String>,
-    button: Option<Button>,
-) {
+fn sell_button(item_id: u32, value: u32, confirm_pending: bool) -> Button {
+    if confirm_pending {
+        Button::danger(format!("g_sell_confirm:{item_id}"), "Are you sure?")
+    } else {
+        Button::danger(format!("g_sell:{item_id}"), format!("Sell ${value}"))
+    }
+}
+
+fn item_action_buttons(
+    item_id: u32,
+    value: u32,
+    sell_confirm_item_id: Option<u32>,
+    primary: Button,
+) -> Vec<Button> {
+    vec![
+        primary,
+        sell_button(item_id, value, sell_confirm_item_id == Some(item_id)),
+    ]
+}
+
+fn push_entry(components: &mut Vec<Component>, text: impl Into<String>, buttons: Vec<Button>) {
     components.push(Component::Text(TextDisplay::new(text)));
-    if let Some(button) = button {
-        components.push(Component::ActionRow(ActionRow::one_button(button)));
+    if !buttons.is_empty() {
+        components.push(Component::ActionRow(ActionRow::buttons(buttons)));
     }
 }
 
@@ -51,6 +68,7 @@ pub fn build_gear_message(
     player: &Player,
     registry: &ItemRegistry,
     notice: Option<&str>,
+    sell_confirm_item_id: Option<u32>,
 ) -> ComponentsV2Message {
     let mut components = Vec::new();
 
@@ -58,7 +76,10 @@ pub fn build_gear_message(
         components.push(Component::Text(TextDisplay::new(notice)));
     }
 
-    components.push(Component::Text(TextDisplay::new("**Equipped**")));
+    components.push(Component::Text(TextDisplay::new(format!(
+        "**Equipped** — ${} on hand",
+        player.cash
+    ))));
 
     for slot in EquipmentSlot::ALL {
         let item = player
@@ -66,16 +87,21 @@ pub fn build_gear_message(
             .equipment
             .item_id_in_slot(slot)
             .and_then(|id| registry.get(id));
-        let button = item.map(|_| {
-            Button::secondary(
-                format!("g_unequip:{}", slot.custom_id_suffix()),
-                "Unequip",
+        let buttons = item.map(|item| {
+            item_action_buttons(
+                item.id,
+                item.value,
+                sell_confirm_item_id,
+                Button::secondary(
+                    format!("g_unequip:{}", slot.custom_id_suffix()),
+                    "Unequip",
+                ),
             )
-        });
+        }).unwrap_or_default();
         push_entry(
             &mut components,
             format_equipped_block(slot, item),
-            button,
+            buttons,
         );
     }
 
@@ -95,7 +121,12 @@ pub fn build_gear_message(
                     push_entry(
                         &mut components,
                         format_item_block(item),
-                        Some(Button::secondary(format!("g_equip:{item_id}"), "Equip")),
+                        item_action_buttons(
+                            item_id,
+                            item.value,
+                            sell_confirm_item_id,
+                            Button::secondary(format!("g_equip:{item_id}"), "Equip"),
+                        ),
                     );
                 }
                 None => {
@@ -121,13 +152,17 @@ fn busy_notice(reason: BusyReason, player: &Player) -> String {
     }
 }
 
+/// `(notice, item_id awaiting sell confirmation)`
 fn apply_gear_action(
     player: &mut Player,
     custom_id: &str,
-    registry: &ItemRegistry,
-) -> Option<String> {
+    registry: &mut ItemRegistry,
+) -> (Option<String>, Option<u32>) {
     if let Some(suffix) = custom_id.strip_prefix("g_unequip:") {
-        let slot = EquipmentSlot::parse_suffix(suffix)?;
+        let slot = match EquipmentSlot::parse_suffix(suffix) {
+            Some(slot) => slot,
+            None => return (Some("_Unknown action._".into()), None),
+        };
         let item_name = player
             .chud
             .equipment
@@ -135,7 +170,7 @@ fn apply_gear_action(
             .and_then(|id| registry.get(id))
             .map(|i| i.name.clone())
             .unwrap_or_else(|| "item".into());
-        match engine::unequip_slot(player, slot) {
+        let notice = match engine::unequip_slot(player, slot) {
             Ok(()) => Some(format!("_Unequipped **{item_name}**._")),
             Err(e) if e.to_string().contains("stash is full") => {
                 Some(format!("_Stash is full ({STASH_CAPACITY}/{STASH_CAPACITY})._"))
@@ -147,14 +182,20 @@ fn apply_gear_action(
                 tracing::warn!(err = %e, "unequip failed");
                 Some("_Could not unequip that item._".into())
             }
-        }
-    } else if let Some(id_str) = custom_id.strip_prefix("g_equip:") {
-        let item_id: u32 = id_str.parse().ok()?;
+        };
+        return (notice, None);
+    }
+
+    if let Some(id_str) = custom_id.strip_prefix("g_equip:") {
+        let item_id: u32 = match id_str.parse() {
+            Ok(id) => id,
+            Err(_) => return (Some("_Unknown action._".into()), None),
+        };
         let item_name = registry
             .get(item_id)
             .map(|i| i.name.clone())
             .unwrap_or_else(|| "item".into());
-        match engine::equip_from_stash(player, item_id, registry) {
+        let notice = match engine::equip_from_stash(player, item_id, registry) {
             Ok(()) => Some(format!("_Equipped **{item_name}**._")),
             Err(e) if e.to_string().contains("not in stash") => {
                 Some("_That item is no longer in your stash._".into())
@@ -166,10 +207,56 @@ fn apply_gear_action(
                 tracing::warn!(err = %e, "equip failed");
                 Some("_Could not equip that item._".into())
             }
-        }
-    } else {
-        None
+        };
+        return (notice, None);
     }
+
+    if let Some(id_str) = custom_id.strip_prefix("g_sell:") {
+        let item_id: u32 = match id_str.parse() {
+            Ok(id) => id,
+            Err(_) => return (Some("_Unknown action._".into()), None),
+        };
+        if registry.get(item_id).is_none() {
+            return (Some("_That item no longer exists._".into()), None);
+        }
+        if !player.stash.contains(item_id)
+            && !player
+                .chud
+                .equipment
+                .all_ids()
+                .any(|id| id == item_id)
+        {
+            return (Some("_You don't have that item._".into()), None);
+        }
+        return (None, Some(item_id));
+    }
+
+    if let Some(id_str) = custom_id.strip_prefix("g_sell_confirm:") {
+        let item_id: u32 = match id_str.parse() {
+            Ok(id) => id,
+            Err(_) => return (Some("_Unknown action._".into()), None),
+        };
+        let item_name = registry
+            .get(item_id)
+            .map(|i| i.name.clone())
+            .unwrap_or_else(|| "item".into());
+        let notice = match engine::sell_item(player, registry, item_id) {
+            Ok(gold) => Some(format!("_Sold **{item_name}** for ${gold}._")),
+            Err(e) if e.to_string().contains("not owned") => {
+                Some("_You don't have that item._".into())
+            }
+            Err(e) if e.to_string().contains("not found") => {
+                Some("_That item no longer exists._".into())
+            }
+            Err(e) => {
+                tracing::warn!(err = %e, "sell failed");
+                Some("_Could not sell that item._".into())
+            }
+        };
+        return (notice, None);
+    }
+
+    (None, None)
 }
 
 /// Build the updated gear UI under board/registry locks, then drop them before any HTTP I/O.
@@ -181,16 +268,21 @@ async fn prepare_gear_update(
     let hospital = storage::load_hospital()?;
     // Match lock order used elsewhere (board before item_registry) to avoid deadlocks.
     let board = data.board.lock().await;
-    let registry = data.item_registry.lock().await;
+    let mut registry = data.item_registry.lock().await;
 
-    let notice = if let Some(reason) = busy::is_player_busy(&*board, &hospital, player.discord_user_id)
-    {
-        Some(busy_notice(reason, player))
-    } else {
-        apply_gear_action(player, custom_id, &registry)
-    };
+    let (notice, sell_confirm) =
+        if let Some(reason) = busy::is_player_busy(&*board, &hospital, player.discord_user_id) {
+            (Some(busy_notice(reason, player)), None)
+        } else {
+            apply_gear_action(player, custom_id, &mut registry)
+        };
 
-    Ok(build_gear_message(player, &registry, notice.as_deref()))
+    Ok(build_gear_message(
+        player,
+        &registry,
+        notice.as_deref(),
+        sell_confirm,
+    ))
 }
 
 pub async fn edit_gear_message(

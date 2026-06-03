@@ -166,7 +166,11 @@ pub fn load_item_registry() -> anyhow::Result<ItemRegistry> {
         return Ok(ItemRegistry::default());
     }
     let yaml = std::fs::read_to_string(ITEM_REGISTRY_PATH).context("reading item registry")?;
-    serde_yaml::from_str(&yaml).context("parsing item registry")
+    let mut registry: ItemRegistry = serde_yaml::from_str(&yaml).context("parsing item registry")?;
+    if registry.backfill_missing_values() {
+        save_item_registry(&registry)?;
+    }
+    Ok(registry)
 }
 
 /// Persist the item registry to `data/item_registry.yaml`.

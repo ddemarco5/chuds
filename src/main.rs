@@ -105,7 +105,11 @@ async fn main() -> anyhow::Result<()> {
                                 Some(handle_scout_button(ctx, component, data).await)
                             } else if id.starts_with("heal:") {
                                 Some(handle_heal_button(ctx, component, data).await)
-                            } else if id.starts_with("g_equip:") || id.starts_with("g_unequip:") {
+                            } else if id.starts_with("g_equip:")
+                                || id.starts_with("g_unequip:")
+                                || id.starts_with("g_sell:")
+                                || id.starts_with("g_sell_confirm:")
+                            {
                                 Some(handle_gear_button(ctx, component, data).await)
                             } else {
                                 None

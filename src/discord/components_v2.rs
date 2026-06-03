@@ -71,9 +71,13 @@ pub struct ActionRow {
 
 impl ActionRow {
     pub fn one_button(button: Button) -> Self {
+        Self::buttons(vec![button])
+    }
+
+    pub fn buttons(buttons: Vec<Button>) -> Self {
         Self {
             kind: TYPE_ACTION_ROW,
-            components: vec![button],
+            components: buttons,
         }
     }
 }
@@ -87,13 +91,25 @@ pub struct Button {
     style: u8,
 }
 
+const STYLE_SECONDARY: u8 = 2;
+const STYLE_DANGER: u8 = 4;
+
 impl Button {
     pub fn secondary(custom_id: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             kind: TYPE_BUTTON,
             custom_id: custom_id.into(),
             label: label.into(),
-            style: 2,
+            style: STYLE_SECONDARY,
+        }
+    }
+
+    pub fn danger(custom_id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            kind: TYPE_BUTTON,
+            custom_id: custom_id.into(),
+            label: label.into(),
+            style: STYLE_DANGER,
         }
     }
 }

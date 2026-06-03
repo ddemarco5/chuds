@@ -1,6 +1,19 @@
+use rand::Rng;
+use rand_distr::{Distribution, Normal};
 use serde::{Deserialize, Serialize};
 
 use crate::game::domain::player::ChudEquipment;
+
+/// Net stat value at which base gold should approximate `ITEM_VALUE_ANCHOR_GOLD_LOW`.
+const ITEM_VALUE_ANCHOR_STAT_LOW: f64 = 3.0;
+const ITEM_VALUE_ANCHOR_GOLD_LOW: f64 = 100.0;
+/// Net stat value at which base gold should approximate `ITEM_VALUE_ANCHOR_GOLD_HIGH`.
+const ITEM_VALUE_ANCHOR_STAT_HIGH: f64 = 8.0;
+const ITEM_VALUE_ANCHOR_GOLD_HIGH: f64 = 1000.0;
+/// Random spread around the stat-derived base price: final gold = base × Normal(1.0, σ).
+/// Raise σ for wider swings (same stats can roll noticeably higher or lower); lower σ tightens
+/// prices toward the anchor curve; 0 removes jitter entirely.
+const ITEM_VALUE_JITTER_STDDEV: f64 = 0.15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -50,6 +63,28 @@ impl ItemStats {
             format_stat_display(&self.stealth),
         )
     }
+
+    /// Signed sum of per-stat contributions (floor + modifier).
+    pub fn net_stat_contribution(&self) -> i16 {
+        stat_contribution(&self.strength)
+            + stat_contribution(&self.smarts)
+            + stat_contribution(&self.stealth)
+    }
+
+    /// Non-negative net stat total for pricing.
+    pub fn net_stat_value(&self) -> u32 {
+        let net = self.net_stat_contribution();
+        if net < 0 {
+            tracing::warn!(
+                net,
+                stats = %self.format_triplet(),
+                "item net stat value below zero"
+            );
+            0
+        } else {
+            net as u32
+        }
+    }
 }
 
 /// Whether a stat string means no effect on that attribute.
@@ -91,6 +126,23 @@ pub fn parse_stat_modifier(s: &str) -> i16 {
     }
 }
 
+/// Per-stat contribution: roll floor plus signed modifier.
+pub fn stat_contribution(s: &str) -> i16 {
+    parse_stat_floor(s) as i16 + parse_stat_modifier(s)
+}
+
+/// Roll gold value from stats: exponential base from net stat value × normal jitter.
+pub fn roll_item_value(stats: &ItemStats, rng: &mut impl Rng) -> u32 {
+    let net = stats.net_stat_value() as f64;
+    let rate = (ITEM_VALUE_ANCHOR_GOLD_HIGH / ITEM_VALUE_ANCHOR_GOLD_LOW)
+        .powf(1.0 / (ITEM_VALUE_ANCHOR_STAT_HIGH - ITEM_VALUE_ANCHOR_STAT_LOW));
+    let base_coeff = ITEM_VALUE_ANCHOR_GOLD_LOW / rate.powf(ITEM_VALUE_ANCHOR_STAT_LOW);
+    let base = base_coeff * rate.powf(net);
+    let normal = Normal::new(1.0, ITEM_VALUE_JITTER_STDDEV).expect("valid normal distribution");
+    let multiplier = normal.sample(rng).max(0.0);
+    (base * multiplier).round() as u32
+}
+
 /// Format a player roll for display: ↑/↓ with final when modified, ⌊⌋ when floor-only.
 pub fn format_roll_breakdown(modifier: i16, floor_applied: bool, final_roll: u8) -> String {
     if modifier > 0 {
@@ -116,6 +168,8 @@ pub struct Item {
     pub trigger: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect: Option<String>,
+    #[serde(default)]
+    pub value: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +207,7 @@ impl ItemSeed {
             description,
             trigger: self.trigger,
             effect: self.effect,
+            value: 0,
         }
     }
 }
