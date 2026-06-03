@@ -280,22 +280,20 @@ pub fn format_dm_scouting_report(
     active_player_name: Option<&str>,
     scouting_player_names: &[&str],
 ) -> String {
-    let feeling = if chance == 0.0 {
-        "don't want to talk about"
+    let scout_key = if chance == 0.0 {
+        "scout_returned_impossible"
     } else if chance <= 0.25 {
-        "are scared of"
+        "scout_returned_terrified"
     } else if chance <= 0.50 {
-        "feel apprehensive about"
+        "scout_returned_nervous"
     } else if chance <= 0.75 {
-        "think they can do"
+        "scout_returned_confident"
     } else {
-        "say they'll fuckin demolish"
+        "scout_returned_cocky"
     };
 
-    let mut out = format!(
-        "**{}** checked \"{}\", they {} it.",
-        player_name, quest_title, feeling
-    );
+    let mut out = chud_msg!(scout_key, player_name);
+    out.push_str(&format!("\n\n**{}** checked \"{}\".", player_name, quest_title));
 
     if let Some(name) = active_player_name {
         out.push_str(&format!("\nOh, and they also saw {} on the job there.", name));
