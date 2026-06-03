@@ -143,6 +143,7 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
         ctx.data().channel_id,
         &mut *board,
         ctx.data().max_jobs,
+        None,
     )
     .await?;
     say_ephemeral(ctx, "ok").await?;
@@ -165,6 +166,7 @@ pub async fn delete_job(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
         ctx.data().channel_id,
         &mut *board,
         ctx.data().max_jobs,
+        None,
     )
     .await?;
     ctx.say("ok").await?;
@@ -192,6 +194,7 @@ pub async fn assign(
     let channel_id = ctx.data().channel_id;
     let hospital = storage::load_hospital()?;
     let mut board = ctx.data().board.lock().await;
+    let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
     engine::take_and_enqueue_quest(
         &mut *board,
         &hospital,
@@ -199,9 +202,17 @@ pub async fn assign(
         quest_id,
         &ctx.data().generation_queue,
         false,
+        Some(&status),
     )?;
-
-    board_ui::update_board_message(http, channel_id, &mut *board, ctx.data().max_jobs).await?;
+    let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
+    board_ui::update_board_message(
+        http,
+        channel_id,
+        &mut *board,
+        ctx.data().max_jobs,
+        Some(&status),
+    )
+    .await?;
     ctx.say("ok").await?;
     Ok(())
 }

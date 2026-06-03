@@ -38,8 +38,8 @@ pub async fn validate_cached_messages_exist(
         message_ids.push(("header", id));
     }
 
-    if let Some(id) = cache.divider_message_id {
-        message_ids.push(("divider", id));
+    if let Some(id) = cache.status_message_id {
+        message_ids.push(("status", id));
     }
 
     for slot in &cache.slots {

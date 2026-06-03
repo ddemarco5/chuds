@@ -1,5 +1,6 @@
 use crate::game::domain::board::Board;
 use crate::game::domain::hospital::Hospital;
+use crate::game::guild_status;
 
 /// Reason why a player is busy and cannot take new quests.
 #[derive(Debug, Clone)]
@@ -16,29 +17,7 @@ pub fn is_player_busy(
     hospital: &Hospital,
     discord_user_id: u64,
 ) -> Option<BusyReason> {
-    if let Some(quest) = board.active_quest_for(discord_user_id) {
-        return Some(BusyReason::ActiveQuest {
-            quest_title: quest.generated.quest_title.clone(),
-        });
-    }
-
-    let is_scouting = board.quests.iter().any(|q| {
-        q.states.iter().any(|s| {
-            matches!(
-                s,
-                crate::game::domain::board::QuestState::Scouting {
-                    discord_user_id: uid
-                } if *uid == discord_user_id
-            )
-        })
-    });
-    if is_scouting {
-        return Some(BusyReason::Scouting);
-    }
-
-    if hospital.is_hospitalized(discord_user_id) {
-        return Some(BusyReason::Hospitalized);
-    }
-
-    None
+    guild_status::compute_guild_hall_status(board, hospital)
+        .ok()
+        .and_then(|s| s.busy_reason(discord_user_id))
 }

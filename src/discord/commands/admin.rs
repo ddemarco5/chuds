@@ -130,6 +130,7 @@ pub async fn admin_take_gen_item(
     let http = &ctx.serenity_context().http;
     let hospital = storage::load_hospital()?;
     let mut board = ctx.data().board.lock().await;
+    let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
     let info = engine::take_and_enqueue_quest(
         &mut *board,
         &hospital,
@@ -137,9 +138,10 @@ pub async fn admin_take_gen_item(
         quest_id,
         &ctx.data().generation_queue,
         true,
+        Some(&status),
     )?;
-
-    post_quest_taken_announcement(http, &mut *board, ctx.data(), &info).await?;
+    let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
+    post_quest_taken_announcement(http, &mut *board, ctx.data(), &info, &status).await?;
     ctx.say("ok").await?;
     Ok(())
 }

@@ -193,7 +193,7 @@ pub async fn execute_tick(
         || outcome.slots_filled > 0
     {
         storage::save_board(&*board)?;
-        board_ui::update_board_message(http, channel_id, &mut *board, max_jobs).await?;
     }
+    board_ui::update_board_message(http, channel_id, &mut *board, max_jobs, None).await?;
     Ok(())
 }

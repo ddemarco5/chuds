@@ -1,6 +1,7 @@
 use poise::serenity_prelude::{self as serenity, ComponentInteraction, Http};
 
-use crate::game::busy::{self, BusyReason};
+use crate::game::busy::BusyReason;
+use crate::game::guild_status;
 use crate::game::domain::item::{EquipmentSlot, Item};
 use crate::game::domain::player::Player;
 use crate::game::domain::stash::STASH_CAPACITY;
@@ -270,8 +271,9 @@ async fn prepare_gear_update(
     let board = data.board.lock().await;
     let mut registry = data.item_registry.lock().await;
 
+    let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
     let (notice, sell_confirm) =
-        if let Some(reason) = busy::is_player_busy(&*board, &hospital, player.discord_user_id) {
+        if let Some(reason) = status.busy_reason(player.discord_user_id) {
             (Some(busy_notice(reason, player)), None)
         } else {
             apply_gear_action(player, custom_id, &mut registry)

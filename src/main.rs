@@ -174,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
                     engine::refill_board_from_queue(&mut *b, &mut *q, max_jobs);
                     storage::save_board(&*b)?;
                     storage::save_job_queue(&*q)?;
-                    update_board_message(&ctx.http, channel_id, &mut b, max_jobs).await?;
+                    update_board_message(&ctx.http, channel_id, &mut b, max_jobs, None).await?;
                 }
 
                 let (generation_tx, generation_rx) =
@@ -210,6 +210,7 @@ async fn main() -> anyhow::Result<()> {
                                         channel_id,
                                         &mut b,
                                         max_jobs,
+                                        None,
                                     )
                                     .await
                                     {

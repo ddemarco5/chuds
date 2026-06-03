@@ -1,8 +1,11 @@
 use poise::serenity_prelude::{self as serenity, Http, MessageId};
 
+use crate::chud_msg;
 use crate::discord::components_v2::{
-    ActionRow, Button, Component, Container, ContainerChild, ComponentsV2Message, TextDisplay,
+    ActionRow, Button, Component, Container, ContainerChild, ComponentsV2Message, Separator,
+    TextDisplay,
 };
+use crate::game::guild_status::{self, GuildHallStatus};
 
 /// Accent colors for job-slot containers (RGB integers).
 const ACCENT_INACTIVE: u32 = 0x4E5058; // empty slots and taken jobs
@@ -79,10 +82,50 @@ fn build_job_slot(quest: Option<&BoardQuest>) -> ComponentsV2Message {
     ))])
 }
 
-fn build_divider() -> ComponentsV2Message {
-    ComponentsV2Message::channel(vec![Component::Text(TextDisplay::new(
-        "\u{200B}\n\u{200B}",
-    ))])
+fn status_section(header: &str, names: &[String]) -> String {
+    format!("*{header}*\n-# {}", names.join(", "))
+}
+
+fn build_status_message(status: &GuildHallStatus) -> ComponentsV2Message {
+    let mut inner: Vec<ContainerChild> = Vec::new();
+
+    if !status.idle_names.is_empty() {
+        inner.push(ContainerChild::Text(TextDisplay::new(status_section(
+            &chud_msg!("idleing"),
+            &status.idle_names,
+        ))));
+    } else if status.show_all_busy {
+        inner.push(ContainerChild::Text(TextDisplay::new(format!(
+            "*{}*",
+            chud_msg!("all_busy")
+        ))));
+    } else {
+        inner.push(ContainerChild::Text(TextDisplay::new("\u{200B}\n\u{200B}")));
+    }
+
+    if !status.hospital_names.is_empty() {
+        if !inner.is_empty() {
+            inner.push(ContainerChild::Separator(Separator::section()));
+        }
+        inner.push(ContainerChild::Text(TextDisplay::new(status_section(
+            &chud_msg!("hospital_waiting"),
+            &status.hospital_names,
+        ))));
+    }
+
+    ComponentsV2Message::channel_box(inner, None)
+}
+
+/// Recompute guild-hall status and refresh the persistent status message (and job slots).
+pub async fn refresh_board_status(
+    http: &serenity::Http,
+    channel_id: u64,
+    board: &mut Board,
+    max_jobs: usize,
+) -> anyhow::Result<()> {
+    let hospital = storage::load_hospital()?;
+    let status = guild_status::compute_guild_hall_status(board, &hospital)?;
+    update_board_message(http, channel_id, board, max_jobs, Some(&status)).await
 }
 
 async fn send_cv2(
@@ -206,7 +249,7 @@ pub async fn recover_persistent_board_messages(
     engine::refill_board_from_queue(board, job_queue, max_jobs);
     storage::save_board(board)?;
     storage::save_job_queue(job_queue)?;
-    update_board_message(http, channel_id, board, max_jobs).await
+    update_board_message(http, channel_id, board, max_jobs, None).await
 }
 
 pub async fn update_board_message(
@@ -214,6 +257,7 @@ pub async fn update_board_message(
     channel_id: u64,
     board: &mut Board,
     max_jobs: usize,
+    status: Option<&GuildHallStatus>,
 ) -> anyhow::Result<()> {
     let _cache_guard = storage::message_cache_lock().await;
     let ch = serenity::ChannelId::new(channel_id);
@@ -324,15 +368,33 @@ pub async fn update_board_message(
         }
     }
 
-    if cache.divider_message_id.is_none() {
-        let divider = build_divider();
-        match send_cv2(http, ch, &divider).await {
+    let resolved_status = match status {
+        Some(s) => s.clone(),
+        None => {
+            let hospital = storage::load_hospital()?;
+            guild_status::compute_guild_hall_status(board, &hospital)?
+        }
+    };
+    let status_message = build_status_message(&resolved_status);
+    let status_key = status_message.cache_key();
+    if cache.status_message_id.is_none() {
+        match send_cv2(http, ch, &status_message).await {
             Ok(msg) => {
-                tracing::info!(msg_id = msg.id.get(), "divider message posted");
-                cache.divider_message_id = Some(msg.id.get());
+                tracing::info!(msg_id = msg.id.get(), "guild hall status message posted");
+                cache.status_message_id = Some(msg.id.get());
+                cache.status_content = status_key;
                 cache_dirty = true;
             }
-            Err(e) => tracing::warn!(err = %e, "failed to post divider message"),
+            Err(e) => tracing::warn!(err = %e, "failed to post guild hall status message"),
+        }
+    } else if status_key != cache.status_content {
+        let msg_id = cache.status_message_id.unwrap();
+        if edit_cv2(http, ch, MessageId::new(msg_id), &status_message).await {
+            cache.status_content = status_key;
+            cache_dirty = true;
+            tracing::debug!(msg_id, "guild hall status message edited");
+        } else {
+            tracing::warn!(msg_id, "failed to edit guild hall status message");
         }
     }
 

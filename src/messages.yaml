@@ -142,3 +142,19 @@ heal_insufficient_funds:
   - "{} needs medical treatment but your wallet is too light."
   - "You can't afford to heal {} right now."
   - "Broke boys get broke chuds."
+
+idleing:
+  - "Look at these chuds doing nothing"
+  - "The guild hall is full of loafers"
+  - "These chuds haven't found a job yet"
+
+all_busy:
+  - "Wow! These chuds are busy!"
+  - "The guild hall is empty, everyone's on the clock."
+  - "Not a single chud loafing. Impressive. Terrifying."
+  - "The chud guild is working overtime."
+
+hospital_waiting:
+  - "Man these guys are messed up"
+  - "The infirmary is working overtime"
+  - "These chuds are in rough shape"

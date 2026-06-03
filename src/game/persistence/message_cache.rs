@@ -25,9 +25,12 @@ pub struct MessageCache {
     /// Last content string sent to the job board header message.
     #[serde(default)]
     pub job_board_header: String,
-    /// Discord message ID of the persistent divider posted between job slots and buffered messages.
+    /// Discord message ID of the persistent guild-hall status area below job slots.
+    #[serde(default, alias = "divider_message_id")]
+    pub status_message_id: Option<u64>,
+    /// Last content fingerprint sent to the status message.
     #[serde(default)]
-    pub divider_message_id: Option<u64>,
+    pub status_content: String,
     /// Discord message IDs to delete at the start of the next tick.
     #[serde(default)]
     pub pending_deletes: Vec<u64>,

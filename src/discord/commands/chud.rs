@@ -1,3 +1,4 @@
+use crate::discord::board_ui;
 use crate::discord::channel::post_buffered_message;
 use crate::discord::context::{Context, Error};
 use crate::game::domain::stash::STASH_CAPACITY;
@@ -25,6 +26,14 @@ pub async fn chud(ctx: Context<'_>, name: String, description: String) -> Result
         &content,
     )
     .await;
+    let mut board = ctx.data().board.lock().await;
+    board_ui::refresh_board_status(
+        http,
+        ctx.data().channel_id,
+        &mut *board,
+        ctx.data().max_jobs,
+    )
+    .await?;
     ctx.say("ok").await?;
     Ok(())
 }

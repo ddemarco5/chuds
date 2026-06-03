@@ -1,5 +1,6 @@
 use crate::game::domain::board::{Board, BoardQuest};
 use crate::game::domain::hospital::Hospital;
+use crate::game::guild_status::GuildHallStatus;
 use crate::game::domain::item::{roll_item_value, EquipmentSlot, ItemType};
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
@@ -56,8 +57,15 @@ pub fn take_and_enqueue_quest(
     quest_id: u32,
     generation_queue: &tokio::sync::mpsc::UnboundedSender<GenerationJob>,
     force_item_drop: bool,
+    pre_assign_status: Option<&GuildHallStatus>,
 ) -> anyhow::Result<AssignInfo> {
-    let info = assign_chud_to_quest(board, hospital, discord_user_id, quest_id)?;
+    let info = assign_chud_to_quest(
+        board,
+        hospital,
+        discord_user_id,
+        quest_id,
+        pre_assign_status,
+    )?;
     let board_quest = board
         .quests
         .iter()
@@ -170,11 +178,16 @@ pub fn assign_chud_to_quest(
     hospital: &Hospital,
     discord_user_id: u64,
     quest_id: u32,
+    pre_assign_status: Option<&GuildHallStatus>,
 ) -> anyhow::Result<AssignInfo> {
     let player = storage::load_player(discord_user_id)?
         .ok_or_else(|| anyhow::anyhow!("no chud found for user {}", discord_user_id))?;
 
-    if crate::game::busy::is_player_busy(board, hospital, discord_user_id).is_some() {
+    let busy = match pre_assign_status {
+        Some(status) => status.is_busy(discord_user_id),
+        None => crate::game::busy::is_player_busy(board, hospital, discord_user_id).is_some(),
+    };
+    if busy {
         anyhow::bail!("user {} is busy", discord_user_id);
     }
 

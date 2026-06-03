@@ -7,9 +7,10 @@ use crate::chud_msg;
 use crate::discord::board_ui;
 use crate::discord::channel::post_buffered_message;
 use crate::discord::context::Data;
-use crate::game::busy::{self, BusyReason};
+use crate::game::busy::BusyReason;
 use crate::game::domain::player::Player;
 use crate::game::engine;
+use crate::game::guild_status::{self, GuildHallStatus};
 use crate::game::persistence::storage;
 
 async fn ephemeral_followup(
@@ -80,11 +81,35 @@ async fn ephemeral_hospitalized_response(
     Ok(())
 }
 
+async fn respond_to_busy(
+    ctx: &serenity::Context,
+    interaction: &ComponentInteraction,
+    player: &Player,
+    user_id: u64,
+    reason: BusyReason,
+) -> anyhow::Result<()> {
+    match reason {
+        BusyReason::ActiveQuest { quest_title } => {
+            let msg = chud_msg!("busy_active_quest", player.name, quest_title);
+            ephemeral_followup(ctx, interaction, &msg).await?;
+        }
+        BusyReason::Scouting => {
+            let msg = chud_msg!("busy_scouting", player.name);
+            ephemeral_followup(ctx, interaction, &msg).await?;
+        }
+        BusyReason::Hospitalized => {
+            ephemeral_hospitalized_response(ctx, interaction, player, user_id).await?;
+        }
+    }
+    Ok(())
+}
+
 async fn announce_taken_quest(
     http: &serenity::Http,
     board: &mut crate::game::domain::board::Board,
     data: &Data,
     info: &engine::AssignInfo,
+    status: &GuildHallStatus,
 ) -> anyhow::Result<()> {
     let first_name = info
         .player
@@ -96,7 +121,14 @@ async fn announce_taken_quest(
     let content = chud_msg!("chud_takes_job", first_name, info.quest_title);
 
     post_buffered_message(http, data.channel_id, data.max_buffer_messages, &content).await;
-    board_ui::update_board_message(http, data.channel_id, board, data.max_jobs).await?;
+    board_ui::update_board_message(
+        http,
+        data.channel_id,
+        board,
+        data.max_jobs,
+        Some(status),
+    )
+    .await?;
     Ok(())
 }
 
@@ -105,8 +137,9 @@ pub async fn post_quest_taken_announcement(
     board: &mut crate::game::domain::board::Board,
     data: &Data,
     info: &engine::AssignInfo,
+    status: &GuildHallStatus,
 ) -> anyhow::Result<()> {
-    announce_taken_quest(http, board, data, info).await
+    announce_taken_quest(http, board, data, info, status).await
 }
 
 pub async fn handle_take_button(
@@ -139,20 +172,9 @@ pub async fn handle_take_button(
 
     let hospital = storage::load_hospital()?;
     let mut board = data.board.lock().await;
-    if let Some(reason) = busy::is_player_busy(&*board, &hospital, user_id) {
-        match reason {
-            BusyReason::ActiveQuest { quest_title } => {
-                let msg = chud_msg!("busy_active_quest", player.name, quest_title);
-                ephemeral_followup(ctx, interaction, &msg).await?;
-            }
-            BusyReason::Scouting => {
-                let msg = chud_msg!("busy_scouting", player.name);
-                ephemeral_followup(ctx, interaction, &msg).await?;
-            }
-            BusyReason::Hospitalized => {
-                ephemeral_hospitalized_response(ctx, interaction, &player, user_id).await?;
-            }
-        }
+    let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
+    if let Some(reason) = status.busy_reason(user_id) {
+        respond_to_busy(ctx, interaction, &player, user_id, reason).await?;
         return Ok(());
     }
 
@@ -163,6 +185,7 @@ pub async fn handle_take_button(
         quest_id,
         &data.generation_queue,
         false,
+        Some(&status),
     ) {
         Ok(info) => info,
         Err(_) => {
@@ -171,7 +194,8 @@ pub async fn handle_take_button(
         }
     };
 
-    post_quest_taken_announcement(&ctx.http, &mut *board, data, &info).await?;
+    let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
+    post_quest_taken_announcement(&ctx.http, &mut *board, data, &info, &status).await?;
     Ok(())
 }
 
@@ -205,20 +229,9 @@ pub async fn handle_scout_button(
 
     let hospital = storage::load_hospital()?;
     let mut board = data.board.lock().await;
-    if let Some(reason) = busy::is_player_busy(&*board, &hospital, user_id) {
-        match reason {
-            BusyReason::ActiveQuest { quest_title } => {
-                let msg = chud_msg!("busy_active_quest", player.name, quest_title);
-                ephemeral_followup(ctx, interaction, &msg).await?;
-            }
-            BusyReason::Scouting => {
-                let msg = chud_msg!("busy_scouting", player.name);
-                ephemeral_followup(ctx, interaction, &msg).await?;
-            }
-            BusyReason::Hospitalized => {
-                ephemeral_hospitalized_response(ctx, interaction, &player, user_id).await?;
-            }
-        }
+    let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
+    if let Some(reason) = status.busy_reason(user_id) {
+        respond_to_busy(ctx, interaction, &player, user_id, reason).await?;
         return Ok(());
     }
 
@@ -227,7 +240,7 @@ pub async fn handle_scout_button(
         return Ok(());
     }
     storage::save_board(&*board)?;
-    drop(board);
+    let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
 
     let first_name = player
         .name
@@ -243,6 +256,14 @@ pub async fn handle_scout_button(
         &content,
     )
     .await;
+    board_ui::update_board_message(
+        &ctx.http,
+        data.channel_id,
+        &mut *board,
+        data.max_jobs,
+        Some(&status),
+    )
+    .await?;
     Ok(())
 }
 
@@ -307,6 +328,15 @@ pub async fn handle_heal_button(
             EditInteractionResponse::new().content(msg).components(vec![]),
         )
         .await?;
+
+    let mut board = data.board.lock().await;
+    board_ui::refresh_board_status(
+        &ctx.http,
+        data.channel_id,
+        &mut *board,
+        data.max_jobs,
+    )
+    .await?;
 
     Ok(())
 }
