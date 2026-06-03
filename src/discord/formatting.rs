@@ -12,7 +12,7 @@ fn markdown_italic_line(text: &str) -> String {
 }
 
 /// Pass/fail headline, narrative summary, rewards, and optional hospital note.
-pub fn build_dm_summary_plain(
+fn build_dm_summary_plain(
     player_name: &str,
     result: &QuestResult,
     player: &Player,
@@ -64,7 +64,8 @@ pub fn build_dm_completion_content(
     item_auto_sold_gold: Option<u32>,
     hospitalized: bool,
 ) -> DmCompletionContent {
-    let preamble = format_completion_preamble(player_name, result, player);
+    let segments = build_dm_preamble_segments(player_name, result, player);
+    let preamble = segments.join("");
     let summary = build_dm_summary_plain(
         player_name,
         result,
@@ -75,10 +76,6 @@ pub fn build_dm_completion_content(
         item_auto_sold_gold,
         hospitalized,
     );
-    let mut segments = vec![format_dm_header(player), format_dm_quest(result)];
-    for (i, trial) in result.trials.iter().enumerate() {
-        segments.push(format_dm_trial(player_name, trial, i));
-    }
     DmCompletionContent {
         preamble,
         summary,
@@ -106,7 +103,7 @@ pub fn build_dm_summary_components(content: &DmCompletionContent) -> ComponentsV
 
 /// Header → quest → trials as plain text chunks, packed under `limit` (outcome sent separately).
 pub fn build_dm_mobile_plain_parts(content: &DmCompletionContent, limit: usize) -> Vec<String> {
-    pack_dm_segments(content.segments.clone(), limit)
+    pack_dm_segments(&content.segments, limit)
 }
 
 /// Header, summary, rewards, and optional hospital note — one multiline block inside the container.
@@ -154,28 +151,31 @@ fn format_dm_trial(player_name: &str, trial: &CompletedTrial, index: usize) -> S
     )
 }
 
-fn format_completion_preamble(player_name: &str, result: &QuestResult, player: &Player) -> String {
-    let mut out = format_dm_header(player);
-    out.push_str(&format_dm_quest(result));
+fn build_dm_preamble_segments(
+    player_name: &str,
+    result: &QuestResult,
+    player: &Player,
+) -> Vec<String> {
+    let mut segments = vec![format_dm_header(player), format_dm_quest(result)];
     for (i, trial) in result.trials.iter().enumerate() {
-        out.push_str(&format_dm_trial(player_name, trial, i));
+        segments.push(format_dm_trial(player_name, trial, i));
     }
-    out
+    segments
 }
 
-fn pack_dm_segments(segments: Vec<String>, limit: usize) -> Vec<String> {
+fn pack_dm_segments(segments: &[String], limit: usize) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
     let mut current = String::new();
 
-    for segment in segments {
+    for segment in segments.iter() {
         if segment.is_empty() {
             continue;
         }
         if current.is_empty() {
             if segment.len() <= limit {
-                current = segment;
+                current = segment.clone();
             } else {
-                messages.push(segment);
+                messages.push(segment.clone());
             }
             continue;
         }
@@ -186,9 +186,9 @@ fn pack_dm_segments(segments: Vec<String>, limit: usize) -> Vec<String> {
         } else {
             messages.push(current);
             if segment.len() <= limit {
-                current = segment;
+                current = segment.clone();
             } else {
-                messages.push(segment);
+                messages.push(segment.clone());
                 current = String::new();
             }
         }

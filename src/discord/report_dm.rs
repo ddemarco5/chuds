@@ -31,7 +31,6 @@ pub async fn send_job_completion_dm(
         qr.item_auto_sold_gold,
         qr.hospitalized,
     );
-    let dm_report = formatting::build_dm_completion_components(&content);
     let dm_plain = content.plain();
 
     let user_id = UserId::new(qr.discord_user_id);
@@ -61,15 +60,26 @@ pub async fn send_job_completion_dm(
         }
     };
 
+    let delivery = if dm_plain.len() <= DM_CHAR_LIMIT {
+        "components_v2"
+    } else if mobile {
+        "segmented"
+    } else {
+        "attachment"
+    };
+    tracing::info!(
+        discord_user_id = qr.discord_user_id,
+        player = %qr.player_name,
+        client,
+        delivery,
+        plain_len = dm_plain.len(),
+        mobile_from_cache,
+        mobile_sticky,
+        "sending job completion DM"
+    );
+
     if dm_plain.len() <= DM_CHAR_LIMIT {
-        tracing::info!(
-            discord_user_id = qr.discord_user_id,
-            player = %qr.player_name,
-            client,
-            delivery = "components_v2",
-            plain_len = dm_plain.len(),
-            "sending job completion DM"
-        );
+        let dm_report = formatting::build_dm_completion_components(&content);
         if let Err(e) = http.send_message(dm_channel, vec![], &dm_report).await {
             tracing::warn!(
                 discord_user_id = qr.discord_user_id,
@@ -81,16 +91,6 @@ pub async fn send_job_completion_dm(
     }
 
     if mobile {
-        tracing::info!(
-            discord_user_id = qr.discord_user_id,
-            player = %qr.player_name,
-            client,
-            delivery = "segmented",
-            plain_len = dm_plain.len(),
-            mobile_from_cache,
-            mobile_sticky,
-            "sending job completion DM"
-        );
         for part in formatting::build_dm_mobile_plain_parts(&content, DM_CHAR_LIMIT) {
             if let Err(e) = http
                 .send_message(dm_channel, vec![], &CreateMessage::new().content(&part))
@@ -113,16 +113,6 @@ pub async fn send_job_completion_dm(
             );
         }
     } else {
-        tracing::info!(
-            discord_user_id = qr.discord_user_id,
-            player = %qr.player_name,
-            client,
-            delivery = "attachment",
-            plain_len = dm_plain.len(),
-            mobile_from_cache,
-            mobile_sticky,
-            "sending job completion DM"
-        );
         let attachment = CreateAttachment::bytes(dm_plain.into_bytes(), "job_report.txt");
         let msg = CreateMessage::new().content(format!(
             "{}'s attempt at {} was too epic for discords character limit",
