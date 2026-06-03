@@ -99,7 +99,7 @@ pub async fn execute_tick(
         let return_msg = chud_msg!(return_key, first_name);
         post_buffered_message_deferred(http, channel_id, &return_msg).await;
 
-        let dm_content = formatting::format_dm_completion_report(
+        let (dm_report, dm_plain) = formatting::build_dm_completion_report(
             &qr.player_name,
             &qr.result,
             &qr.player,
@@ -107,32 +107,25 @@ pub async fn execute_tick(
             qr.reward,
             qr.item_awarded.as_ref(),
             qr.item_auto_sold_gold,
+            qr.hospitalized,
         );
         let dm_map = serde_json::json!({ "recipient_id": qr.discord_user_id.to_string() });
         match http.create_private_channel(&dm_map).await {
             Ok(dm) => {
                 const DM_LIMIT: usize = 2000;
-                let (attachments, msg) = if dm_content.len() > DM_LIMIT {
+                let send_result = if dm_plain.len() > DM_LIMIT {
                     let attachment =
-                        CreateAttachment::bytes(dm_content.into_bytes(), "job_report.txt");
+                        CreateAttachment::bytes(dm_plain.into_bytes(), "job_report.txt");
                     let msg = CreateMessage::new().content(format!(
                         "{}'s attempt at {} was too epic for discords character limit",
                         qr.player_name, qr.quest_title
                     ));
-                    (vec![attachment], msg)
+                    http.send_message(dm.id, vec![attachment], &msg).await
                 } else {
-                    (vec![], CreateMessage::new().content(dm_content))
+                    http.send_message(dm.id, vec![], &dm_report).await
                 };
-                if let Err(e) = http.send_message(dm.id, attachments, &msg).await {
+                if let Err(e) = send_result {
                     tracing::warn!(discord_user_id = qr.discord_user_id, err = %e, "failed to DM quest report");
-                }
-
-                if qr.hospitalized {
-                    let hospital_msg = chud_msg!("dm_hospitalized", qr.player_name);
-                    let hospital_dm = CreateMessage::new().content(hospital_msg);
-                    if let Err(e) = http.send_message(dm.id, vec![], &hospital_dm).await {
-                        tracing::warn!(discord_user_id = qr.discord_user_id, err = %e, "failed to DM hospital notification");
-                    }
                 }
             }
             Err(e) => tracing::warn!(discord_user_id = qr.discord_user_id, err = %e, "failed to open DM channel"),
