@@ -86,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::delete_chud(),
                 discord::commands::assign(),
                 discord::commands::stats(),
+                discord::commands::inspect(),
                 discord::commands::gear(),
                 discord::commands::cash(),
                 discord::commands::job(),

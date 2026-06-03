@@ -97,6 +97,22 @@ pub fn load_job_queue() -> anyhow::Result<JobQueue> {
     serde_yaml::from_str(&yaml).context("parsing job queue")
 }
 
+/// Load the player whose chud name matches `name` (case-insensitive), if any.
+pub fn find_player_by_name(name: &str) -> anyhow::Result<Option<Player>> {
+    let needle = name.trim();
+    if needle.is_empty() {
+        return Ok(None);
+    }
+    for &id in &list_player_ids()? {
+        if let Some(player) = load_player(id)? {
+            if player.name.eq_ignore_ascii_case(needle) {
+                return Ok(Some(player));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Return the Discord user IDs of all players that have a save file.
 pub fn list_player_ids() -> anyhow::Result<Vec<u64>> {
     if !Path::new(PLAYERS_DIR).exists() {

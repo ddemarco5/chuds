@@ -1,8 +1,11 @@
+use crate::chud_msg;
 use crate::discord::board_ui;
 use crate::discord::channel::post_buffered_message;
 use crate::discord::context::{Context, Error};
+use crate::game::busy::BusyReason;
 use crate::game::domain::stash::STASH_CAPACITY;
 use crate::game::engine;
+use crate::game::guild_status;
 use crate::game::mechanics::simulation::effective_stats;
 use crate::game::persistence::storage;
 
@@ -46,6 +49,34 @@ pub async fn chudlerboard(ctx: Context<'_>) -> Result<(), Error> {
         "*No chuds yet.*".to_string()
     } else {
         content
+    };
+    ctx.say(msg).await?;
+    Ok(())
+}
+
+#[poise::command(slash_command)]
+pub async fn inspect(ctx: Context<'_>, name: String) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let name = name.trim().to_string();
+    let author_id = ctx.author().id.get();
+    let msg = match storage::find_player_by_name(&name)? {
+        None => chud_msg!("inspect_not_found", name),
+        Some(player) if player.discord_user_id == author_id => {
+            chud_msg!("inspect_self", player.name)
+        }
+        Some(player) => {
+            let board = ctx.data().board.lock().await;
+            let hospital = storage::load_hospital()?;
+            let status = guild_status::compute_guild_hall_status(&board, &hospital)?;
+            match status.busy_reason(player.discord_user_id) {
+                None => chud_msg!("inspect_description", player.name, player.description),
+                Some(BusyReason::ActiveQuest { .. }) => chud_msg!("inspect_busy_job", player.name),
+                Some(BusyReason::Scouting) => chud_msg!("inspect_busy_scouting", player.name),
+                Some(BusyReason::Hospitalized) => {
+                    chud_msg!("inspect_busy_hospital", player.name)
+                }
+            }
+        }
     };
     ctx.say(msg).await?;
     Ok(())

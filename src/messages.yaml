@@ -158,3 +158,36 @@ hospital_waiting:
   - "Man these guys are messed up"
   - "The infirmary is working overtime"
   - "These chuds are in rough shape"
+
+# /inspect — you inspected your own chud
+inspect_self:
+  - "That's your chud, you chud."
+  - "You inspected **{}**? That's *your* chud. You chud."
+  - "**{}** is yours. You're the chud here."
+  - "Why are you /inspect-ing **{}**? You made them. Use /stats, you chud."
+  - "That's your chud you chud. Yes. Yours."
+
+# /inspect — idle chud description or why they are not around
+inspect_description:
+  - "**{}**\n{}"
+  - "You find **{}** kicking their feet.\n{}"
+
+inspect_not_found:
+  - "No **{}** in the guild hall."
+  - "No chud named **{}** in the guild hall."
+  - "Can't find **{}** — wrong name or they don't exist."
+
+inspect_busy_job:
+  - "**{}** isn't here — they're out on a job."
+  - "**{}** isn't around; they're off working."
+  - "You look for **{}**, but they're out on the clock somewhere."
+
+inspect_busy_scouting:
+  - "**{}** isn't here — they're out scouting."
+  - "**{}** is off scouting a job right now."
+  - "No sign of **{}**; they're out checking a gig."
+
+inspect_busy_hospital:
+  - "**{}** isn't here — they're in the hospital all messed up."
+  - "**{}** is laid up in the infirmary."
+  - "You won't find **{}**; they're in the hospital getting patched up."
