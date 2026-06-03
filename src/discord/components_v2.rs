@@ -20,13 +20,6 @@ pub struct ComponentsV2Message {
     pub components: Vec<Component>,
 }
 
-impl ComponentsV2Message {
-    pub fn ephemeral(mut self) -> Self {
-        self.flags |= FLAG_EPHEMERAL;
-        self
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum Component {

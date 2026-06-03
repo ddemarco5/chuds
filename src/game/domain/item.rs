@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::game::domain::player::{ChudEquipment, Player};
+use crate::game::domain::player::ChudEquipment;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -226,22 +226,21 @@ impl ChudEquipment {
             EquipmentSlot::Misc1 => &mut self.misc[1],
         }
     }
-}
 
-/// Equip an item on a chud, returning the replaced item id if any.
-pub fn equip_item(player: &mut Player, item: Item) -> Option<u32> {
-    let slot = match item.item_type {
-        ItemType::Gear => &mut player.chud.equipment.gear,
-        ItemType::Weapon => &mut player.chud.equipment.weapon,
-        ItemType::Misc => {
-            if player.chud.equipment.misc[0].is_none() {
-                &mut player.chud.equipment.misc[0]
-            } else if player.chud.equipment.misc[1].is_none() {
-                &mut player.chud.equipment.misc[1]
-            } else {
-                &mut player.chud.equipment.misc[0]
+    /// Pick the equipment slot for an item type (misc fills first empty slot, else overwrites misc[0]).
+    pub fn slot_for_item_type(&mut self, item_type: ItemType) -> &mut Option<u32> {
+        match item_type {
+            ItemType::Gear => &mut self.gear,
+            ItemType::Weapon => &mut self.weapon,
+            ItemType::Misc => {
+                if self.misc[0].is_none() {
+                    &mut self.misc[0]
+                } else if self.misc[1].is_none() {
+                    &mut self.misc[1]
+                } else {
+                    &mut self.misc[0]
+                }
             }
         }
-    };
-    slot.replace(item.id)
+    }
 }

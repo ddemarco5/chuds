@@ -1,6 +1,6 @@
 use crate::game::domain::board::{Board, BoardQuest};
 use crate::game::domain::hospital::Hospital;
-use crate::game::domain::item::{equip_item, EquipmentSlot};
+use crate::game::domain::item::{EquipmentSlot, ItemType};
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{create_chud, Player};
@@ -200,7 +200,7 @@ pub fn assign_chud_to_quest(
     })
 }
 
-/// Register a pending item and add it to the player's stash.
+/// Register a quest item and add it to the player's stash.
 pub fn award_pending_item(
     registry: &mut ItemRegistry,
     player: &mut Player,
@@ -220,6 +220,14 @@ pub fn award_pending_item(
     Ok(awarded)
 }
 
+fn equip_item_id(player: &mut Player, item_id: u32, item_type: ItemType) -> Option<u32> {
+    player
+        .chud
+        .equipment
+        .slot_for_item_type(item_type)
+        .replace(item_id)
+}
+
 /// Move an item from stash into the appropriate equipment slot, swapping any displaced item into stash.
 pub fn equip_from_stash(
     player: &mut Player,
@@ -229,12 +237,12 @@ pub fn equip_from_stash(
     if !player.stash.contains(item_id) {
         anyhow::bail!("item not in stash");
     }
-    let item = registry
+    let item_type = registry
         .get(item_id)
         .ok_or_else(|| anyhow::anyhow!("item {} not found", item_id))?
-        .clone();
+        .item_type;
     player.stash.remove(item_id);
-    if let Some(displaced) = equip_item(player, item) {
+    if let Some(displaced) = equip_item_id(player, item_id, item_type) {
         player.stash.push(displaced)?;
     }
     storage::save_player(player)?;

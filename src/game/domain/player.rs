@@ -118,10 +118,6 @@ fn apply_wins(val: &mut u8, counter: &mut u32, wins: u32, base: u32) -> bool {
 }
 
 impl Player {
-    pub fn owns_item(&self, id: u32) -> bool {
-        self.stash.contains(id) || self.chud.equipment.all_ids().any(|owned| owned == id)
-    }
-
     pub fn format_stats(&self) -> String {
         format!(
             "{} -- *Strength {}, Smarts {}, Stealth {}, Experience {}*\n{} job completed, {} failed",
