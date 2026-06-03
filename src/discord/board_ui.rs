@@ -1,12 +1,23 @@
-use poise::serenity_prelude::{
-    self as serenity, ButtonStyle, CreateActionRow, CreateButton, CreateMessage, EditMessage,
-    MessageId,
+use poise::serenity_prelude::{self as serenity, Http, MessageId};
+
+use crate::discord::components_v2::{
+    ActionRow, Button, Component, Container, ContainerChild, ComponentsV2Message, TextDisplay,
 };
 
+/// Accent colors for job-slot containers (RGB integers).
+const ACCENT_INACTIVE: u32 = 0x4E5058; // empty slots and taken jobs
+const ACCENT_JOB_OPEN: u32 = 0x57F287;
 use crate::game::domain::board::{Board, BoardQuest};
 use crate::game::domain::player::Player;
 use crate::game::persistence::message_cache::JobSlot;
 use crate::game::persistence::storage;
+
+fn subtext_lines(text: &str) -> String {
+    text.lines()
+        .map(|line| format!("-# {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 fn format_job_slot(quest: Option<&BoardQuest>) -> String {
     match quest {
@@ -16,35 +27,78 @@ fn format_job_slot(quest: Option<&BoardQuest>) -> String {
             let desc = &q.generated.description;
             let reward = q.generated.reward;
             if q.has_active() {
-                format!("~~**{}** - *{}* | ${}~~\n~~{}~~", title, giver, reward, desc)
+                format!(
+                    "-# **{title}** - *{giver}* | ${reward}\n{}",
+                    subtext_lines(desc)
+                )
             } else {
-                format!("**{}** - *{}* | ${}\n{}", title, giver, reward, desc)
+                format!("**{title}** - *{giver}* | ${reward}\n{desc}")
             }
         }
         None => "*Nothing posted here*".to_string(),
     }
 }
 
-fn job_slot_components(quest: Option<&BoardQuest>) -> Vec<CreateActionRow> {
-    match quest {
+fn job_slot_accent(q: &BoardQuest) -> u32 {
+    if q.has_active() {
+        ACCENT_INACTIVE
+    } else {
+        ACCENT_JOB_OPEN
+    }
+}
+
+fn build_job_board_header(filled: usize, max_jobs: usize) -> ComponentsV2Message {
+    ComponentsV2Message::channel(vec![Component::Text(TextDisplay::new(format!(
+        "\u{200B}\n\u{200B}\t\u{200B}\t**CHUD GUILD JOB BOARD** *{filled}/{max_jobs} posted*\n\u{200B}"
+    )))])
+}
+
+fn build_job_slot(quest: Option<&BoardQuest>) -> ComponentsV2Message {
+    let (accent, inner) = match quest {
+        None => (
+            ACCENT_INACTIVE,
+            vec![ContainerChild::Text(TextDisplay::new(format_job_slot(None)))],
+        ),
         Some(q) => {
+            let mut inner =
+                vec![ContainerChild::Text(TextDisplay::new(format_job_slot(Some(q))))];
             let mut buttons = Vec::new();
             if !q.has_active() {
-                buttons.push(
-                    CreateButton::new(format!("take:{}", q.id))
-                        .label("Take")
-                        .style(ButtonStyle::Primary),
-                );
+                buttons.push(Button::primary(format!("take:{}", q.id), "Take"));
             }
-            buttons.push(
-                CreateButton::new(format!("scout:{}", q.id))
-                    .label("Scout")
-                    .style(ButtonStyle::Secondary),
-            );
-            vec![CreateActionRow::Buttons(buttons)]
+            buttons.push(Button::secondary(format!("scout:{}", q.id), "Scout"));
+            inner.push(ContainerChild::ActionRow(ActionRow::buttons(buttons)));
+            (job_slot_accent(q), inner)
         }
-        None => vec![],
-    }
+    };
+    ComponentsV2Message::channel(vec![Component::Container(Container::with_accent(
+        accent, inner,
+    ))])
+}
+
+fn build_divider() -> ComponentsV2Message {
+    ComponentsV2Message::channel(vec![Component::Text(TextDisplay::new(
+        "\u{200B}\n\u{200B}",
+    ))])
+}
+
+async fn send_cv2(
+    http: &Http,
+    channel: serenity::ChannelId,
+    message: &ComponentsV2Message,
+) -> Result<serenity::Message, serenity::Error> {
+    http.send_message(channel, vec![], message).await
+}
+
+async fn edit_cv2(
+    http: &Http,
+    channel: serenity::ChannelId,
+    message_id: MessageId,
+    message: &ComponentsV2Message,
+) -> bool {
+    http.edit_message(channel, message_id, message, vec![])
+        .await
+        .is_ok()
 }
 
 pub async fn format_chudlerboard(http: &serenity::Http) -> String {
@@ -138,36 +192,22 @@ pub async fn update_board_message(
     let mut cache_dirty = false;
 
     let filled = board.quests.len();
-    let header_content = format!(
-        "\u{200B}\n\u{200B}\t\u{200B}\t**CHUD GUILD JOB BOARD** *{}/{} posted*\n\u{200B}",
-        filled, max_jobs
-    );
+    let header_message = build_job_board_header(filled, max_jobs);
+    let header_key = header_message.cache_key();
     if cache.header_message_id.is_none() {
-        match http
-            .send_message(ch, vec![], &CreateMessage::new().content(&header_content))
-            .await
-        {
+        match send_cv2(http, ch, &header_message).await {
             Ok(msg) => {
                 tracing::info!(msg_id = msg.id.get(), "job board header message posted");
                 cache.header_message_id = Some(msg.id.get());
-                cache.job_board_header = header_content;
+                cache.job_board_header = header_key;
                 cache_dirty = true;
             }
             Err(e) => tracing::warn!(err = %e, "failed to post job board header message"),
         }
-    } else if header_content != cache.job_board_header {
+    } else if header_key != cache.job_board_header {
         let msg_id = cache.header_message_id.unwrap();
-        let ok = http
-            .edit_message(
-                ch,
-                MessageId::new(msg_id),
-                &EditMessage::new().content(&header_content),
-                vec![],
-            )
-            .await
-            .is_ok();
-        if ok {
-            cache.job_board_header = header_content;
+        if edit_cv2(http, ch, MessageId::new(msg_id), &header_message).await {
+            cache.job_board_header = header_key;
             cache_dirty = true;
             tracing::debug!(msg_id, "job board header message edited");
         } else {
@@ -205,37 +245,18 @@ pub async fn update_board_message(
 
     for (i, slot) in cache.slots.iter_mut().enumerate() {
         let quest = slot.job_id.and_then(|jid| board.quests.iter().find(|q| q.id == jid));
-        let expected = format_job_slot(quest);
-        if expected == slot.content && slot.message_id.is_some() {
+        let slot_message = build_job_slot(quest);
+        let expected_key = slot_message.cache_key();
+        if expected_key == slot.content && slot.message_id.is_some() {
             continue;
         }
         if let Some(msg_id) = slot.message_id {
-            let ok = http
-                .edit_message(
-                    ch,
-                    MessageId::new(msg_id),
-                    &EditMessage::new()
-                        .content(&expected)
-                        .components(job_slot_components(quest)),
-                    vec![],
-                )
-                .await
-                .is_ok();
-            if !ok {
+            if !edit_cv2(http, ch, MessageId::new(msg_id), &slot_message).await {
                 tracing::warn!(msg_id, slot = i, "failed to edit job slot message, posting new one");
-                match http
-                    .send_message(
-                        ch,
-                        vec![],
-                        &CreateMessage::new()
-                            .content(&expected)
-                            .components(job_slot_components(quest)),
-                    )
-                    .await
-                {
+                match send_cv2(http, ch, &slot_message).await {
                     Ok(msg) => {
                         slot.message_id = Some(msg.id.get());
-                        slot.content = expected;
+                        slot.content = expected_key;
                         cache_dirty = true;
                         if clear_reactions_slots[i] {
                             if let Err(e) = http.delete_message_reactions(ch, msg.id).await {
@@ -246,7 +267,7 @@ pub async fn update_board_message(
                     Err(e) => tracing::warn!(err = %e, slot = i, "failed to post replacement job slot message"),
                 }
             } else {
-                slot.content = expected;
+                slot.content = expected_key;
                 cache_dirty = true;
                 tracing::debug!(msg_id, slot = i, "job slot message edited");
                 if clear_reactions_slots[i] {
@@ -256,20 +277,11 @@ pub async fn update_board_message(
                 }
             }
         } else {
-            match http
-                .send_message(
-                    ch,
-                    vec![],
-                    &CreateMessage::new()
-                        .content(&expected)
-                        .components(job_slot_components(quest)),
-                )
-                .await
-            {
+            match send_cv2(http, ch, &slot_message).await {
                 Ok(msg) => {
                     tracing::info!(msg_id = msg.id.get(), slot = i, "job slot message posted");
                     slot.message_id = Some(msg.id.get());
-                    slot.content = expected;
+                    slot.content = expected_key;
                     cache_dirty = true;
                     if clear_reactions_slots[i] {
                         if let Err(e) = http.delete_message_reactions(ch, msg.id).await {
@@ -282,12 +294,9 @@ pub async fn update_board_message(
         }
     }
 
-    const DIVIDER: &str = "\u{200B}\n\u{200B}";
     if cache.divider_message_id.is_none() {
-        match http
-            .send_message(ch, vec![], &CreateMessage::new().content(DIVIDER))
-            .await
-        {
+        let divider = build_divider();
+        match send_cv2(http, ch, &divider).await {
             Ok(msg) => {
                 tracing::info!(msg_id = msg.id.get(), "divider message posted");
                 cache.divider_message_id = Some(msg.id.get());
