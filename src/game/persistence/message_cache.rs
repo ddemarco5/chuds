@@ -31,6 +31,15 @@ pub struct MessageCache {
     /// Last content fingerprint sent to the status message.
     #[serde(default)]
     pub status_content: String,
+    /// Cached random header for the idle roster section (cleared when the section is empty).
+    #[serde(default)]
+    pub status_idle_header: Option<String>,
+    /// Cached random header for the all-busy section (cleared when the section is empty).
+    #[serde(default)]
+    pub status_all_busy_header: Option<String>,
+    /// Cached random header for the hospital roster section (cleared when the section is empty).
+    #[serde(default)]
+    pub status_hospital_header: Option<String>,
     /// Discord message IDs to delete at the start of the next tick.
     #[serde(default)]
     pub pending_deletes: Vec<u64>,

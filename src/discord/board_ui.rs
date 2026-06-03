@@ -86,18 +86,87 @@ fn status_section(header: &str, names: &[String]) -> String {
     format!("*{header}*\n-# {}", names.join(", "))
 }
 
-fn build_status_message(status: &GuildHallStatus) -> ComponentsV2Message {
+struct StatusSectionHeaders {
+    idle: Option<String>,
+    all_busy: Option<String>,
+    hospital: Option<String>,
+}
+
+/// Picks or reuses cached `chud_msg!` headers. A new random line is chosen only when a section
+/// becomes visible again after having no contents (header cache cleared while empty).
+fn resolve_status_headers(
+    status: &GuildHallStatus,
+    cache: &mut crate::game::persistence::message_cache::MessageCache,
+) -> (StatusSectionHeaders, bool) {
+    let mut dirty = false;
+
+    let idle = if !status.idle_names.is_empty() {
+        if cache.status_idle_header.is_none() {
+            cache.status_idle_header = Some(chud_msg!("idleing"));
+            dirty = true;
+        }
+        cache.status_idle_header.clone()
+    } else if cache.status_idle_header.is_some() {
+        cache.status_idle_header = None;
+        dirty = true;
+        None
+    } else {
+        None
+    };
+
+    let all_busy = if status.show_all_busy {
+        if cache.status_all_busy_header.is_none() {
+            cache.status_all_busy_header = Some(chud_msg!("all_busy"));
+            dirty = true;
+        }
+        cache.status_all_busy_header.clone()
+    } else if cache.status_all_busy_header.is_some() {
+        cache.status_all_busy_header = None;
+        dirty = true;
+        None
+    } else {
+        None
+    };
+
+    let hospital = if !status.hospital_names.is_empty() {
+        if cache.status_hospital_header.is_none() {
+            cache.status_hospital_header = Some(chud_msg!("hospital_waiting"));
+            dirty = true;
+        }
+        cache.status_hospital_header.clone()
+    } else if cache.status_hospital_header.is_some() {
+        cache.status_hospital_header = None;
+        dirty = true;
+        None
+    } else {
+        None
+    };
+
+    (
+        StatusSectionHeaders {
+            idle,
+            all_busy,
+            hospital,
+        },
+        dirty,
+    )
+}
+
+fn build_status_message(status: &GuildHallStatus, headers: &StatusSectionHeaders) -> ComponentsV2Message {
     let mut inner: Vec<ContainerChild> = Vec::new();
 
     if !status.idle_names.is_empty() {
         inner.push(ContainerChild::Text(TextDisplay::new(status_section(
-            &chud_msg!("idleing"),
+            headers.idle.as_deref().expect("idle header when idle names present"),
             &status.idle_names,
         ))));
     } else if status.show_all_busy {
         inner.push(ContainerChild::Text(TextDisplay::new(format!(
             "*{}*",
-            chud_msg!("all_busy")
+            headers
+                .all_busy
+                .as_deref()
+                .expect("all_busy header when show_all_busy")
         ))));
     } else {
         inner.push(ContainerChild::Text(TextDisplay::new("\u{200B}\n\u{200B}")));
@@ -108,7 +177,10 @@ fn build_status_message(status: &GuildHallStatus) -> ComponentsV2Message {
             inner.push(ContainerChild::Separator(Separator::section()));
         }
         inner.push(ContainerChild::Text(TextDisplay::new(status_section(
-            &chud_msg!("hospital_waiting"),
+            headers
+                .hospital
+                .as_deref()
+                .expect("hospital header when hospital names present"),
             &status.hospital_names,
         ))));
     }
@@ -375,7 +447,11 @@ pub async fn update_board_message(
             guild_status::compute_guild_hall_status(board, &hospital)?
         }
     };
-    let status_message = build_status_message(&resolved_status);
+    let (status_headers, status_headers_dirty) = resolve_status_headers(&resolved_status, &mut cache);
+    if status_headers_dirty {
+        cache_dirty = true;
+    }
+    let status_message = build_status_message(&resolved_status, &status_headers);
     let status_key = status_message.cache_key();
     if cache.status_message_id.is_none() {
         match send_cv2(http, ch, &status_message).await {
