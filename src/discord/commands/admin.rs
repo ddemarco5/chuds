@@ -96,6 +96,9 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
     }
     tick::execute_tick(
         &ctx.serenity_context().http,
+        &ctx.serenity_context().cache,
+        ctx.data().guild_id,
+        Some(ctx.data().last_mobile.as_ref()),
         &ctx.data().board,
         &ctx.data().job_queue,
         &ctx.data().item_registry,

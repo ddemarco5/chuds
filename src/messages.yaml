@@ -171,6 +171,7 @@ inspect_self:
 inspect_description:
   - "**{}**\n{}"
   - "You find **{}** kicking their feet.\n{}"
+  - "You find **{}** around picking their nose.\n{}"
 
 inspect_not_found:
   - "No **{}** in the guild hall."

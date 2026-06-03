@@ -6,6 +6,7 @@ pub mod components_v2;
 pub mod context;
 pub mod formatting;
 pub mod gear_ui;
+pub mod report_dm;
 pub mod tick;
 
 pub use board_ui::{

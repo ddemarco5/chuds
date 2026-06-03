@@ -1,4 +1,6 @@
-use poise::serenity_prelude::{self as serenity, CreateAttachment, CreateMessage};
+use std::sync::Arc;
+
+use poise::serenity_prelude::{self as serenity, CreateMessage};
 
 use crate::chud_msg;
 use crate::discord::board_ui;
@@ -6,6 +8,7 @@ use crate::discord::channel::{
     cleanup_non_bot_messages, post_buffered_message_deferred, trim_buffered_messages,
 };
 use crate::discord::formatting;
+use crate::discord::report_dm::{self, LastMobileUsers};
 use crate::game::domain::board::Board;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
@@ -15,6 +18,9 @@ use crate::game::tick::{run_tick, TickContext};
 /// Apply one game tick and post results to Discord.
 pub async fn execute_tick(
     http: &serenity::Http,
+    cache: &Arc<serenity::Cache>,
+    guild_id: u64,
+    last_mobile: Option<&LastMobileUsers>,
     board: &tokio::sync::Mutex<Board>,
     job_queue: &tokio::sync::Mutex<JobQueue>,
     item_registry: &tokio::sync::Mutex<ItemRegistry>,
@@ -99,37 +105,14 @@ pub async fn execute_tick(
         let return_msg = chud_msg!(return_key, first_name);
         post_buffered_message_deferred(http, channel_id, &return_msg).await;
 
-        let (dm_report, dm_plain) = formatting::build_dm_completion_report(
-            &qr.player_name,
-            &qr.result,
-            &qr.player,
-            &qr.level_up,
-            qr.reward,
-            qr.item_awarded.as_ref(),
-            qr.item_auto_sold_gold,
-            qr.hospitalized,
-        );
-        let dm_map = serde_json::json!({ "recipient_id": qr.discord_user_id.to_string() });
-        match http.create_private_channel(&dm_map).await {
-            Ok(dm) => {
-                const DM_LIMIT: usize = 2000;
-                let send_result = if dm_plain.len() > DM_LIMIT {
-                    let attachment =
-                        CreateAttachment::bytes(dm_plain.into_bytes(), "job_report.txt");
-                    let msg = CreateMessage::new().content(format!(
-                        "{}'s attempt at {} was too epic for discords character limit",
-                        qr.player_name, qr.quest_title
-                    ));
-                    http.send_message(dm.id, vec![attachment], &msg).await
-                } else {
-                    http.send_message(dm.id, vec![], &dm_report).await
-                };
-                if let Err(e) = send_result {
-                    tracing::warn!(discord_user_id = qr.discord_user_id, err = %e, "failed to DM quest report");
-                }
-            }
-            Err(e) => tracing::warn!(discord_user_id = qr.discord_user_id, err = %e, "failed to open DM channel"),
-        }
+        report_dm::send_job_completion_dm(
+            http,
+            cache,
+            serenity::GuildId::new(guild_id),
+            last_mobile,
+            qr,
+        )
+        .await;
     }
 
     for sr in &outcome.scout_results {

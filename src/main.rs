@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use chuds::discord::{
     self, cleanup_non_bot_messages, execute_tick, handle_gear_button, handle_heal_button,
@@ -73,6 +77,8 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(tick_time_s, "chuds bot starting");
 
+    let last_mobile = Arc::new(RwLock::new(HashSet::new()));
+
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
@@ -99,6 +105,11 @@ async fn main() -> anyhow::Result<()> {
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
+                    if let serenity::FullEvent::PresenceUpdate { new_data } = &event {
+                        if new_data.guild_id == Some(serenity::GuildId::new(data.guild_id)) {
+                            discord::report_dm::record_mobile_presence(&data.last_mobile, new_data);
+                        }
+                    }
                     if let serenity::FullEvent::InteractionCreate { interaction } = event {
                         if let serenity::Interaction::Component(component) = interaction {
                             let id = &component.data.custom_id;
@@ -227,6 +238,8 @@ async fn main() -> anyhow::Result<()> {
                 let tick_queue = Arc::clone(&job_queue);
                 let tick_registry = Arc::clone(&item_registry);
                 let tick_http = Arc::clone(&ctx.http);
+                let tick_cache = Arc::clone(&ctx.cache);
+                let tick_last_mobile = Arc::clone(&last_mobile);
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
                     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -236,6 +249,9 @@ async fn main() -> anyhow::Result<()> {
                         tracing::info!("background tick firing");
                         if let Err(e) = execute_tick(
                             &tick_http,
+                            &tick_cache,
+                            guild_id,
+                            Some(tick_last_mobile.as_ref()),
                             &tick_board,
                             &tick_queue,
                             &tick_registry,
@@ -267,12 +283,15 @@ async fn main() -> anyhow::Result<()> {
                     max_non_bot_messages,
                     generation_queue: generation_tx,
                     pending_quests,
+                    guild_id,
+                    last_mobile,
                 })
             })
         })
         .build();
 
-    let intents = serenity::GatewayIntents::non_privileged();
+    let intents =
+        serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::GUILD_PRESENCES;
     let mut client = serenity::ClientBuilder::new(&token, intents)
         .framework(framework)
         .await

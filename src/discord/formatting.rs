@@ -4,15 +4,15 @@ use crate::discord::components_v2::{
 };
 use crate::game::domain::item::{Item, ItemType};
 use crate::game::domain::player::Player;
-use crate::game::domain::quest_result::QuestResult;
+use crate::game::domain::quest_result::{CompletedTrial, QuestResult};
 
 /// Collapse whitespace so Discord `*italic*` markers stay on one line.
 fn markdown_italic_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Components V2 DM for a finished job, plus a plain-text copy for length-limit fallback.
-pub fn build_dm_completion_report(
+/// Pass/fail headline, narrative summary, rewards, and optional hospital note.
+pub fn build_dm_summary_plain(
     player_name: &str,
     result: &QuestResult,
     player: &Player,
@@ -21,8 +21,7 @@ pub fn build_dm_completion_report(
     item_awarded: Option<&Item>,
     item_auto_sold_gold: Option<u32>,
     hospitalized: bool,
-) -> (ComponentsV2Message, String) {
-    let preamble = format_completion_preamble(player_name, result, player);
+) -> String {
     let outcome = if result.passed { "PASSED" } else { "FAILED" };
     let footer = format_completion_footer(
         player_name,
@@ -34,21 +33,80 @@ pub fn build_dm_completion_report(
         item_auto_sold_gold,
     );
     let hospital_msg = hospitalized.then(|| chud_msg!("dm_hospitalized", player_name));
-    let outcome_box = format_completion_outcome_box(
+    format_completion_outcome_box(
         outcome,
         &result.summary,
         &footer,
         hospital_msg.as_deref(),
-    );
-    let plain = format!("{preamble}\n\n{outcome_box}");
+    )
+}
 
-    let message = ComponentsV2Message::channel(vec![
-        Component::Text(TextDisplay::new(preamble)),
-        Component::Container(Container::new(vec![ContainerChild::Text(TextDisplay::new(
-            outcome_box,
-        ))])),
-    ]);
-    (message, plain)
+/// Preamble, outcome, and ordered mobile segments — built once for every DM delivery path.
+pub struct DmCompletionContent {
+    pub preamble: String,
+    pub summary: String,
+    segments: Vec<String>,
+}
+
+impl DmCompletionContent {
+    pub fn plain(&self) -> String {
+        format!("{}\n\n{}", self.preamble, self.summary)
+    }
+}
+
+pub fn build_dm_completion_content(
+    player_name: &str,
+    result: &QuestResult,
+    player: &Player,
+    level_up: &crate::game::domain::player::LevelUp,
+    reward: u32,
+    item_awarded: Option<&Item>,
+    item_auto_sold_gold: Option<u32>,
+    hospitalized: bool,
+) -> DmCompletionContent {
+    let preamble = format_completion_preamble(player_name, result, player);
+    let summary = build_dm_summary_plain(
+        player_name,
+        result,
+        player,
+        level_up,
+        reward,
+        item_awarded,
+        item_auto_sold_gold,
+        hospitalized,
+    );
+    let mut segments = vec![format_dm_header(player), format_dm_quest(result)];
+    for (i, trial) in result.trials.iter().enumerate() {
+        segments.push(format_dm_trial(player_name, trial, i));
+    }
+    DmCompletionContent {
+        preamble,
+        summary,
+        segments,
+    }
+}
+
+fn summary_container(summary: &str) -> Component {
+    Component::Container(Container::new(vec![ContainerChild::Text(TextDisplay::new(
+        summary.to_string(),
+    ))]))
+}
+
+pub fn build_dm_completion_components(content: &DmCompletionContent) -> ComponentsV2Message {
+    ComponentsV2Message::channel(vec![
+        Component::Text(TextDisplay::new(content.preamble.clone())),
+        summary_container(&content.summary),
+    ])
+}
+
+/// Outcome block only — same container as the short DM path.
+pub fn build_dm_summary_components(content: &DmCompletionContent) -> ComponentsV2Message {
+    ComponentsV2Message::channel(vec![summary_container(&content.summary)])
+}
+
+/// Header → quest → trials as plain text chunks, packed under `limit` (outcome sent separately).
+pub fn build_dm_mobile_plain_parts(content: &DmCompletionContent, limit: usize) -> Vec<String> {
+    pack_dm_segments(content.segments.clone(), limit)
 }
 
 /// Header, summary, rewards, and optional hospital note — one multiline block inside the container.
@@ -68,29 +126,79 @@ fn format_completion_outcome_box(
     sections.join("\n\n")
 }
 
-fn format_completion_preamble(player_name: &str, result: &QuestResult, player: &Player) -> String {
-    let mut out = format!("{}\n\n", player.format_stats());
-    out.push_str(&format!(
+fn format_dm_header(player: &Player) -> String {
+    format!("{}\n\n", player.format_stats())
+}
+
+fn format_dm_quest(result: &QuestResult) -> String {
+    format!(
         "**{}** - {}\n{}\n",
         result.quest_title, result.quest_giver, result.quest_description
-    ));
+    )
+}
+
+fn format_dm_trial(player_name: &str, trial: &CompletedTrial, index: usize) -> String {
+    let pass_str = if trial.passed { "\u{2705}" } else { "\u{274c}" };
+    let brain = if trial.chose_optimal { " \u{1F9E0}" } else { "" };
+    format!(
+        "\n**Trial {}** - {}\n{} {} | {} rolled {} vs {}{}\n*{}*\n",
+        index + 1,
+        trial.situation,
+        pass_str,
+        trial.stat_used.label(),
+        player_name,
+        trial.format_player_roll(),
+        trial.trial_roll,
+        brain,
+        markdown_italic_line(&trial.narrative),
+    )
+}
+
+fn format_completion_preamble(player_name: &str, result: &QuestResult, player: &Player) -> String {
+    let mut out = format_dm_header(player);
+    out.push_str(&format_dm_quest(result));
     for (i, trial) in result.trials.iter().enumerate() {
-        let pass_str = if trial.passed { "\u{2705}" } else { "\u{274c}" };
-        let brain = if trial.chose_optimal { " \u{1F9E0}" } else { "" };
-        out.push_str(&format!(
-            "\n**Trial {}** - {}\n{} {} | {} rolled {} vs {}{}\n*{}*\n",
-            i + 1,
-            trial.situation,
-            pass_str,
-            trial.stat_used.label(),
-            player_name,
-            trial.format_player_roll(),
-            trial.trial_roll,
-            brain,
-            markdown_italic_line(&trial.narrative),
-        ));
+        out.push_str(&format_dm_trial(player_name, trial, i));
     }
     out
+}
+
+fn pack_dm_segments(segments: Vec<String>, limit: usize) -> Vec<String> {
+    let mut messages: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for segment in segments {
+        if segment.is_empty() {
+            continue;
+        }
+        if current.is_empty() {
+            if segment.len() <= limit {
+                current = segment;
+            } else {
+                messages.push(segment);
+            }
+            continue;
+        }
+
+        let combined = format!("{current}{segment}");
+        if combined.len() <= limit {
+            current = combined;
+        } else {
+            messages.push(current);
+            if segment.len() <= limit {
+                current = segment;
+            } else {
+                messages.push(segment);
+                current = String::new();
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        messages.push(current);
+    }
+
+    messages
 }
 
 fn format_completion_footer(

@@ -1,7 +1,10 @@
 use std::sync::{
     atomic::AtomicUsize,
-    Arc,
+    Arc, RwLock,
 };
+use std::collections::HashSet;
+
+use poise::serenity_prelude::UserId;
 
 use crate::game::domain::board::Board;
 use crate::game::persistence::item_registry::ItemRegistry;
@@ -25,6 +28,8 @@ pub struct Data {
     pub max_non_bot_messages: usize,
     pub generation_queue: tokio::sync::mpsc::UnboundedSender<GenerationJob>,
     pub pending_quests: Arc<AtomicUsize>,
+    pub guild_id: u64,
+    pub last_mobile: Arc<RwLock<HashSet<UserId>>>,
 }
 
 pub type Error = anyhow::Error;
