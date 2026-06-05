@@ -104,6 +104,7 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
         ctx.data().max_jobs,
         ctx.data().bot_user_id,
         ctx.data().max_non_bot_messages,
+        &ctx.data().gravestone_generator,
     )
     .await?;
     ctx.say("ok").await?;

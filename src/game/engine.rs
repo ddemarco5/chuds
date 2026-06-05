@@ -16,6 +16,7 @@ use crate::game::mechanics::simulation::{effective_stats, play_quest};
 use crate::game::persistence::storage;
 
 /// Context about what killed a chud, used for epitaph generation.
+#[derive(Clone)]
 pub struct DeathContext {
     pub trial: String,
     pub outcome: String,

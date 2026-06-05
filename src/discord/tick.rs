@@ -12,6 +12,8 @@ use crate::game::persistence::message_cache::ActivityLogKind;
 use crate::discord::formatting;
 use crate::discord::report_dm::{self, LastMobileUsers};
 use crate::game::domain::board::Board;
+use crate::game::engine;
+use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::persistence::storage;
@@ -31,6 +33,7 @@ pub async fn execute_tick(
     max_jobs: usize,
     bot_user_id: u64,
     max_non_bot_messages: usize,
+    gravestone_generator: &GravestoneGenerator,
 ) -> anyhow::Result<()> {
     cleanup_non_bot_messages(http, channel_id, bot_user_id, max_non_bot_messages).await;
 
@@ -108,6 +111,32 @@ pub async fn execute_tick(
         };
         let return_msg = chud_msg!(return_key, first_name);
         append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &return_msg).await;
+
+        if qr.died {
+            if let Some(ctx) = &qr.death_ctx {
+                let mut graveyard = storage::load_graveyard()?;
+                let mut starting_benefits = storage::load_starting_benefits()?;
+                let kill = engine::kill_chud(
+                    qr.discord_user_id,
+                    ctx,
+                    &mut graveyard,
+                    &mut starting_benefits,
+                    &mut *registry,
+                    gravestone_generator,
+                )
+                .await?;
+                report_dm::send_death_dm(
+                    http,
+                    cache,
+                    serenity::GuildId::new(guild_id),
+                    last_mobile,
+                    &kill,
+                    Some(&qr.summary),
+                )
+                .await;
+                continue;
+            }
+        }
 
         report_dm::send_job_completion_dm(
             http,

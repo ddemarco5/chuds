@@ -1,8 +1,8 @@
 use crate::game::domain::board::{Board, BoardQuest};
-use crate::game::engine;
+use crate::game::engine::{self, DeathContext};
 use crate::game::persistence::storage;
 use crate::game::tick::{QuestResolved, TickContext, TickOutcome};
-use crate::game::tuneable_rolls::{injury_chance, roll_injury_outcome};
+use crate::game::tuneable_rolls::{death_chance, injury_chance, roll_death, roll_injury_outcome};
 
 pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::Result<()> {
     let due = ctx.board.tick_and_take_due();
@@ -96,23 +96,45 @@ fn resolve_quest(
         "quest resolved and player saved"
     );
 
-    // Death roll (future): check for lethal outcome here, after quest resolution.
+    let mut died = false;
+    let mut death_ctx = None;
+
     let hospitalized = !passed
-        && result.trials.last().and_then(|t| {
+        && result.trials.last().map(|t| {
+            let margin = t.margin;
             let mut rng = rand::thread_rng();
-            roll_injury_outcome(t.margin, &mut rng).map(|ticks| {
-                let admitted = hospital.admit(discord_user_id, player_name.clone(), ticks).is_some();
-                if admitted {
-                    tracing::info!(
-                        discord_user_id,
-                        margin = t.margin,
-                        injury_chance = injury_chance(t.margin),
-                        ticks,
-                        "chud injured and admitted to hospital"
-                    );
-                }
-                admitted
-            })
+
+            if roll_death(margin, &mut rng) {
+                died = true;
+                death_ctx = Some(DeathContext {
+                    trial: t.situation.clone(),
+                    outcome: t.narrative.clone(),
+                });
+                tracing::info!(
+                    discord_user_id,
+                    margin,
+                    death_chance = death_chance(margin),
+                    "chud died on quest failure"
+                );
+                return false;
+            }
+
+            roll_injury_outcome(margin, &mut rng)
+                .map(|ticks| {
+                    let admitted =
+                        hospital.admit(discord_user_id, player_name.clone(), ticks).is_some();
+                    if admitted {
+                        tracing::info!(
+                            discord_user_id,
+                            margin,
+                            injury_chance = injury_chance(margin),
+                            ticks,
+                            "chud injured and admitted to hospital"
+                        );
+                    }
+                    admitted
+                })
+                .unwrap_or(false)
         })
         .unwrap_or(false);
 
@@ -135,7 +157,8 @@ fn resolve_quest(
         level_up,
         reward,
         hospitalized,
-        died: false,
+        died,
+        death_ctx,
         item_awarded,
         item_award_disposition,
     }))

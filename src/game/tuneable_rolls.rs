@@ -82,6 +82,20 @@ const INJURY_CHANCE_PER_MARGIN: f64 = 0.10;
 /// Raise for wider stay-length swings; lower to keep days close to abs(margin).
 const INJURY_HOSPITAL_STDDEV: f64 = 1.0;
 
+// ── Death checks ──────────────────────────────────────────────────────────
+/// First margin that can roll for death. Margins above this (e.g. -5) never kill.
+const DEATH_MARGIN_THRESHOLD: i16 = -6;
+/// Margins at or beyond this are always lethal.
+const DEATH_MARGIN_GUARANTEED: i16 = -10;
+/// Death chance at margin -6. Raise to make near-catastrophic failures deadlier.
+const DEATH_CHANCE_AT_MARGIN_6: f64 = 0.01;
+/// Death chance at margin -7.
+const DEATH_CHANCE_AT_MARGIN_7: f64 = 0.05;
+/// Death chance at margin -8.
+const DEATH_CHANCE_AT_MARGIN_8: f64 = 0.20;
+/// Death chance at margin -9.
+const DEATH_CHANCE_AT_MARGIN_9: f64 = 0.70;
+
 // ── Chud creation ─────────────────────────────────────────────────────────────
 
 /// Each starting stat is rolled in 1..=CHUD_STAT_ROLL_MAX, then trimmed until sum ≤ cap.
@@ -335,6 +349,27 @@ pub fn roll_injury_outcome(margin: i16, rng: &mut impl Rng) -> Option<u32> {
     } else {
         Some(roll_hospital_ticks(margin, rng))
     }
+}
+
+pub fn death_chance(margin: i16) -> f64 {
+    if margin > DEATH_MARGIN_THRESHOLD {
+        0.0
+    } else if margin <= DEATH_MARGIN_GUARANTEED {
+        1.0
+    } else {
+        match margin {
+            -6 => DEATH_CHANCE_AT_MARGIN_6,
+            -7 => DEATH_CHANCE_AT_MARGIN_7,
+            -8 => DEATH_CHANCE_AT_MARGIN_8,
+            -9 => DEATH_CHANCE_AT_MARGIN_9,
+            _ => 1.0,
+        }
+    }
+}
+
+pub fn roll_death(margin: i16, rng: &mut impl Rng) -> bool {
+    let chance = death_chance(margin);
+    chance > 0.0 && rng.gen_bool(chance)
 }
 
 // ── Chud creation rolls ───────────────────────────────────────────────────────

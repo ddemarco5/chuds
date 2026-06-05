@@ -265,6 +265,7 @@ async fn main() -> anyhow::Result<()> {
                 let tick_cache = Arc::clone(&ctx.cache);
                 let tick_last_mobile = Arc::clone(&last_mobile);
                 let tick_activity_log = Arc::clone(&activity_log);
+                let tick_gravestone = Arc::clone(&gravestone_generator);
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
                     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -285,6 +286,7 @@ async fn main() -> anyhow::Result<()> {
                             max_jobs,
                             bot_user_id,
                             max_non_bot_messages,
+                            &tick_gravestone,
                         )
                         .await
                         {

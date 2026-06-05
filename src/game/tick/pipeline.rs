@@ -33,6 +33,7 @@ pub struct QuestResolved {
     pub reward: u32,
     pub hospitalized: bool,
     pub died: bool,
+    pub death_ctx: Option<crate::game::engine::DeathContext>,
     pub item_awarded: Option<Item>,
     pub item_award_disposition: Option<crate::game::engine::ItemAwardDisposition>,
 }
