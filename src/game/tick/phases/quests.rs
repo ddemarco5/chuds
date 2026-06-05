@@ -2,6 +2,7 @@ use crate::game::domain::board::{Board, BoardQuest};
 use crate::game::engine;
 use crate::game::persistence::storage;
 use crate::game::tick::{QuestResolved, TickContext, TickOutcome};
+use crate::game::tuneable_rolls::{injury_chance, roll_injury_outcome};
 
 pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::Result<()> {
     let due = ctx.board.tick_and_take_due();
@@ -96,15 +97,23 @@ fn resolve_quest(
     );
 
     let hospitalized = !passed
-        && result.trials.last().map_or(false, |t| t.margin < -2)
-        && {
-            let ticks = result.trials.last().unwrap().margin.abs() as u32;
-            let admitted = hospital.admit(discord_user_id, player_name.clone(), ticks).is_some();
-            if admitted {
-                tracing::info!(discord_user_id, ticks, "chud admitted to hospital");
-            }
-            admitted
-        };
+        && result.trials.last().and_then(|t| {
+            let mut rng = rand::thread_rng();
+            roll_injury_outcome(t.margin, &mut rng).map(|ticks| {
+                let admitted = hospital.admit(discord_user_id, player_name.clone(), ticks).is_some();
+                if admitted {
+                    tracing::info!(
+                        discord_user_id,
+                        margin = t.margin,
+                        injury_chance = injury_chance(t.margin),
+                        ticks,
+                        "chud injured and admitted to hospital"
+                    );
+                }
+                admitted
+            })
+        })
+        .unwrap_or(false);
 
     if !passed {
         board.quests.push(BoardQuest {

@@ -75,6 +75,12 @@ const ITEM_VALUE_JITTER_STDDEV: f64 = 0.15;
 const HEAL_PRICE_PER_TICK_BASE: f64 = 5.0;
 /// Price jitter: multiplier sampled from Normal(mean=1.0, stddev=HEAL_PRICE_JITTER_STDDEV).
 const HEAL_PRICE_JITTER_STDDEV: f64 = 0.20;
+/// Injury chance per point of negative margin (0.10 → margin -3 = 30%).
+/// Raise to hospitalize more often; lower to make injuries rarer at small margins.
+const INJURY_CHANCE_PER_MARGIN: f64 = 0.10;
+/// Stddev for hospital stay length: days ~ Normal(abs(margin), σ), rounded, min 1.
+/// Raise for wider stay-length swings; lower to keep days close to abs(margin).
+const INJURY_HOSPITAL_STDDEV: f64 = 1.0;
 
 // ── Chud creation ─────────────────────────────────────────────────────────────
 
@@ -303,6 +309,32 @@ pub fn roll_heal_price(ticks: u32, rng: &mut impl Rng) -> u32 {
     let base_price = HEAL_PRICE_PER_TICK_BASE * ticks as f64;
     let multiplier = sample_unit_jitter(rng, HEAL_PRICE_JITTER_STDDEV);
     (base_price * multiplier).round() as u32
+}
+
+pub fn injury_chance(margin: i16) -> f64 {
+    if margin >= 0 {
+        0.0
+    } else {
+        (margin.unsigned_abs() as f64 * INJURY_CHANCE_PER_MARGIN).min(1.0)
+    }
+}
+
+pub fn roll_injury(margin: i16, rng: &mut impl Rng) -> bool {
+    rng.gen_bool(injury_chance(margin))
+}
+
+pub fn roll_hospital_ticks(margin: i16, rng: &mut impl Rng) -> u32 {
+    let mean = margin.unsigned_abs() as f64;
+    sample_normal_rounded(rng, mean, INJURY_HOSPITAL_STDDEV, 1) as u32
+}
+
+/// Returns `Some(ticks)` if the injury roll succeeds, else `None`.
+pub fn roll_injury_outcome(margin: i16, rng: &mut impl Rng) -> Option<u32> {
+    if margin >= 0 || !roll_injury(margin, rng) {
+        None
+    } else {
+        Some(roll_hospital_ticks(margin, rng))
+    }
 }
 
 // ── Chud creation rolls ───────────────────────────────────────────────────────
