@@ -71,13 +71,13 @@ fn resolve_quest(
     }
 
     let mut item_awarded = None;
-    let mut item_auto_sold_gold = None;
+    let mut item_award_disposition = None;
     if passed {
         if let Some(item) = result.pending_item.take() {
             match engine::award_pending_item(item_registry, &mut player, item) {
-                Ok((item, sold)) => {
+                Ok((item, disposition)) => {
                     item_awarded = Some(item);
-                    item_auto_sold_gold = sold;
+                    item_award_disposition = Some(disposition);
                 }
                 Err(e) => {
                     tracing::warn!(err = %e, player = %player_name, "could not award quest item");
@@ -126,6 +126,6 @@ fn resolve_quest(
         reward,
         hospitalized,
         item_awarded,
-        item_auto_sold_gold,
+        item_award_disposition,
     }))
 }

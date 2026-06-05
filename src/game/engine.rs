@@ -212,13 +212,19 @@ pub fn assign_chud_to_quest(
     })
 }
 
-/// Register a quest item. Stashes it when there is room; otherwise auto-sells for `item.value`.
-/// Returns the item and, if sold, the gold credited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemAwardDisposition {
+    Stashed,
+    Equipped,
+    Sold(u32),
+}
+
+/// Register a quest item: stash when there is room, else equip if the slot is empty, else sell.
 pub fn award_pending_item(
     registry: &mut ItemRegistry,
     player: &mut Player,
     item: crate::game::domain::item::Item,
-) -> anyhow::Result<(crate::game::domain::item::Item, Option<u32>)> {
+) -> anyhow::Result<(crate::game::domain::item::Item, ItemAwardDisposition)> {
     let id = registry.add_item(item);
     let awarded = registry
         .get(id)
@@ -229,7 +235,24 @@ pub fn award_pending_item(
         player.stash.push(id)?;
         storage::save_player(player)?;
         storage::save_item_registry(registry)?;
-        return Ok((awarded, None));
+        return Ok((awarded, ItemAwardDisposition::Stashed));
+    }
+
+    if let Some(slot) = player
+        .chud
+        .equipment
+        .empty_slot_for_item_type(awarded.item_type)
+    {
+        *player.chud.equipment.slot_mut(slot) = Some(id);
+        storage::save_player(player)?;
+        storage::save_item_registry(registry)?;
+        tracing::info!(
+            player = %player.name,
+            item = %awarded.name,
+            slot = %slot.label(),
+            "stash full, auto-equipped quest item"
+        );
+        return Ok((awarded, ItemAwardDisposition::Equipped));
     }
 
     let gold = awarded.value;
@@ -243,9 +266,9 @@ pub fn award_pending_item(
         player = %player.name,
         item = %awarded.name,
         gold,
-        "stash full, auto-sold quest item"
+        "stash full and no empty slot, auto-sold quest item"
     );
-    Ok((awarded, Some(gold)))
+    Ok((awarded, ItemAwardDisposition::Sold(gold)))
 }
 
 fn equip_item_id(player: &mut Player, item_id: u32, item_type: ItemType) -> Option<u32> {

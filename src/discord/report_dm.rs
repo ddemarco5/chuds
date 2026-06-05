@@ -36,7 +36,7 @@ pub async fn send_job_completion_dm(
         &qr.level_up,
         qr.reward,
         qr.item_awarded.as_ref(),
-        qr.item_auto_sold_gold,
+        qr.item_award_disposition,
         qr.hospitalized,
     );
     let dm_plain = content.plain();

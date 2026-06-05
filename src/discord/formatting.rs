@@ -36,7 +36,7 @@ pub fn build_dm_completion_content(
     level_up: &crate::game::domain::player::LevelUp,
     reward: u32,
     item_awarded: Option<&Item>,
-    item_auto_sold_gold: Option<u32>,
+    item_award_disposition: Option<crate::game::engine::ItemAwardDisposition>,
     hospitalized: bool,
 ) -> DmCompletionContent {
     let segments = build_dm_preamble_segments(player_name, result, player);
@@ -49,7 +49,7 @@ pub fn build_dm_completion_content(
         result.passed,
         reward,
         item_awarded,
-        item_auto_sold_gold,
+        item_award_disposition,
     );
     let hospital_msg = hospitalized.then(|| chud_msg!("dm_hospitalized", player_name));
     let summary = format_completion_outcome_box(
@@ -196,7 +196,7 @@ fn format_completion_footer(
     passed: bool,
     reward: u32,
     item_awarded: Option<&Item>,
-    item_auto_sold_gold: Option<u32>,
+    item_award_disposition: Option<crate::game::engine::ItemAwardDisposition>,
 ) -> String {
     let mut out = String::new();
     if passed && reward > 0 {
@@ -211,22 +211,34 @@ fn format_completion_footer(
         if !out.is_empty() {
             out.push('\n');
         }
-        if let Some(gold) = item_auto_sold_gold {
-            out.push_str(&format!(
-                "**Stash full — sold {} for ${gold}:** ({}{subtype})\nStats: {}\n_{}_",
-                item.name,
-                item_type_label(item.item_type),
-                item.stats.format_triplet(),
-                item.description,
-            ));
-        } else {
-            out.push_str(&format!(
-                "**Item stashed:** {} ({}{subtype})\nStats: {}\n_{}_\nUse /gear to equip.",
-                item.name,
-                item_type_label(item.item_type),
-                item.stats.format_triplet(),
-                item.description,
-            ));
+        match item_award_disposition {
+            Some(crate::game::engine::ItemAwardDisposition::Sold(gold)) => {
+                out.push_str(&format!(
+                    "**Stash full — sold {} for ${gold}:** ({}{subtype})\nStats: {}\n_{}_",
+                    item.name,
+                    item_type_label(item.item_type),
+                    item.stats.format_triplet(),
+                    item.description,
+                ));
+            }
+            Some(crate::game::engine::ItemAwardDisposition::Equipped) => {
+                out.push_str(&format!(
+                    "**Stash full — auto-equipped:** {} ({}{subtype})\nStats: {}\n_{}_",
+                    item.name,
+                    item_type_label(item.item_type),
+                    item.stats.format_triplet(),
+                    item.description,
+                ));
+            }
+            _ => {
+                out.push_str(&format!(
+                    "**Item stashed:** {} ({}{subtype})\nStats: {}\n_{}_\nUse `/gear` to equip.",
+                    item.name,
+                    item_type_label(item.item_type),
+                    item.stats.format_triplet(),
+                    item.description,
+                ));
+            }
         }
     }
     if level_up.any() {

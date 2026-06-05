@@ -258,6 +258,23 @@ impl ChudEquipment {
         }
     }
 
+    /// First empty slot for this item type, if any (misc uses misc0 then misc1).
+    pub fn empty_slot_for_item_type(&self, item_type: ItemType) -> Option<EquipmentSlot> {
+        match item_type {
+            ItemType::Gear => self.gear.is_none().then_some(EquipmentSlot::Gear),
+            ItemType::Weapon => self.weapon.is_none().then_some(EquipmentSlot::Weapon),
+            ItemType::Misc => {
+                if self.misc[0].is_none() {
+                    Some(EquipmentSlot::Misc0)
+                } else if self.misc[1].is_none() {
+                    Some(EquipmentSlot::Misc1)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     /// Pick the equipment slot for an item type (misc fills first empty slot, else overwrites misc[0]).
     pub fn slot_for_item_type(&mut self, item_type: ItemType) -> &mut Option<u32> {
         match item_type {
