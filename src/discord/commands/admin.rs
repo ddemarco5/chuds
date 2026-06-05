@@ -63,6 +63,21 @@ pub async fn delete_cm(ctx: Context<'_>, discord_user_id: String) -> Result<(), 
 }
 
 #[poise::command(slash_command)]
+pub async fn admin_spawn_merchant(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let mut merchant = ctx.data().merchant.lock().await;
+    if merchant.set_spawn_flag().is_ok() {
+        ctx.say("ok, merchant will appear next tick").await?;
+    } else {
+        ctx.say("a merchant is already visiting").await?;
+    }
+    Ok(())
+}
+
+#[poise::command(slash_command)]
 pub async fn admin_redraw(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     if !admin_guard(ctx).await {
@@ -71,11 +86,13 @@ pub async fn admin_redraw(ctx: Context<'_>) -> Result<(), Error> {
     let http = &ctx.serenity_context().http;
     let mut board = ctx.data().board.lock().await;
     let mut queue = ctx.data().job_queue.lock().await;
+    let merchant = ctx.data().merchant.lock().await;
     recover_persistent_board_messages(
         http,
         ctx.data().channel_id,
         &mut *board,
         &mut *queue,
+        &merchant,
         ctx.data().bot_user_id,
         ctx.data().max_non_bot_messages,
         ctx.data().max_jobs,
@@ -105,6 +122,7 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
         ctx.data().bot_user_id,
         ctx.data().max_non_bot_messages,
         &ctx.data().gravestone_generator,
+        &ctx.data().merchant,
     )
     .await?;
     ctx.say("ok").await?;
@@ -190,6 +208,8 @@ pub async fn save(ctx: Context<'_>) -> Result<(), Error> {
     let board = ctx.data().board.lock().await;
     let registry = ctx.data().item_registry.lock().await;
     engine::save_all(&*board, &*registry)?;
+    let merchant = ctx.data().merchant.lock().await;
+    storage::save_guild_hall(&merchant)?;
     crate::game::persistence::llm_memory::save_all_llm_memory(
         &ctx.data().generator,
         &ctx.data().item_generator,
@@ -290,11 +310,14 @@ pub async fn load(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     }
     let (new_board, new_registry) = engine::load_all()?;
+    let guild_hall = storage::load_guild_hall()?;
     let mut board = ctx.data().board.lock().await;
     *board = new_board;
     let mut registry = ctx.data().item_registry.lock().await;
     *registry = new_registry;
-    tracing::info!("board and item registry reloaded from disk");
+    let mut merchant = ctx.data().merchant.lock().await;
+    *merchant = guild_hall.merchant;
+    tracing::info!("board, item registry, and guild hall reloaded from disk");
     ctx.say("ok").await?;
     Ok(())
 }

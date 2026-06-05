@@ -13,6 +13,7 @@ pub const FLAG_EPHEMERAL: u64 = 1 << 6;
 
 const TYPE_ACTION_ROW: u8 = 1;
 const TYPE_BUTTON: u8 = 2;
+const TYPE_STRING_SELECT: u8 = 3;
 const TYPE_TEXT_DISPLAY: u8 = 10;
 const TYPE_SEPARATOR: u8 = 14;
 const TYPE_CONTAINER: u8 = 17;
@@ -106,10 +107,17 @@ impl Separator {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum ActionRowChild {
+    Button(Button),
+    StringSelect(StringSelect),
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ActionRow {
     #[serde(rename = "type")]
     kind: u8,
-    components: Vec<Button>,
+    components: Vec<ActionRowChild>,
 }
 
 impl ActionRow {
@@ -120,8 +128,63 @@ impl ActionRow {
     pub fn buttons(buttons: Vec<Button>) -> Self {
         Self {
             kind: TYPE_ACTION_ROW,
-            components: buttons,
+            components: buttons.into_iter().map(ActionRowChild::Button).collect(),
         }
+    }
+
+    pub fn string_select(select: StringSelect) -> Self {
+        Self {
+            kind: TYPE_ACTION_ROW,
+            components: vec![ActionRowChild::StringSelect(select)],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StringSelect {
+    #[serde(rename = "type")]
+    kind: u8,
+    custom_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    placeholder: Option<String>,
+    options: Vec<SelectOption>,
+}
+
+impl StringSelect {
+    pub fn new(
+        custom_id: impl Into<String>,
+        placeholder: impl Into<String>,
+        options: Vec<SelectOption>,
+    ) -> Self {
+        Self {
+            kind: TYPE_STRING_SELECT,
+            custom_id: custom_id.into(),
+            placeholder: Some(placeholder.into()),
+            options,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SelectOption {
+    label: String,
+    value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default: Option<bool>,
+}
+
+impl SelectOption {
+    pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            value: value.into(),
+            default: None,
+        }
+    }
+
+    pub fn with_default(mut self, is_default: bool) -> Self {
+        self.default = Some(is_default);
+        self
     }
 }
 
@@ -167,7 +230,21 @@ impl Button {
     }
 }
 
-/// Wrapper for `UPDATE_MESSAGE` interaction responses.
+/// Wrapper for `CHANNEL_MESSAGE_WITH_SOURCE` interaction responses (new ephemeral message).
+#[derive(Debug, Clone, Serialize)]
+pub struct InteractionCreateResponse {
+    #[serde(rename = "type")]
+    kind: u8,
+    data: ComponentsV2Message,
+}
+
+impl InteractionCreateResponse {
+    pub fn ephemeral(data: ComponentsV2Message) -> Self {
+        Self { kind: 4, data }
+    }
+}
+
+/// Wrapper for `UPDATE_MESSAGE` interaction responses (edit the triggering message).
 #[derive(Debug, Clone, Serialize)]
 pub struct InteractionUpdateResponse {
     #[serde(rename = "type")]

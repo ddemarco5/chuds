@@ -90,6 +90,12 @@ pub struct MessageCache {
     /// Cached random header for the hospital roster section (cleared when the section is empty).
     #[serde(default)]
     pub status_hospital_header: Option<String>,
+    /// Discord message ID of the persistent merchant area below guild status.
+    #[serde(default)]
+    pub merchant_message_id: Option<u64>,
+    /// Last content fingerprint sent to the merchant message.
+    #[serde(default)]
+    pub merchant_content: String,
     /// Discord message ID of the persistent activity log below the board.
     #[serde(default)]
     pub activity_log_message_id: Option<u64>,

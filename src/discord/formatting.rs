@@ -337,6 +337,22 @@ pub fn build_graveyard_components(entries: &[GraveyardEntry]) -> ComponentsV2Mes
     message
 }
 
+pub fn format_item_block(item: &Item) -> String {
+    let subtype = if item.subtype.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", item.subtype)
+    };
+    format!(
+        "**{}**{} [{}] - ${}\n{}",
+        item.name,
+        subtype,
+        item.stats.format_triplet(),
+        item.value,
+        item.description,
+    )
+}
+
 fn item_type_label(item_type: ItemType) -> &'static str {
     match item_type {
         ItemType::Gear => "gear",

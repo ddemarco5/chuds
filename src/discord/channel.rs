@@ -223,6 +223,10 @@ pub async fn validate_cached_messages_exist(
         message_ids.push(("status", id));
     }
 
+    if let Some(id) = cache.merchant_message_id {
+        message_ids.push(("merchant", id));
+    }
+
     if let Some(id) = cache.activity_log_message_id {
         message_ids.push(("activity_log", id));
     }

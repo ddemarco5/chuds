@@ -1,5 +1,6 @@
 pub mod busy;
 pub mod guild_status;
+pub mod merchant;
 pub mod domain;
 pub mod engine;
 pub mod generation;

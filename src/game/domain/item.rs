@@ -133,6 +133,7 @@ pub fn format_roll_breakdown(modifier: i16, floor_applied: bool, final_roll: u8)
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Item {
+    #[serde(default)]
     pub id: u32,
     pub name: String,
     pub item_type: ItemType,

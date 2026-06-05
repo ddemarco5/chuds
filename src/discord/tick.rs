@@ -17,6 +17,8 @@ use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::persistence::storage;
+use crate::discord::merchant_ui::update_merchant_message;
+use crate::game::merchant::MerchantState;
 use crate::game::tick::{run_tick, TickContext};
 
 /// Apply one game tick and post results to Discord.
@@ -34,6 +36,7 @@ pub async fn execute_tick(
     bot_user_id: u64,
     max_non_bot_messages: usize,
     gravestone_generator: &GravestoneGenerator,
+    merchant: &tokio::sync::Mutex<MerchantState>,
 ) -> anyhow::Result<()> {
     cleanup_non_bot_messages(http, channel_id, bot_user_id, max_non_bot_messages).await;
 
@@ -212,5 +215,15 @@ pub async fn execute_tick(
         storage::save_board(&*board)?;
     }
     board_ui::update_board_message(http, channel_id, &mut *board, max_jobs, None).await?;
+
+    {
+        let mut merchant_guard = merchant.lock().await;
+        let force = merchant_guard.spawn_next_tick;
+        merchant_guard.spawn_next_tick = false;
+        merchant_guard.advance_tick(force);
+        storage::save_guild_hall(&merchant_guard)?;
+        update_merchant_message(http, channel_id, &merchant_guard).await?;
+    }
+
     Ok(())
 }

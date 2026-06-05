@@ -1,5 +1,6 @@
 use crate::game::domain::board::Board;
 use crate::game::domain::graveyard::Graveyard;
+use crate::game::domain::guild_hall::GuildHall;
 use crate::game::domain::hospital::Hospital;
 use crate::game::domain::starting_benefits::StartingBenefits;
 use crate::game::persistence::item_registry::ItemRegistry;
@@ -14,6 +15,7 @@ pub struct GameState {
     pub starting_benefits: StartingBenefits,
     pub job_queue: JobQueue,
     pub item_registry: ItemRegistry,
+    pub guild_hall: GuildHall,
 }
 
 impl GameState {
@@ -25,6 +27,7 @@ impl GameState {
             starting_benefits: storage::load_starting_benefits()?,
             job_queue: storage::load_job_queue()?,
             item_registry: storage::load_item_registry()?,
+            guild_hall: storage::load_guild_hall()?,
         })
     }
 
@@ -35,6 +38,7 @@ impl GameState {
         storage::save_starting_benefits(&self.starting_benefits)?;
         storage::save_job_queue(&self.job_queue)?;
         storage::save_item_registry(&self.item_registry)?;
+        storage::save_guild_hall_full(&self.guild_hall)?;
         Ok(())
     }
 }

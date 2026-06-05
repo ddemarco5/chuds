@@ -1,0 +1,99 @@
+items:
+  - name: Lucky Bottle Cap
+    item_type: misc
+    subtype: trinket
+    stats:
+      strength: "-"
+      smarts: "-"
+      stealth: "+1"
+    rarity: common
+    description: A bent bottle cap on a frayed string. It rattles when you move and absolutely will not stop doing that.
+    value: 40
+
+  - name: Splintered Club
+    item_type: weapon
+    subtype: ""
+    stats:
+      strength: "1"
+      smarts: "-"
+      stealth: "-"
+    rarity: common
+    description: A heavy stick with nails sticking out at angles that suggest no one planned this. It works if you do not think about it too hard.
+    value: 40
+
+  - name: Scuffed Trail Boots
+    item_type: gear
+    subtype: feet
+    stats:
+      strength: "+1"
+      smarts: "-"
+      stealth: "+1"
+    rarity: uncommon
+    description: Thick-soled boots held together by hope and a second pair of laces. Your feet will thank you eventually.
+    value: 63
+
+  - name: Dented Tin Helm
+    item_type: gear
+    subtype: helmet
+    stats:
+      strength: "-"
+      smarts: "2"
+      stealth: "-"
+    rarity: uncommon
+    description: A shallow metal bowl with a dent shaped suspiciously like a previous owner. Offers modest protection and major humility.
+    value: 63
+
+  - name: Rusty Cleaver
+    item_type: weapon
+    subtype: ""
+    stats:
+      strength: "+2"
+      smarts: "-"
+      stealth: "-"
+    rarity: common
+    description: A kitchen cleaver that has seen things no cleaver should see. The edge is uneven but enthusiastic.
+    value: 63
+
+  - name: Patchwork Jerkin
+    item_type: gear
+    subtype: chest
+    stats:
+      strength: "+1"
+      smarts: "+1"
+      stealth: "+1"
+    rarity: uncommon
+    description: Layers of stitched leather and canvas that do not match and do not care. Warm, ugly, and weirdly dependable.
+    value: 100
+
+  - name: Guild Hall Token
+    item_type: misc
+    subtype: trinket
+    stats:
+      strength: "+1"
+      smarts: "+2"
+      stealth: "-"
+    rarity: common
+    description: A tarnished brass token from a guild you have never heard of. It hums faintly when someone nearby is about to do something stupid.
+    value: 100
+
+  - name: Notched Short Sword
+    item_type: weapon
+    subtype: ""
+    stats:
+      strength: "-"
+      smarts: "+3"
+      stealth: "-"
+    rarity: common
+    description: A compact blade with honest nicks along the edge. Every scratch is a story you probably do not want to hear.
+    value: 100
+
+  - name: Reinforced Breeches
+    item_type: gear
+    subtype: legs
+    stats:
+      strength: "+2"
+      smarts: "-"
+      stealth: "+2"
+    rarity: uncommon
+    description: Thick padded trousers with extra stitching at the knees. Built for crawling, climbing, and regrettable decisions.
+    value: 158

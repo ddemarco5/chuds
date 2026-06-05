@@ -5,6 +5,8 @@ use anyhow::Context;
 use tokio::sync::{Mutex, MutexGuard};
 
 use crate::game::domain::board::Board;
+use crate::game::domain::guild_hall::GuildHall;
+use crate::game::merchant::MerchantState;
 use crate::game::domain::graveyard::Graveyard;
 use crate::game::domain::hospital::Hospital;
 use crate::game::domain::starting_benefits::StartingBenefits;
@@ -23,6 +25,7 @@ const STARTING_BENEFITS_PATH: &str = "data/starting_benefits.yaml";
 const MESSAGE_CACHE_PATH: &str = "data/message_cache.yaml";
 const CHUDMASTERS_PATH: &str = "data/chudmasters.yaml";
 const ITEM_REGISTRY_PATH: &str = "data/item_registry.yaml";
+const GUILD_HALL_PATH: &str = "data/guild_hall.yaml";
 
 static MESSAGE_CACHE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -225,6 +228,29 @@ pub fn load_item_registry() -> anyhow::Result<ItemRegistry> {
         save_item_registry(&registry)?;
     }
     Ok(registry)
+}
+
+/// Persist guild-hall state to `data/guild_hall.yaml`.
+pub fn save_guild_hall(merchant: &MerchantState) -> anyhow::Result<()> {
+    save_guild_hall_full(&GuildHall {
+        merchant: merchant.clone(),
+    })
+}
+
+/// Persist guild-hall state to `data/guild_hall.yaml`.
+pub fn save_guild_hall_full(hall: &GuildHall) -> anyhow::Result<()> {
+    std::fs::create_dir_all("data")?;
+    let yaml = serde_yaml::to_string(hall).context("serializing guild hall")?;
+    std::fs::write(GUILD_HALL_PATH, yaml).context("writing guild hall")
+}
+
+/// Load guild-hall state from disk, or return empty if no file exists.
+pub fn load_guild_hall() -> anyhow::Result<GuildHall> {
+    if !Path::new(GUILD_HALL_PATH).exists() {
+        return Ok(GuildHall::default());
+    }
+    let yaml = std::fs::read_to_string(GUILD_HALL_PATH).context("reading guild hall")?;
+    serde_yaml::from_str(&yaml).context("parsing guild hall")
 }
 
 /// Persist the item registry to `data/item_registry.yaml`.

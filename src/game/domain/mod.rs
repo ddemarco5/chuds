@@ -1,5 +1,6 @@
 pub mod board;
 pub mod graveyard;
+pub mod guild_hall;
 pub mod hospital;
 pub mod item;
 pub mod job_queue;

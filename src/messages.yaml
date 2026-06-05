@@ -242,3 +242,13 @@ graveyard_empty:
   - "The graveyard is empty. For now."
   - "No gravestones yet. Lucky you."
   - "Nothing here but weeds and potential."
+
+merchant_names:
+  - "Old Toothless Pete"
+  - "Maggie the Miser"
+  - "Crusty Cornelius"
+  - "Wheezy Wilma"
+  - "Grizzled Gord"
+  - "Nell with the Bell"
+  - "Slimy Sal"
+  - "Barney the Bargain Bin"

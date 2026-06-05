@@ -6,6 +6,7 @@ pub mod components_v2;
 pub mod context;
 pub mod formatting;
 pub mod gear_ui;
+pub mod merchant_ui;
 pub mod report_dm;
 pub mod tick;
 
@@ -14,6 +15,9 @@ pub use board_ui::{
 };
 pub use buttons::{handle_heal_button, handle_scout_button, handle_take_button};
 pub use gear_ui::handle_gear_button;
+pub use merchant_ui::{
+    handle_merchant_shop_button, handle_shop_buy, handle_shop_select, update_merchant_message,
+};
 pub use channel::{
     append_activity_log, append_activity_log_deferred, cleanup_non_bot_messages,
     delete_all_messages_in_channel, sync_activity_log_now, validate_cached_messages_exist,

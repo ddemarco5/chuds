@@ -2,7 +2,8 @@ use poise::serenity_prelude::{self as serenity, ComponentInteraction, Http};
 
 use crate::game::busy::BusyReason;
 use crate::game::guild_status;
-use crate::game::domain::item::{EquipmentSlot, Item};
+use crate::discord::formatting::format_item_block;
+use crate::game::domain::item::EquipmentSlot;
 use crate::game::domain::player::Player;
 use crate::game::domain::stash::STASH_CAPACITY;
 use crate::game::engine;
@@ -15,23 +16,7 @@ use super::components_v2::{
 };
 use super::context::Data;
 
-fn format_item_block(item: &Item) -> String {
-    let subtype = if item.subtype.is_empty() {
-        String::new()
-    } else {
-        format!(" ({})", item.subtype)
-    };
-    format!(
-        "**{}**{} [{}] - ${}\n{}",
-        item.name,
-        subtype,
-        item.stats.format_triplet(),
-        item.value,
-        item.description,
-    )
-}
-
-fn format_equipped_block(slot: EquipmentSlot, item: Option<&Item>) -> String {
+fn format_equipped_block(slot: EquipmentSlot, item: Option<&crate::game::domain::item::Item>) -> String {
     match item {
         Some(item) => format!("**{}**\n{}", slot.label(), format_item_block(item)),
         None => format!("**{}**\n*(empty)*", slot.label()),

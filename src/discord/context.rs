@@ -8,6 +8,7 @@ use poise::serenity_prelude::UserId;
 
 use crate::discord::channel::ActivityLogSync;
 use crate::game::domain::board::Board;
+use crate::game::merchant::MerchantState;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::engine::GenerationJob;
@@ -22,6 +23,7 @@ pub struct Data {
     pub board: Arc<tokio::sync::Mutex<Board>>,
     pub job_queue: Arc<tokio::sync::Mutex<JobQueue>>,
     pub item_registry: Arc<tokio::sync::Mutex<ItemRegistry>>,
+    pub merchant: Arc<tokio::sync::Mutex<MerchantState>>,
     pub admin_user_id: u64,
     pub bot_user_id: u64,
     pub channel_id: u64,

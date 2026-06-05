@@ -6,8 +6,9 @@ use std::{
 
 use chuds::discord::{
     self, cleanup_non_bot_messages, execute_tick, handle_gear_button, handle_heal_button,
-    handle_scout_button, handle_take_button, recover_persistent_board_messages,
-    update_board_message, validate_cached_messages_exist, ActivityLogSync, Data,
+    handle_merchant_shop_button, handle_scout_button, handle_shop_buy, handle_shop_select,
+    handle_take_button, recover_persistent_board_messages, update_board_message,
+    update_merchant_message, validate_cached_messages_exist, ActivityLogSync, Data,
 };
 use chuds::game::engine;
 use chuds::game::generation::worker::{spawn_generation_worker, WorkerEffect};
@@ -89,6 +90,7 @@ async fn main() -> anyhow::Result<()> {
     let board = Arc::new(tokio::sync::Mutex::new(game_state.board));
     let job_queue = Arc::new(tokio::sync::Mutex::new(game_state.job_queue));
     let item_registry = Arc::new(tokio::sync::Mutex::new(game_state.item_registry));
+    let merchant = Arc::new(tokio::sync::Mutex::new(game_state.guild_hall.merchant));
     let pending_quests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     tracing::info!(tick_time_s, "chuds bot starting");
@@ -119,6 +121,7 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::admin_take_gen_item(),
                 discord::commands::admin_redraw(),
                 discord::commands::admin_kill_chud(),
+                discord::commands::admin_spawn_merchant(),
                 discord::commands::graveyard(),
             ],
             event_handler: |ctx, event, _framework, data| {
@@ -143,6 +146,12 @@ async fn main() -> anyhow::Result<()> {
                                 || id.starts_with("g_sell_confirm:")
                             {
                                 Some(handle_gear_button(ctx, component, data).await)
+                            } else if id == "merchant:shop" {
+                                Some(handle_merchant_shop_button(ctx, component, data).await)
+                            } else if id == "shop_select" {
+                                Some(handle_shop_select(ctx, component, data).await)
+                            } else if id.starts_with("shop_buy:") {
+                                Some(handle_shop_buy(ctx, component, data).await)
                             } else {
                                 None
                             };
@@ -187,11 +196,13 @@ async fn main() -> anyhow::Result<()> {
                 if !messages_exist {
                     let mut b = board.lock().await;
                     let mut q = job_queue.lock().await;
+                    let merchant_guard = merchant.lock().await;
                     recover_persistent_board_messages(
                         &ctx.http,
                         channel_id,
                         &mut *b,
                         &mut *q,
+                        &merchant_guard,
                         bot_user_id,
                         max_non_bot_messages,
                         max_jobs,
@@ -211,6 +222,8 @@ async fn main() -> anyhow::Result<()> {
                     storage::save_board(&*b)?;
                     storage::save_job_queue(&*q)?;
                     update_board_message(&ctx.http, channel_id, &mut b, max_jobs, None).await?;
+                    let merchant_guard = merchant.lock().await;
+                    update_merchant_message(&ctx.http, channel_id, &merchant_guard).await?;
                 }
 
                 let (generation_tx, generation_rx) =
@@ -266,6 +279,7 @@ async fn main() -> anyhow::Result<()> {
                 let tick_last_mobile = Arc::clone(&last_mobile);
                 let tick_activity_log = Arc::clone(&activity_log);
                 let tick_gravestone = Arc::clone(&gravestone_generator);
+                let tick_merchant = Arc::clone(&merchant);
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
                     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -287,6 +301,7 @@ async fn main() -> anyhow::Result<()> {
                             bot_user_id,
                             max_non_bot_messages,
                             &tick_gravestone,
+                            &tick_merchant,
                         )
                         .await
                         {
@@ -302,6 +317,7 @@ async fn main() -> anyhow::Result<()> {
                     board,
                     job_queue,
                     item_registry,
+                    merchant,
                     admin_user_id,
                     bot_user_id,
                     channel_id,

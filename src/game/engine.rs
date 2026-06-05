@@ -370,6 +370,16 @@ fn clear_equipped_item(player: &mut Player, item_id: u32) {
     }
 }
 
+/// Buy an item from the visiting merchant into the player's stash.
+pub fn buy_merchant_item(
+    merchant: &mut crate::game::merchant::MerchantState,
+    player: &mut Player,
+    registry: &mut ItemRegistry,
+    slot: usize,
+) -> Result<crate::game::domain::item::Item, crate::game::merchant::BuyError> {
+    merchant.buy(slot, player, registry)
+}
+
 /// Sell an item the player owns: credit `cash`, remove from stash/equipment and registry.
 pub fn sell_item(
     player: &mut Player,

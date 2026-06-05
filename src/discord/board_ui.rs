@@ -15,6 +15,8 @@ use crate::game::domain::board::{Board, BoardQuest};
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::Player;
 use crate::game::engine;
+use crate::discord::merchant_ui::update_merchant_message;
+use crate::game::merchant::MerchantState;
 use crate::game::persistence::message_cache::JobSlot;
 use crate::game::persistence::storage;
 
@@ -303,6 +305,7 @@ pub async fn recover_persistent_board_messages(
     channel_id: u64,
     board: &mut Board,
     job_queue: &mut JobQueue,
+    merchant: &MerchantState,
     bot_user_id: u64,
     max_non_bot_messages: usize,
     max_jobs: usize,
@@ -321,7 +324,8 @@ pub async fn recover_persistent_board_messages(
     engine::refill_board_from_queue(board, job_queue, max_jobs);
     storage::save_board(board)?;
     storage::save_job_queue(job_queue)?;
-    update_board_message(http, channel_id, board, max_jobs, None).await
+    update_board_message(http, channel_id, board, max_jobs, None).await?;
+    update_merchant_message(http, channel_id, merchant).await
 }
 
 pub async fn update_board_message(
