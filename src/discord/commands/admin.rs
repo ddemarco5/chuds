@@ -2,7 +2,7 @@ use poise::serenity_prelude as serenity;
 
 use crate::discord::board_ui::recover_persistent_board_messages;
 use crate::discord::buttons::post_quest_taken_announcement;
-use crate::discord::channel::post_buffered_message;
+use crate::discord::channel::append_activity_log;
 use crate::discord::context::{admin_guard, Context, Error};
 use crate::discord::tick;
 use crate::game::engine;
@@ -32,13 +32,7 @@ pub async fn add_cm(ctx: Context<'_>, discord_user_id: String) -> Result<(), Err
         Err(_) => discord_user_id.to_string(),
     };
     let content = format!("{} is now a Chudmaster™", display_name);
-    post_buffered_message(
-        http,
-        ctx.data().channel_id,
-        ctx.data().max_buffer_messages,
-        &content,
-    )
-    .await;
+    append_activity_log(&ctx.data().activity_log, &content).await;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -103,7 +97,7 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
         &ctx.data().job_queue,
         &ctx.data().item_registry,
         ctx.data().channel_id,
-        ctx.data().max_buffer_messages,
+        &ctx.data().activity_log,
         ctx.data().max_jobs,
         ctx.data().bot_user_id,
         ctx.data().max_non_bot_messages,

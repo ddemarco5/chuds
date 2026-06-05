@@ -1,7 +1,188 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
 use poise::serenity_prelude::{self as serenity, GetMessages, MessageId};
 
-use crate::game::persistence::message_cache::MessageCache;
+use crate::game::persistence::message_cache::{ActivityLogEntry, ActivityLogKind, MessageCache};
 use crate::game::persistence::storage;
+
+const DISCORD_MESSAGE_LIMIT: usize = 2000;
+/// U+2043 HYPHEN BULLET — renders as a small bullet in Discord, not a round list marker.
+const LOG_BULLET: char = '\u{2043}';
+/// Zero-width space + tab pairs (same trick as the job board header) for a slight indent.
+const WORLD_INDENT: &str = "\u{200B}\t\u{200B}\t";
+
+/// Shared state for debounced activity-log Discord edits.
+pub struct ActivityLogSync {
+    http: Arc<serenity::Http>,
+    pub channel_id: u64,
+    pub max_lines: usize,
+    pub debounce: Duration,
+    sync_scheduled: AtomicBool,
+}
+
+impl ActivityLogSync {
+    pub fn new(
+        http: Arc<serenity::Http>,
+        channel_id: u64,
+        max_lines: usize,
+        debounce: Duration,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            http,
+            channel_id,
+            max_lines,
+            debounce,
+            sync_scheduled: AtomicBool::new(false),
+        })
+    }
+}
+
+fn format_standard_entry(raw: &str) -> String {
+    let mut lines = raw.lines();
+    let first = lines.next().unwrap_or("");
+    let mut out = format!("{LOG_BULLET} {first}");
+    for line in lines {
+        out.push('\n');
+        out.push_str(line);
+    }
+    out
+}
+
+fn format_world_entry(raw: &str) -> String {
+    raw.lines()
+        .map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("{WORLD_INDENT}*{line}*")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_log_entry(entry: &ActivityLogEntry) -> String {
+    match entry.kind {
+        ActivityLogKind::Standard => format_standard_entry(&entry.text),
+        ActivityLogKind::World => format_world_entry(&entry.text),
+    }
+}
+
+fn render_activity_log(entries: &[ActivityLogEntry]) -> String {
+    entries
+        .iter()
+        .map(format_log_entry)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn trim_activity_log_entries(entries: &mut Vec<ActivityLogEntry>, max_lines: usize) {
+    while entries.len() > max_lines {
+        entries.remove(0);
+    }
+    while !entries.is_empty() && render_activity_log(entries).len() > DISCORD_MESSAGE_LIMIT {
+        entries.remove(0);
+    }
+}
+
+async fn append_to_activity_log_cache(
+    max_lines: usize,
+    kind: ActivityLogKind,
+    content: &str,
+) {
+    let _guard = storage::message_cache_lock().await;
+    let mut cache = storage::load_message_cache().unwrap_or_default();
+    cache.activity_log_entries.push(ActivityLogEntry {
+        kind,
+        text: content.to_string(),
+    });
+    trim_activity_log_entries(&mut cache.activity_log_entries, max_lines);
+    if let Err(e) = storage::save_message_cache(&cache) {
+        tracing::warn!(err = %e, "failed to save message cache after activity log append");
+    }
+}
+
+/// Append to the activity log cache only (no Discord sync).
+pub async fn append_activity_log_deferred(
+    log: &ActivityLogSync,
+    kind: ActivityLogKind,
+    content: &str,
+) {
+    append_to_activity_log_cache(log.max_lines, kind, content).await;
+}
+
+/// Append a standard (bulleted) entry and spawn a debounced Discord sync if none is scheduled.
+pub async fn append_activity_log(log: &Arc<ActivityLogSync>, content: &str) {
+    append_activity_log_with_kind(log, ActivityLogKind::Standard, content).await;
+}
+
+/// Append to cache and spawn a debounced Discord sync if none is already scheduled.
+pub async fn append_activity_log_with_kind(
+    log: &Arc<ActivityLogSync>,
+    kind: ActivityLogKind,
+    content: &str,
+) {
+    append_to_activity_log_cache(log.max_lines, kind, content).await;
+
+    if log
+        .sync_scheduled
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+
+    let log = Arc::clone(log);
+    tokio::spawn(async move {
+        tokio::time::sleep(log.debounce).await;
+        sync_activity_log_now(&log.http, log.channel_id).await;
+        log.sync_scheduled.store(false, Ordering::Release);
+    });
+}
+
+/// Create or edit the persistent activity log message from cache.
+pub async fn sync_activity_log_now(http: &serenity::Http, channel_id: u64) {
+    let _guard = storage::message_cache_lock().await;
+    let mut cache = storage::load_message_cache().unwrap_or_default();
+    if cache.activity_log_entries.is_empty() {
+        return;
+    }
+
+    let body = render_activity_log(&cache.activity_log_entries);
+    let ch = serenity::ChannelId::new(channel_id);
+
+    if let Some(msg_id) = cache.activity_log_message_id {
+        match http
+            .edit_message(
+                ch,
+                MessageId::new(msg_id),
+                &serenity::EditMessage::new().content(&body),
+                vec![],
+            )
+            .await
+        {
+            Ok(_) => return,
+            Err(e) => {
+                tracing::warn!(msg_id, err = %e, "failed to edit activity log, posting new message");
+            }
+        }
+    }
+
+    match http
+        .send_message(ch, vec![], &serenity::CreateMessage::new().content(&body))
+        .await
+    {
+        Ok(msg) => {
+            cache.activity_log_message_id = Some(msg.id.get());
+            if let Err(e) = storage::save_message_cache(&cache) {
+                tracing::warn!(err = %e, "failed to save message cache after activity log post");
+            }
+        }
+        Err(e) => tracing::warn!(err = %e, "failed to post activity log message"),
+    }
+}
 
 /// Delete all messages in the channel (both bot and non-bot messages).
 pub async fn delete_all_messages_in_channel(http: &serenity::Http, channel_id: u64) {
@@ -40,6 +221,10 @@ pub async fn validate_cached_messages_exist(
 
     if let Some(id) = cache.status_message_id {
         message_ids.push(("status", id));
+    }
+
+    if let Some(id) = cache.activity_log_message_id {
+        message_ids.push(("activity_log", id));
     }
 
     for slot in &cache.slots {
@@ -92,75 +277,5 @@ pub async fn cleanup_non_bot_messages(
                 tracing::warn!(msg_id = msg.id.get(), err = %e, "failed to delete non-bot message during cleanup");
             }
         }
-    }
-}
-
-/// Post a message to the channel buffer area below the job board.
-pub async fn post_buffered_message(
-    http: &serenity::Http,
-    channel_id: u64,
-    max_buffer: usize,
-    content: &str,
-) {
-    post_buffered_message_inner(http, channel_id, max_buffer, content, true).await;
-}
-
-/// Post a buffered message without evicting older ones. Call [`trim_buffered_messages`]
-/// once the batch is complete (e.g. at the end of a tick).
-pub async fn post_buffered_message_deferred(
-    http: &serenity::Http,
-    channel_id: u64,
-    content: &str,
-) {
-    post_buffered_message_inner(http, channel_id, 0, content, false).await;
-}
-
-async fn post_buffered_message_inner(
-    http: &serenity::Http,
-    channel_id: u64,
-    max_buffer: usize,
-    content: &str,
-    evict_before_post: bool,
-) {
-    let _guard = storage::message_cache_lock().await;
-    let mut cache = storage::load_message_cache().unwrap_or_default();
-    let ch = serenity::ChannelId::new(channel_id);
-    if evict_before_post && cache.pending_deletes.len() >= max_buffer {
-        let old_id = cache.pending_deletes.remove(0);
-        if let Err(e) = http.delete_message(ch, MessageId::new(old_id), None).await {
-            tracing::warn!(msg_id = old_id, err = %e, "failed to evict oldest buffered message");
-        }
-    }
-    match http
-        .send_message(ch, vec![], &serenity::CreateMessage::new().content(content))
-        .await
-    {
-        Ok(msg) => {
-            cache.pending_deletes.push(msg.id.get());
-            if let Err(e) = storage::save_message_cache(&cache) {
-                tracing::warn!(err = %e, "failed to save message cache after buffered post");
-            }
-        }
-        Err(e) => tracing::warn!(err = %e, "failed to post buffered message"),
-    }
-}
-
-/// Delete oldest buffered messages until at most `max_buffer` remain.
-pub async fn trim_buffered_messages(
-    http: &serenity::Http,
-    channel_id: u64,
-    max_buffer: usize,
-) {
-    let _guard = storage::message_cache_lock().await;
-    let mut cache = storage::load_message_cache().unwrap_or_default();
-    let ch = serenity::ChannelId::new(channel_id);
-    while cache.pending_deletes.len() > max_buffer {
-        let old_id = cache.pending_deletes.remove(0);
-        if let Err(e) = http.delete_message(ch, MessageId::new(old_id), None).await {
-            tracing::warn!(msg_id = old_id, err = %e, "failed to evict oldest buffered message");
-        }
-    }
-    if let Err(e) = storage::save_message_cache(&cache) {
-        tracing::warn!(err = %e, "failed to save message cache after buffer trim");
     }
 }

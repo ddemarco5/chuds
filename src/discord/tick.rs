@@ -5,8 +5,10 @@ use poise::serenity_prelude::{self as serenity, CreateMessage};
 use crate::chud_msg;
 use crate::discord::board_ui;
 use crate::discord::channel::{
-    cleanup_non_bot_messages, post_buffered_message_deferred, trim_buffered_messages,
+    append_activity_log_deferred, cleanup_non_bot_messages, sync_activity_log_now,
+    ActivityLogSync,
 };
+use crate::game::persistence::message_cache::ActivityLogKind;
 use crate::discord::formatting;
 use crate::discord::report_dm::{self, LastMobileUsers};
 use crate::game::domain::board::Board;
@@ -25,7 +27,7 @@ pub async fn execute_tick(
     job_queue: &tokio::sync::Mutex<JobQueue>,
     item_registry: &tokio::sync::Mutex<ItemRegistry>,
     channel_id: u64,
-    max_buffer: usize,
+    activity_log: &ActivityLogSync,
     max_jobs: usize,
     bot_user_id: u64,
     max_non_bot_messages: usize,
@@ -36,7 +38,7 @@ pub async fn execute_tick(
         let board_guard = board.lock().await;
         if board_guard.active_quest_count() > 0 {
             let new_day_msg = chud_msg!("new_day");
-            post_buffered_message_deferred(http, channel_id, &new_day_msg).await;
+            append_activity_log_deferred(activity_log, ActivityLogKind::World, &new_day_msg).await;
         }
     }
 
@@ -56,7 +58,7 @@ pub async fn execute_tick(
     storage::save_hospital(&hospital)?;
 
     for msg in &outcome.hospital_releases {
-        post_buffered_message_deferred(http, channel_id, msg).await;
+        append_activity_log_deferred(activity_log, ActivityLogKind::Standard, msg).await;
     }
 
     for qr in &outcome.quest_resolved {
@@ -87,7 +89,7 @@ pub async fn execute_tick(
         } else {
             qr.summary.clone()
         };
-        post_buffered_message_deferred(http, channel_id, &content).await;
+        append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &content).await;
 
         let first_name = qr
             .player_name
@@ -103,7 +105,7 @@ pub async fn execute_tick(
             "return_failed"
         };
         let return_msg = chud_msg!(return_key, first_name);
-        post_buffered_message_deferred(http, channel_id, &return_msg).await;
+        append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &return_msg).await;
 
         report_dm::send_job_completion_dm(
             http,
@@ -134,7 +136,7 @@ pub async fn execute_tick(
             "scout_returned_cocky"
         };
         let scout_return_msg = chud_msg!(scout_key, first_name);
-        post_buffered_message_deferred(http, channel_id, &scout_return_msg).await;
+        append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &scout_return_msg).await;
 
         let active_player_name: Option<String> = sr
             .active_discord_user_id
@@ -169,7 +171,7 @@ pub async fn execute_tick(
         }
     }
 
-    trim_buffered_messages(http, channel_id, max_buffer).await;
+    sync_activity_log_now(http, channel_id).await;
 
     if !outcome.quest_resolved.is_empty()
         || !outcome.scout_results.is_empty()

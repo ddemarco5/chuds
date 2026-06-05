@@ -5,7 +5,7 @@ use poise::serenity_prelude::{
 
 use crate::chud_msg;
 use crate::discord::board_ui;
-use crate::discord::channel::post_buffered_message;
+use crate::discord::channel::append_activity_log;
 use crate::discord::context::Data;
 use crate::game::busy::BusyReason;
 use crate::game::domain::player::Player;
@@ -120,7 +120,7 @@ async fn announce_taken_quest(
         .to_string();
     let content = chud_msg!("chud_takes_job", first_name, info.quest_title);
 
-    post_buffered_message(http, data.channel_id, data.max_buffer_messages, &content).await;
+    append_activity_log(&data.activity_log, &content).await;
     board_ui::update_board_message(
         http,
         data.channel_id,
@@ -249,13 +249,7 @@ pub async fn handle_scout_button(
         .unwrap_or(&player.name)
         .to_string();
     let content = format!("**{}** stumbled out the door", first_name);
-    post_buffered_message(
-        &ctx.http,
-        data.channel_id,
-        data.max_buffer_messages,
-        &content,
-    )
-    .await;
+    append_activity_log(&data.activity_log, &content).await;
     board_ui::update_board_message(
         &ctx.http,
         data.channel_id,
@@ -313,13 +307,7 @@ pub async fn handle_heal_button(
         .release(user_id)
         .expect("hospitalized chud exists");
     storage::save_hospital(&hospital)?;
-    post_buffered_message(
-        &ctx.http,
-        data.channel_id,
-        data.max_buffer_messages,
-        &release_msg,
-    )
-    .await;
+    append_activity_log(&data.activity_log, &release_msg).await;
 
     let msg = chud_msg!("heal_success", chud_name, heal_price);
     interaction

@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 use poise::serenity_prelude::UserId;
 
+use crate::discord::channel::ActivityLogSync;
 use crate::game::domain::board::Board;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
@@ -22,7 +23,7 @@ pub struct Data {
     pub admin_user_id: u64,
     pub bot_user_id: u64,
     pub channel_id: u64,
-    pub max_buffer_messages: usize,
+    pub activity_log: Arc<ActivityLogSync>,
     pub max_jobs: usize,
     pub max_job_queue: usize,
     pub max_non_bot_messages: usize,

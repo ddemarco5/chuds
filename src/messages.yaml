@@ -1,11 +1,11 @@
 new_day:
-  - "*A new day begins.*"
-  - "*The sun rises. Another chudly day.*"
-  - "*Morning breaks. Time waits for no chud.*"
-  - "*A fresh day dawns over the job board.*"
-  - "*The clock ticks. A new day is here.*"
-  - "*Wake up and smell the chuds*"
-  - "*Another day, another chud*"
+  - "A new day begins."
+  - "The sun rises. Another chudly day."
+  - "Morning breaks. Time waits for no chud."
+  - "A fresh day dawns over the job board."
+  - "The clock ticks. A new day is here."
+  - "Wake up and smell the chuds"
+  - "Another day, another chud"
 
 chud_takes_job:
   - "**{}** ripped **{}** off the board"

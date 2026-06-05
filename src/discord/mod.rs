@@ -15,8 +15,9 @@ pub use board_ui::{
 pub use buttons::{handle_heal_button, handle_scout_button, handle_take_button};
 pub use gear_ui::handle_gear_button;
 pub use channel::{
-    cleanup_non_bot_messages, delete_all_messages_in_channel, post_buffered_message,
-    validate_cached_messages_exist,
+    append_activity_log, append_activity_log_deferred, cleanup_non_bot_messages,
+    delete_all_messages_in_channel, sync_activity_log_now, validate_cached_messages_exist,
+    ActivityLogSync,
 };
 pub use context::Data;
 pub use tick::execute_tick;

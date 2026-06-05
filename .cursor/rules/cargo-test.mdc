@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+this codebase does not have a test framework setup. Do not write any tests and do not execute `cargo test`

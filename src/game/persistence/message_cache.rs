@@ -1,4 +1,54 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// How an activity log line is rendered when synced to Discord.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityLogKind {
+    /// U+2043 hyphen bullet prefix.
+    #[default]
+    Standard,
+    /// Italic text, no bullet (world / ambient narration).
+    World,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActivityLogEntry {
+    pub kind: ActivityLogKind,
+    pub text: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ActivityLogEntryWire {
+    Plain(String),
+    Structured {
+        #[serde(default)]
+        kind: ActivityLogKind,
+        text: String,
+    },
+}
+
+impl From<ActivityLogEntryWire> for ActivityLogEntry {
+    fn from(w: ActivityLogEntryWire) -> Self {
+        match w {
+            ActivityLogEntryWire::Plain(text) => ActivityLogEntry {
+                kind: ActivityLogKind::Standard,
+                text,
+            },
+            ActivityLogEntryWire::Structured { kind, text } => ActivityLogEntry { kind, text },
+        }
+    }
+}
+
+fn deserialize_activity_log_entries<'de, D>(
+    deserializer: D,
+) -> Result<Vec<ActivityLogEntry>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let wires = Vec::<ActivityLogEntryWire>::deserialize(deserializer)?;
+    Ok(wires.into_iter().map(Into::into).collect())
+}
 
 /// State for a single persistent job-slot Discord message.
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -40,7 +90,10 @@ pub struct MessageCache {
     /// Cached random header for the hospital roster section (cleared when the section is empty).
     #[serde(default)]
     pub status_hospital_header: Option<String>,
-    /// Discord message IDs to delete at the start of the next tick.
+    /// Discord message ID of the persistent activity log below the board.
     #[serde(default)]
-    pub pending_deletes: Vec<u64>,
+    pub activity_log_message_id: Option<u64>,
+    /// Activity log entries (kind controls bullet vs italic rendering on sync).
+    #[serde(default, deserialize_with = "deserialize_activity_log_entries")]
+    pub activity_log_entries: Vec<ActivityLogEntry>,
 }

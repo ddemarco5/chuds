@@ -1,6 +1,6 @@
 use crate::chud_msg;
 use crate::discord::board_ui;
-use crate::discord::channel::post_buffered_message;
+use crate::discord::channel::append_activity_log;
 use crate::discord::context::{Context, Error};
 use crate::game::busy::BusyReason;
 use crate::game::domain::stash::STASH_CAPACITY;
@@ -22,13 +22,7 @@ pub async fn chud(ctx: Context<'_>, name: String, description: String) -> Result
         player.name, player.description
     );
     let http = &ctx.serenity_context().http;
-    post_buffered_message(
-        http,
-        ctx.data().channel_id,
-        ctx.data().max_buffer_messages,
-        &content,
-    )
-    .await;
+    append_activity_log(&ctx.data().activity_log, &content).await;
     let mut board = ctx.data().board.lock().await;
     board_ui::refresh_board_status(
         http,

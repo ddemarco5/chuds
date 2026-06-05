@@ -7,7 +7,7 @@ use std::{
 use chuds::discord::{
     self, cleanup_non_bot_messages, execute_tick, handle_gear_button, handle_heal_button,
     handle_scout_button, handle_take_button, recover_persistent_board_messages,
-    update_board_message, validate_cached_messages_exist, Data,
+    update_board_message, validate_cached_messages_exist, ActivityLogSync, Data,
 };
 use chuds::game::engine;
 use chuds::game::generation::worker::{spawn_generation_worker, WorkerEffect};
@@ -42,10 +42,14 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("GUILD_ID not set"))?
         .parse()
         .map_err(|_| anyhow::anyhow!("GUILD_ID must be a u64"))?;
-    let max_buffer_messages: usize = std::env::var("MESSAGE_BUFFER_SIZE")
+    let activity_log_max_lines: usize = std::env::var("ACTIVITY_LOG_MAX_LINES")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(4);
+    let activity_log_debounce_ms: u64 = std::env::var("ACTIVITY_LOG_DEBOUNCE_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5000);
     let max_jobs: usize = std::env::var("MAX_JOBS")
         .map_err(|_| anyhow::anyhow!("MAX_JOBS not set"))?
         .parse()
@@ -154,6 +158,12 @@ async fn main() -> anyhow::Result<()> {
                 .await?;
                 tracing::info!(guild_id, "slash commands registered");
                 let bot_user_id = ready.user.id.get();
+                let activity_log = ActivityLogSync::new(
+                    Arc::clone(&ctx.http),
+                    channel_id,
+                    activity_log_max_lines,
+                    Duration::from_millis(activity_log_debounce_ms),
+                );
 
                 let messages_exist = {
                     let _cache_guard = storage::message_cache_lock().await;
@@ -240,6 +250,7 @@ async fn main() -> anyhow::Result<()> {
                 let tick_http = Arc::clone(&ctx.http);
                 let tick_cache = Arc::clone(&ctx.cache);
                 let tick_last_mobile = Arc::clone(&last_mobile);
+                let tick_activity_log = Arc::clone(&activity_log);
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
                     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -256,7 +267,7 @@ async fn main() -> anyhow::Result<()> {
                             &tick_queue,
                             &tick_registry,
                             channel_id,
-                            max_buffer_messages,
+                            &tick_activity_log,
                             max_jobs,
                             bot_user_id,
                             max_non_bot_messages,
@@ -277,7 +288,7 @@ async fn main() -> anyhow::Result<()> {
                     admin_user_id,
                     bot_user_id,
                     channel_id,
-                    max_buffer_messages,
+                    activity_log,
                     max_jobs,
                     max_job_queue,
                     max_non_bot_messages,
