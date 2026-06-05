@@ -28,7 +28,17 @@ pub const EXP_DROPOUT_MAX: f64 = 0.70;
 
 // ── Item drops & stat rolls ───────────────────────────────────────────────────
 
-pub const ITEM_DROP_CHANCE: f64 = 0.10;
+/// Flat bonus added to drop chance for each quest trial (0.04 = +4% per trial).
+/// Raise to reward longer jobs; lower to make trial count matter less. Applies equally at all difficulties.
+const ITEM_DROP_PER_TRIAL: f64 = 0.04;
+/// Base item drop chance at difficulty 1, before the per-trial bonus is added.
+/// Raise to increase drops on easy jobs; lower to tighten loot across the board.
+/// Harder jobs scale down linearly to 0% base at ITEM_DROP_BASE_DIFF_HIGH.
+const ITEM_DROP_BASE_AT_DIFF_1: f64 = 0.24;
+/// Endpoints for linear base scaling: difficulty 1 uses full base, difficulty 9 uses zero base.
+/// Extending DIFF_HIGH lowers drops on mid-tier jobs; lowering DIFF_LOW shifts where the curve starts.
+const ITEM_DROP_BASE_DIFF_LOW: u8 = 1;
+const ITEM_DROP_BASE_DIFF_HIGH: u8 = 9;
 /// Probability a rolled item stat is neutral ("-").
 const ITEM_STAT_NEUTRAL_CHANCE: f64 = 0.50;
 /// Upper bound of the modifier band (neutral + modifier spans [NEUTRAL, MODIFIER)).
@@ -183,8 +193,19 @@ pub fn roll_trials(difficulty: u8) -> Vec<TrialStats> {
 
 // ── Item rolls ────────────────────────────────────────────────────────────────
 
-pub fn roll_item_drop(rng: &mut impl Rng) -> bool {
-    rng.gen_bool(ITEM_DROP_CHANCE)
+fn item_drop_base_chance(difficulty: u8) -> f64 {
+    let d = difficulty.clamp(ITEM_DROP_BASE_DIFF_LOW, ITEM_DROP_BASE_DIFF_HIGH) as f64;
+    let span = (ITEM_DROP_BASE_DIFF_HIGH - ITEM_DROP_BASE_DIFF_LOW) as f64;
+    ITEM_DROP_BASE_AT_DIFF_1 * (ITEM_DROP_BASE_DIFF_HIGH as f64 - d) / span
+}
+
+pub fn item_drop_chance(difficulty: u8, trial_count: usize) -> f64 {
+    let base = item_drop_base_chance(difficulty);
+    (base + trial_count as f64 * ITEM_DROP_PER_TRIAL).clamp(0.0, 1.0)
+}
+
+pub fn roll_item_drop(difficulty: u8, trial_count: usize, rng: &mut impl Rng) -> bool {
+    rng.gen_bool(item_drop_chance(difficulty, trial_count))
 }
 
 pub fn roll_item(difficulty: u8, rng: &mut impl Rng) -> ItemSeed {

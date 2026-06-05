@@ -8,7 +8,7 @@ use crate::game::domain::player::{create_chud, Player};
 use crate::game::domain::quest_result::QuestResult;
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator, QuestResults, TrialResult};
-use crate::game::tuneable_rolls::{roll_item, roll_item_drop, roll_item_value, roll_trials};
+use crate::game::tuneable_rolls::{item_drop_chance, roll_item, roll_item_drop, roll_item_value, roll_trials};
 use crate::game::mechanics::simulation::{effective_stats, play_quest};
 use crate::game::persistence::storage;
 
@@ -420,8 +420,10 @@ pub async fn generate_result(
         summary,
     );
 
-    if result.passed && (force_item_drop || roll_item_drop(&mut rand::thread_rng())) {
-        let seed = roll_item(board_quest.quest_data.quest_difficulty, &mut rand::thread_rng());
+    let difficulty = board_quest.quest_data.quest_difficulty;
+    let trial_count = board_quest.quest_data.trials.len();
+    if result.passed && (force_item_drop || roll_item_drop(difficulty, trial_count, &mut rand::thread_rng())) {
+        let seed = roll_item(difficulty, &mut rand::thread_rng());
         let (name, description) = item_generator
             .generate_from_quest(&seed, &result, board_quest)
             .await?;
@@ -432,6 +434,9 @@ pub async fn generate_result(
             name = %item.name,
             item_type = ?item.item_type,
             rarity = %rarity,
+            drop_chance = item_drop_chance(difficulty, trial_count),
+            difficulty,
+            trial_count,
             net_stat = item.stats.net_stat_value(),
             value = item.value,
             "item generated for quest result"

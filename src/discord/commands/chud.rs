@@ -124,10 +124,10 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
                 equipment_lines.join("\n")
             };
             let stash_line = if p.stash.is_empty() {
-                format!("Stash: empty (0/{STASH_CAPACITY}) — use /gear to manage loadout")
+                format!("Stash: empty (0/{STASH_CAPACITY}) — use `/gear` to manage loadout")
             } else {
                 format!(
-                    "Stash: {}/{} items — use /gear to manage loadout",
+                    "Stash: {}/{} items — use `/gear` to manage loadout",
                     p.stash.len(),
                     STASH_CAPACITY
                 )
