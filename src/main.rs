@@ -67,12 +67,17 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .map_err(|_| anyhow::anyhow!("TICK_TIME_S must be a positive integer"))?;
 
+    let llm_memory = chuds::game::persistence::llm_memory::load_llm_memory_bundle();
     let generator = Arc::new(chuds::game::generation::quest_generator::QuestGenerator::new(
         &api_key,
+        &llm_memory,
     )?);
     let item_generator = Arc::new(chuds::game::generation::item_generator::ItemGenerator::new(
         &api_key,
+        &llm_memory,
     )?);
+    let shutdown_quest = Arc::clone(&generator);
+    let shutdown_item = Arc::clone(&item_generator);
     let game_state = GameState::load()?;
     let board = Arc::new(tokio::sync::Mutex::new(game_state.board));
     let job_queue = Arc::new(tokio::sync::Mutex::new(game_state.job_queue));
@@ -309,8 +314,21 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("failed to build Discord client: {e}"))?;
 
     tracing::info!("bot connected, listening for slash commands");
-    client
-        .start()
-        .await
-        .map_err(|e| anyhow::anyhow!("Discord client error: {e}"))
+    tokio::select! {
+        res = client.start() => {
+            chuds::game::persistence::llm_memory::save_all_llm_memory(
+                &shutdown_quest,
+                &shutdown_item,
+            )?;
+            res.map_err(|e| anyhow::anyhow!("Discord client error: {e}"))
+        }
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("shutdown signal received, saving LLM memory");
+            chuds::game::persistence::llm_memory::save_all_llm_memory(
+                &shutdown_quest,
+                &shutdown_item,
+            )?;
+            Ok(())
+        }
+    }
 }

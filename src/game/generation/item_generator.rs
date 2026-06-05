@@ -4,10 +4,9 @@ use serde::{Deserialize, Serialize};
 use crate::game::domain::board::BoardQuest;
 use crate::game::domain::item::ItemSeed;
 use crate::game::domain::quest_result::QuestResult;
-use crate::game::generation::generators::{
-    build_agent, make_memory, prompt_parse_retry, OpenRouterAgent,
-};
-use rig::memory::InMemoryConversationMemory;
+use crate::game::generation::generators::{build_agent, prompt_parse_retry, OpenRouterAgent};
+use crate::game::generation::memory::{make_memory_from_store, GameConversationMemory};
+use crate::game::persistence::llm_memory::LlmMemoryBundle;
 
 const ITEM_SYSTEM_CONTEXT: &str = r#"You are naming and describing loot found after a Chud completes a job.
 
@@ -55,16 +54,20 @@ struct ItemResponse {
 
 pub struct ItemGenerator {
     agent: OpenRouterAgent,
-    memory: InMemoryConversationMemory,
+    memory: GameConversationMemory,
 }
 
 impl ItemGenerator {
-    pub fn new(api_key: &str) -> anyhow::Result<Self> {
+    pub fn new(api_key: &str, memory: &LlmMemoryBundle) -> anyhow::Result<Self> {
         let client = openrouter::Client::new(api_key)?;
         Ok(Self {
             agent: build_agent(&client, ITEM_SYSTEM_CONTEXT),
-            memory: make_memory(),
+            memory: make_memory_from_store(memory.item.clone()),
         })
+    }
+
+    pub(crate) fn memory(&self) -> &GameConversationMemory {
+        &self.memory
     }
 
     pub async fn generate_from_quest(

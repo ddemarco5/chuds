@@ -186,6 +186,10 @@ pub async fn save(ctx: Context<'_>) -> Result<(), Error> {
     let board = ctx.data().board.lock().await;
     let registry = ctx.data().item_registry.lock().await;
     engine::save_all(&*board, &*registry)?;
+    crate::game::persistence::llm_memory::save_all_llm_memory(
+        &ctx.data().generator,
+        &ctx.data().item_generator,
+    )?;
     ctx.say("ok").await?;
     Ok(())
 }

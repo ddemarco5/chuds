@@ -1,9 +1,10 @@
-use rig::memory::InMemoryConversationMemory;
 use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
 
 use crate::game::domain::quest::TrialStats;
-use crate::game::generation::generators::{build_agent, make_memory, prompt_parse_retry, OpenRouterAgent};
+use crate::game::generation::generators::{build_agent, prompt_parse_retry, OpenRouterAgent};
+use crate::game::generation::memory::{make_memory_from_store, GameConversationMemory, LlmMemorySlot};
+use crate::game::persistence::llm_memory::LlmMemoryBundle;
 use crate::game::tuneable_rolls::calculate_quest_reward;
 
 const DESCRIPTION_SYSTEM_CONTEXT: &str = r#"You will be the be the person described in the prompts that follow writing a job for the town job board.
@@ -184,22 +185,33 @@ pub struct QuestGenerator {
     description_agent: OpenRouterAgent,
     trial_agent: OpenRouterAgent,
     results_agent: OpenRouterAgent,
-    description_memory: InMemoryConversationMemory,
-    trial_memory: InMemoryConversationMemory,
-    results_memory: InMemoryConversationMemory,
+    description_memory: GameConversationMemory,
+    trial_memory: GameConversationMemory,
+    results_memory: GameConversationMemory,
 }
 
 impl QuestGenerator {
-    pub fn new(api_key: &str) -> anyhow::Result<Self> {
+    pub fn new(api_key: &str, memory: &LlmMemoryBundle) -> anyhow::Result<Self> {
         let client = openrouter::Client::new(api_key)?;
         Ok(Self {
             description_agent: build_agent(&client, DESCRIPTION_SYSTEM_CONTEXT),
-            description_memory: make_memory(),
+            description_memory: make_memory_from_store(memory.description.clone()),
             trial_agent: build_agent(&client, TRIAL_SYSTEM_CONTEXT),
-            trial_memory: make_memory(),
+            trial_memory: make_memory_from_store(memory.trials.clone()),
             results_agent: build_agent(&client, RESULTS_SYSTEM_CONTEXT),
-            results_memory: make_memory(),
+            results_memory: make_memory_from_store(memory.results.clone()),
         })
+    }
+
+    pub(crate) fn memory_for_slot(&self, slot: LlmMemorySlot) -> &GameConversationMemory {
+        match slot {
+            LlmMemorySlot::Description => &self.description_memory,
+            LlmMemorySlot::Trials => &self.trial_memory,
+            LlmMemorySlot::Results => &self.results_memory,
+            LlmMemorySlot::Item | LlmMemorySlot::All => {
+                panic!("Item and All slots are accessed via ItemGenerator or clear_llm_memory")
+            }
+        }
     }
 
     pub async fn generate_from_description(&self, quest: &QuestData) -> anyhow::Result<GeneratedQuest> {

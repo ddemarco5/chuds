@@ -1,53 +1,17 @@
 use rig::completion::{CompletionError, Prompt, PromptError};
 use rig::completion::message::Message;
-use rig::memory::{ConversationMemory, InMemoryConversationMemory};
+use rig::memory::ConversationMemory;
 use rig::providers::openrouter;
 use rig::client::CompletionClient;
+
+use crate::game::generation::memory::GameConversationMemory;
 
 pub const WORLD_BUILDING_CONTEXT: &str = "You are operating in a fantasy world that is lighthearted, full of satire, and often crude. Adventurers are known as 'Chuds' and are often exceptionally bizarre";
 
 /// Per-attempt timeout for LLM requests. Raise if using slow free-tier models.
 pub const PROMPT_TIMEOUT_SECS: u64 = 90;
 
-/// Token budget for each agent's in-memory conversation history (approximate; 1 token ≈ 4 chars).
-pub const MEMORY_TOKEN_BUDGET: usize = 50_000;
-
 pub type OpenRouterAgent = rig::agent::Agent<openrouter::completion::CompletionModel, ()>;
-
-pub fn make_memory() -> InMemoryConversationMemory {
-    InMemoryConversationMemory::new().with_filter(|msgs: Vec<Message>| {
-        let mut out = msgs;
-        let char_budget = MEMORY_TOKEN_BUDGET * 4;
-        let mut total: usize = out
-            .iter()
-            .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
-            .sum();
-        tracing::info!(
-            history_msgs = out.len(),
-            history_chars = total,
-            budget_chars = char_budget,
-            "memory loaded"
-        );
-        let msgs_before = out.len();
-        while total > char_budget && out.len() > 1 {
-            let removed_size = serde_json::to_string(&out[0])
-                .map(|s| s.len())
-                .unwrap_or(0);
-            out.remove(0);
-            total = total.saturating_sub(removed_size);
-        }
-        if out.len() < msgs_before {
-            tracing::warn!(
-                trimmed = msgs_before - out.len(),
-                history_msgs = out.len(),
-                history_chars = total,
-                budget_chars = char_budget,
-                "memory trimmed"
-            );
-        }
-        out
-    })
-}
 
 pub fn build_agent(client: &openrouter::Client, system_context: &str) -> OpenRouterAgent {
     client
@@ -186,7 +150,7 @@ pub async fn prompt_with_retry(
 
 pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
     agent: &OpenRouterAgent,
-    memory: &InMemoryConversationMemory,
+    memory: &GameConversationMemory,
     prompt: &str,
     expected_trials: Option<usize>,
     conversation_id: &str,
