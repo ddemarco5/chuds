@@ -402,11 +402,13 @@ pub async fn generate_result(
         let (name, description) = item_generator
             .generate_from_quest(&seed, &result, board_quest)
             .await?;
+        let rarity = seed.rarity.clone();
         let mut item = seed.into_item(name, description);
         item.value = roll_item_value(&item.stats, &mut rand::thread_rng());
         tracing::info!(
             name = %item.name,
             item_type = ?item.item_type,
+            rarity = %rarity,
             net_stat = item.stats.net_stat_value(),
             value = item.value,
             "item generated for quest result"

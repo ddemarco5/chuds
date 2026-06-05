@@ -37,6 +37,11 @@ const ITEM_STAT_MODIFIER_CHANCE: f64 = 0.85;
 const ITEM_STAT_POSITIVE_MODIFIER_CHANCE: f64 = 0.70;
 /// Within the modifier band, probability the modifier is positive (+N) vs negative (-N).
 const ITEM_STAT_SIGN_CHANCE: f64 = 0.50;
+/// Stddev for the item stat-cap normal distribution. Mean is difficulty / 2.
+pub const ITEM_STAT_CAP_STDDEV: f64 = 1.0;
+const ITEM_RARITY_COMMON_PERCENTILE: f64 = 50.0;
+const ITEM_RARITY_UNCOMMON_PERCENTILE: f64 = 80.0;
+const ITEM_RARITY_RARE_PERCENTILE: f64 = 90.0;
 
 const GEAR_SUBTYPES: &[&str] = &["helmet", "chest", "legs", "feet", "hands"];
 const MISC_SUBTYPES: &[&str] = &["trinket"]; // we want to add consumables and others in the future
@@ -78,6 +83,48 @@ fn sample_normal_rounded(rng: &mut impl Rng, mean: f64, stddev: f64, min: i64) -
     let normal = Normal::new(mean, stddev).expect("valid normal distribution");
     let sample = normal.sample(rng).round() as i64;
     sample.max(min) as usize
+}
+
+/// Approximate Φ(z) for the standard normal distribution.
+fn standard_normal_cdf(z: f64) -> f64 {
+    0.5 * (1.0 + erf(z / std::f64::consts::SQRT_2))
+}
+
+/// Approximates the error function via Abramowitz & Stegun 7.1.26.
+/// Used to convert a z-score into a normal-distribution percentile for rarity tiers.
+fn erf(x: f64) -> f64 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let x = x.abs();
+    let t = 1.0 / (1.0 + 0.3275911 * x);
+    let y = 1.0
+        - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t
+            + 0.254829592)
+            * t
+            * (-x * x).exp();
+    sign * y
+}
+
+fn rarity_from_percentile(percentile: f64) -> String {
+    if percentile <= ITEM_RARITY_COMMON_PERCENTILE {
+        "common".to_string()
+    } else if percentile <= ITEM_RARITY_UNCOMMON_PERCENTILE {
+        "uncommon".to_string()
+    } else if percentile <= ITEM_RARITY_RARE_PERCENTILE {
+        "rare".to_string()
+    } else {
+        "exceptional".to_string()
+    }
+}
+
+fn roll_item_stat_cap(difficulty: u8, rng: &mut impl Rng) -> (u8, String) {
+    let mean = difficulty as f64 / 2.0;
+    let normal = Normal::new(mean, ITEM_STAT_CAP_STDDEV).expect("valid normal distribution");
+    let sample = normal.sample(rng);
+    let cap = sample.round().max(1.0) as u8;
+    let z = (sample - mean) / ITEM_STAT_CAP_STDDEV;
+    let percentile = standard_normal_cdf(z) * 100.0;
+    let rarity = rarity_from_percentile(percentile);
+    (cap, rarity)
 }
 
 // ── Quest reward rolls ────────────────────────────────────────────────────────
@@ -143,11 +190,12 @@ pub fn roll_item_drop(rng: &mut impl Rng) -> bool {
 pub fn roll_item(difficulty: u8, rng: &mut impl Rng) -> ItemSeed {
     let item_type = roll_item_type(rng);
     let subtype = roll_subtype(item_type, rng);
-    let stats = roll_item_stats(difficulty, rng);
+    let (stats, rarity) = roll_item_stats(difficulty, rng);
     ItemSeed {
         item_type,
         subtype,
         stats,
+        rarity,
         trigger: None,
         effect: None,
     }
@@ -169,8 +217,8 @@ fn roll_subtype(item_type: ItemType, rng: &mut impl Rng) -> String {
     }
 }
 
-fn roll_item_stats(difficulty: u8, rng: &mut impl Rng) -> ItemStats {
-    let cap = (difficulty / 2).max(1);
+fn roll_item_stats(difficulty: u8, rng: &mut impl Rng) -> (ItemStats, String) {
+    let (cap, rarity) = roll_item_stat_cap(difficulty, rng);
     let mut stats = ItemStats {
         strength: roll_single_stat(cap, rng),
         smarts: roll_single_stat(cap, rng),
@@ -184,7 +232,7 @@ fn roll_item_stats(difficulty: u8, rng: &mut impl Rng) -> ItemStats {
             _ => stats.stealth = positive,
         }
     }
-    stats
+    (stats, rarity)
 }
 
 fn has_positive_stat(stats: &ItemStats) -> bool {

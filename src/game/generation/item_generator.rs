@@ -11,8 +11,15 @@ use crate::game::persistence::llm_memory::LlmMemoryBundle;
 const ITEM_SYSTEM_CONTEXT: &str = r#"You are naming and describing loot found after a Chud completes a job.
 
 You will receive:
-- Partial item data (type, optional subtype, stat bonuses) already rolled by the game
+- Partial item data (type, optional subtype, stat bonuses, rarity) already rolled by the game
 - Mission context for thematic inspiration only (setting, materials, tone)
+
+RARITY:
+- Use the item's rarity to shape name adjectives and description tone
+- common: mundane, worn, unremarkable
+- uncommon: slightly special craftsmanship or materials
+- rare: prized, ominous, or conspicuously fine
+- exceptional: unmistakably remarkable without becoming a proper-noun title
 
 Your task:
 - Write a plain 'name': a simple 2-4 word descriptor, like "Mushroom Boots" or "Rusty Dagger"
@@ -84,11 +91,12 @@ impl ItemGenerator {
             trials: result.trials.iter().map(|t| t.situation.as_str()).collect(),
         };
         let prompt = format!(
-            "{}{scaffold}",
+            "{}{scaffold}\nThis item is {}.",
             serde_yaml::to_string(&ItemPrompt {
                 item: seed,
                 mission,
-            })?
+            })?,
+            seed.rarity,
         );
         tracing::info!("generating item flavor");
         let response = prompt_parse_retry::<ItemResponse>(

@@ -152,6 +152,7 @@ pub struct ItemSeed {
     pub item_type: ItemType,
     pub subtype: String,
     pub stats: ItemStats,
+    pub rarity: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
