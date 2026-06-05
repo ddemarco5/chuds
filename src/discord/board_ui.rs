@@ -234,8 +234,8 @@ pub async fn format_chudlerboard(http: &serenity::Http) -> String {
     let players: Vec<Player> = ids
         .iter()
         .filter_map(|&id| match storage::load_player(id) {
-            Ok(Some(p)) => Some(p),
-            Ok(None) => None,
+            Ok(Some(p)) if p.has_chud() => Some(p),
+            Ok(Some(_)) | Ok(None) => None,
             Err(e) => {
                 tracing::warn!(discord_user_id = id, err = %e, "failed to load player for chudlerboard");
                 None
@@ -254,7 +254,7 @@ pub async fn format_chudlerboard(http: &serenity::Http) -> String {
         if leaders.next().is_some() {
             return None;
         }
-        Some(first.name.clone())
+        Some(first.chud_ref().name.clone())
     }
 
     let mut lines = Vec::new();
@@ -278,10 +278,10 @@ pub async fn format_chudlerboard(http: &serenity::Http) -> String {
     }
 
     let stat_defs: [(&str, fn(&Player) -> u8); 4] = [
-        ("strongest", |p| p.strength),
-        ("smartest", |p| p.smarts),
-        ("sneakiest", |p| p.stealth),
-        ("expert", |p| p.experience),
+        ("strongest", |p| p.chud_ref().strength),
+        ("smartest", |p| p.chud_ref().smarts),
+        ("sneakiest", |p| p.chud_ref().stealth),
+        ("expert", |p| p.chud_ref().experience),
     ];
 
     for (adjective, accessor) in &stat_defs {

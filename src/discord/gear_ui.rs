@@ -84,7 +84,7 @@ pub fn build_gear_message(
 
     for slot in EquipmentSlot::ALL {
         let item = player
-            .chud
+            .chud_ref()
             .equipment
             .item_id_in_slot(slot)
             .and_then(|id| registry.get(id));
@@ -146,10 +146,10 @@ pub fn build_gear_message(
 fn busy_notice(reason: BusyReason, player: &Player) -> String {
     match reason {
         BusyReason::ActiveQuest { quest_title } => {
-            format!("_**{}** is on the job \"{}\"._", player.name, quest_title)
+            format!("_**{}** is on the job \"{}\"._", player.chud_ref().name, quest_title)
         }
-        BusyReason::Scouting => format!("_**{}** is out scouting._", player.name),
-        BusyReason::Hospitalized => format!("_**{}** is in the hospital._", player.name),
+        BusyReason::Scouting => format!("_**{}** is out scouting._", player.chud_ref().name),
+        BusyReason::Hospitalized => format!("_**{}** is in the hospital._", player.chud_ref().name),
     }
 }
 
@@ -165,7 +165,7 @@ fn apply_gear_action(
             None => return (Some("_Unknown action._".into()), None),
         };
         let item_name = player
-            .chud
+            .chud_ref()
             .equipment
             .item_id_in_slot(slot)
             .and_then(|id| registry.get(id))
@@ -222,7 +222,7 @@ fn apply_gear_action(
         }
         if !player.stash.contains(item_id)
             && !player
-                .chud
+                .chud_ref()
                 .equipment
                 .all_ids()
                 .any(|id| id == item_id)
@@ -307,8 +307,8 @@ pub async fn handle_gear_button(
     let http = &ctx.http;
 
     let mut player = match storage::load_player(user_id)? {
-        Some(p) => p,
-        None => {
+        Some(p) if p.has_chud() => p,
+        _ => {
             let payload = InteractionUpdateResponse::update(ComponentsV2Message {
                 flags: components_v2_flags(),
                 components: vec![Component::Text(TextDisplay::new(

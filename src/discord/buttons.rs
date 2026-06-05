@@ -68,14 +68,14 @@ async fn ephemeral_hospitalized_response(
 
     if let Some(heal_price) = hospital.get_heal_price(user_id) {
         if player.cash >= heal_price {
-            let msg = chud_msg!("busy_hospitalized", player.name, &days_remaining);
+            let msg = chud_msg!("busy_hospitalized", player.chud_ref().name, &days_remaining);
             ephemeral_with_heal_button(ctx, interaction, &msg, user_id, heal_price).await?;
         } else {
-            let msg = chud_msg!("heal_insufficient_funds", player.name);
+            let msg = chud_msg!("heal_insufficient_funds", player.chud_ref().name);
             ephemeral_followup(ctx, interaction, &msg).await?;
         }
     } else {
-        let msg = chud_msg!("busy_hospitalized", player.name, &days_remaining);
+        let msg = chud_msg!("busy_hospitalized", player.chud_ref().name, &days_remaining);
         ephemeral_followup(ctx, interaction, &msg).await?;
     }
     Ok(())
@@ -90,11 +90,11 @@ async fn respond_to_busy(
 ) -> anyhow::Result<()> {
     match reason {
         BusyReason::ActiveQuest { quest_title } => {
-            let msg = chud_msg!("busy_active_quest", player.name, quest_title);
+            let msg = chud_msg!("busy_active_quest", player.chud_ref().name, quest_title);
             ephemeral_followup(ctx, interaction, &msg).await?;
         }
         BusyReason::Scouting => {
-            let msg = chud_msg!("busy_scouting", player.name);
+            let msg = chud_msg!("busy_scouting", player.chud_ref().name);
             ephemeral_followup(ctx, interaction, &msg).await?;
         }
         BusyReason::Hospitalized => {
@@ -111,12 +111,11 @@ async fn announce_taken_quest(
     info: &engine::AssignInfo,
     status: &GuildHallStatus,
 ) -> anyhow::Result<()> {
-    let first_name = info
-        .player
-        .name
+    let chud_name = info.player.chud_ref().name.clone();
+    let first_name = chud_name
         .split_whitespace()
         .next()
-        .unwrap_or(&info.player.name)
+        .unwrap_or(&chud_name)
         .to_string();
     let content = chud_msg!("chud_takes_job", first_name, info.quest_title);
 
@@ -163,8 +162,8 @@ pub async fn handle_take_button(
     let user_id = interaction.user.id.get();
 
     let player = match storage::load_player(user_id)? {
-        Some(p) => p,
-        None => {
+        Some(p) if p.has_chud() => p,
+        _ => {
             ephemeral_followup(ctx, interaction, "You don't have a chud.").await?;
             return Ok(());
         }
@@ -220,8 +219,8 @@ pub async fn handle_scout_button(
     let user_id = interaction.user.id.get();
 
     let player = match storage::load_player(user_id)? {
-        Some(p) => p,
-        None => {
+        Some(p) if p.has_chud() => p,
+        _ => {
             ephemeral_followup(ctx, interaction, "You don't have a chud.").await?;
             return Ok(());
         }
@@ -242,11 +241,11 @@ pub async fn handle_scout_button(
     storage::save_board(&*board)?;
     let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
 
-    let first_name = player
-        .name
+    let chud_name = player.chud_ref().name.clone();
+    let first_name = chud_name
         .split_whitespace()
         .next()
-        .unwrap_or(&player.name)
+        .unwrap_or(&chud_name)
         .to_string();
     let content = format!("**{}** stumbled out the door", first_name);
     append_activity_log(&data.activity_log, &content).await;

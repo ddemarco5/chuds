@@ -65,7 +65,7 @@ fn resolve_quest(
     let reward = board_quest.generated.reward;
 
     let level_up = player.record_quest(&result);
-    let player_name = player.name.clone();
+    let player_name = player.chud_ref().name.clone();
     if passed {
         tracing::info!("{} made ${}", player_name, reward);
         player.cash += reward;
@@ -96,6 +96,7 @@ fn resolve_quest(
         "quest resolved and player saved"
     );
 
+    // Death roll (future): check for lethal outcome here, after quest resolution.
     let hospitalized = !passed
         && result.trials.last().and_then(|t| {
             let mut rng = rand::thread_rng();
@@ -134,6 +135,7 @@ fn resolve_quest(
         level_up,
         reward,
         hospitalized,
+        died: false,
         item_awarded,
         item_award_disposition,
     }))

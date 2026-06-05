@@ -2,10 +2,13 @@ use poise::serenity_prelude as serenity;
 
 use crate::discord::board_ui::recover_persistent_board_messages;
 use crate::discord::buttons::post_quest_taken_announcement;
-use crate::discord::channel::append_activity_log;
+use crate::discord::channel::{append_activity_log, append_activity_log_deferred};
 use crate::discord::context::{admin_guard, Context, Error};
+use crate::discord::report_dm;
 use crate::discord::tick;
-use crate::game::engine;
+use crate::game::engine::{self, DeathContext};
+use crate::game::guild_status;
+use crate::game::persistence::message_cache::ActivityLogKind;
 use crate::game::persistence::storage;
 
 #[poise::command(slash_command)]
@@ -189,7 +192,92 @@ pub async fn save(ctx: Context<'_>) -> Result<(), Error> {
     crate::game::persistence::llm_memory::save_all_llm_memory(
         &ctx.data().generator,
         &ctx.data().item_generator,
+        &ctx.data().gravestone_generator,
     )?;
+    ctx.say("ok").await?;
+    Ok(())
+}
+
+#[poise::command(slash_command)]
+pub async fn admin_kill_chud(
+    ctx: Context<'_>,
+    target_user_id: String,
+    #[description = "Trial situation that killed them"] death_trial: Option<String>,
+    #[description = "Outcome that killed them"] death_outcome: Option<String>,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let target_user_id: u64 = match target_user_id.trim().parse() {
+        Ok(id) => id,
+        Err(_) => {
+            ctx.say("invalid Discord user ID").await?;
+            return Ok(());
+        }
+    };
+
+    let hospital = storage::load_hospital()?;
+    let board = ctx.data().board.lock().await;
+    let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
+    if status.is_busy(target_user_id) {
+        ctx.say("chud is busy").await?;
+        return Ok(());
+    }
+    drop(board);
+
+    let death_ctx = DeathContext {
+        trial: death_trial.unwrap_or_else(|| "Unknown peril".into()),
+        outcome: death_outcome.unwrap_or_else(|| "They did not make it".into()),
+    };
+
+    let mut graveyard = storage::load_graveyard()?;
+    let mut starting_benefits = storage::load_starting_benefits()?;
+    let mut registry = ctx.data().item_registry.lock().await;
+
+    let kill = engine::kill_chud(
+        target_user_id,
+        &death_ctx,
+        &mut graveyard,
+        &mut starting_benefits,
+        &mut *registry,
+        &ctx.data().gravestone_generator,
+    )
+    .await?;
+
+    let first_name = kill
+        .chud_name
+        .split_whitespace()
+        .next()
+        .unwrap_or(&kill.chud_name)
+        .to_string();
+    let return_msg = crate::chud_msg!("return_died", first_name);
+    append_activity_log_deferred(
+        &ctx.data().activity_log,
+        ActivityLogKind::Standard,
+        &return_msg,
+    )
+    .await;
+
+    report_dm::send_death_dm(
+        &ctx.serenity_context().http,
+        &ctx.serenity_context().cache,
+        poise::serenity_prelude::GuildId::new(ctx.data().guild_id),
+        Some(ctx.data().last_mobile.as_ref()),
+        &kill,
+        None,
+    )
+    .await;
+
+    let mut board = ctx.data().board.lock().await;
+    crate::discord::board_ui::refresh_board_status(
+        &ctx.serenity_context().http,
+        ctx.data().channel_id,
+        &mut *board,
+        ctx.data().max_jobs,
+    )
+    .await?;
+
     ctx.say("ok").await?;
     Ok(())
 }

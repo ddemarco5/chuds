@@ -1,10 +1,13 @@
 use crate::chud_msg;
 use crate::discord::components_v2::{
-    Component, ComponentsV2Message, Container, ContainerChild, TextDisplay,
+    components_v2_flags, Component, ComponentsV2Message, Container, ContainerChild, Separator,
+    TextDisplay,
 };
+use crate::game::domain::graveyard::GraveyardEntry;
 use crate::game::domain::item::{Item, ItemType};
 use crate::game::domain::player::Player;
 use crate::game::domain::quest_result::{CompletedTrial, QuestResult};
+use crate::game::engine::KillResult;
 
 /// Collapse whitespace so Discord `*italic*` markers stay on one line.
 fn markdown_italic_line(text: &str) -> String {
@@ -14,6 +17,7 @@ fn markdown_italic_line(text: &str) -> String {
 /// Accent colors for quest outcome containers (RGB integers).
 const ACCENT_PASSED: u32 = 0x57F287;
 const ACCENT_FAILED: u32 = 0xED4245;
+const ACCENT_DEATH: u32 = 0x2F3136;
 
 /// Preamble, outcome, and ordered mobile segments — built once for every DM delivery path.
 pub struct DmCompletionContent {
@@ -151,7 +155,7 @@ fn build_dm_preamble_segments(
     segments
 }
 
-fn pack_dm_segments(segments: &[String], limit: usize) -> Vec<String> {
+pub fn pack_dm_segments(segments: &[String], limit: usize) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
     let mut current = String::new();
 
@@ -255,13 +259,82 @@ fn format_completion_footer(
         out.push_str(&format!(
             "{} has improved! - Strength {}, Smarts {}, Stealth {}, Experience {}",
             player_name,
-            fmt_stat(level_up.str_up, player.strength),
-            fmt_stat(level_up.smt_up, player.smarts),
-            fmt_stat(level_up.sth_up, player.stealth),
-            fmt_stat(level_up.exp_up, player.experience),
+            fmt_stat(level_up.str_up, player.chud_ref().strength),
+            fmt_stat(level_up.smt_up, player.chud_ref().smarts),
+            fmt_stat(level_up.sth_up, player.chud_ref().stealth),
+            fmt_stat(level_up.exp_up, player.chud_ref().experience),
         ));
     }
     out
+}
+
+pub struct DmDeathContent {
+    pub body: String,
+}
+
+impl DmDeathContent {
+    pub fn plain(&self) -> String {
+        self.body.clone()
+    }
+}
+
+pub fn build_dm_death_content(kill: &KillResult, summary: Option<&str>) -> DmDeathContent {
+    let mut sections = vec![chud_msg!("dm_died", kill.chud_name)];
+    if let Some(summary) = summary.filter(|s| !s.is_empty()) {
+        sections.push(summary.to_string());
+    }
+    sections.push(format!("*{}*", kill.epitaph));
+    if kill.benefits_awarded > 0 {
+        sections.push(chud_msg!("dm_starting_benefits", kill.benefits_awarded));
+    }
+    DmDeathContent {
+        body: sections.join("\n\n"),
+    }
+}
+
+pub fn build_dm_death_components(content: &DmDeathContent) -> ComponentsV2Message {
+    ComponentsV2Message::channel(vec![Component::Container(Container::with_accent(
+        ACCENT_DEATH,
+        vec![ContainerChild::Text(TextDisplay::new(content.body.clone()))],
+    ))])
+}
+
+fn to_doublestruck_caps(s: &str) -> String {
+    s.to_uppercase()
+        .chars()
+        .map(|c| match c {
+            'A'..='Z' => char::from_u32(0x1D538 + (c as u32 - 'A' as u32)).unwrap_or(c),
+            '0'..='9' => char::from_u32(0x1D7D8 + (c as u32 - '0' as u32)).unwrap_or(c),
+            other => other,
+        })
+        .collect()
+}
+
+fn format_gravestone_name(name: &str) -> String {
+    // CV2 Text Display has no center alignment; `#` heading gives the name prominence.
+    format!("# {}", to_doublestruck_caps(name))
+}
+
+fn format_gravestone_epitaph(epitaph: &str) -> String {
+    epitaph.to_uppercase()
+}
+
+pub fn build_graveyard_components(entries: &[GraveyardEntry]) -> ComponentsV2Message {
+    let mut inner: Vec<ContainerChild> = Vec::new();
+    for (i, entry) in entries.iter().enumerate() {
+        if i > 0 {
+            inner.push(ContainerChild::Separator(Separator::section()));
+        }
+        inner.push(ContainerChild::Text(TextDisplay::new(format_gravestone_name(
+            &entry.chud.name,
+        ))));
+        inner.push(ContainerChild::Text(TextDisplay::new(format_gravestone_epitaph(
+            &entry.epitaph,
+        ))));
+    }
+    let mut message = ComponentsV2Message::channel_box(inner, None);
+    message.flags = components_v2_flags();
+    message
 }
 
 fn item_type_label(item_type: ItemType) -> &'static str {

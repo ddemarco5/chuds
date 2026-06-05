@@ -5,6 +5,7 @@ use anyhow::Context;
 use rig::completion::message::Message;
 use serde::{Deserialize, Serialize};
 
+use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::memory::LlmMemorySlot;
 use crate::game::generation::quest_generator::QuestGenerator;
@@ -19,6 +20,8 @@ pub struct LlmMemoryBundle {
     pub trials: HashMap<String, Vec<Message>>,
     pub results: HashMap<String, Vec<Message>>,
     pub item: HashMap<String, Vec<Message>>,
+    #[serde(default)]
+    pub gravestone: HashMap<String, Vec<Message>>,
 }
 
 impl Default for LlmMemoryBundle {
@@ -29,6 +32,7 @@ impl Default for LlmMemoryBundle {
             trials: HashMap::new(),
             results: HashMap::new(),
             item: HashMap::new(),
+            gravestone: HashMap::new(),
         }
     }
 }
@@ -72,6 +76,7 @@ fn try_load_llm_memory_bundle() -> anyhow::Result<LlmMemoryBundle> {
         trials_msgs = bundle.trials.values().map(|v| v.len()).sum::<usize>(),
         results_msgs = bundle.results.values().map(|v| v.len()).sum::<usize>(),
         item_msgs = bundle.item.values().map(|v| v.len()).sum::<usize>(),
+        gravestone_msgs = bundle.gravestone.values().map(|v| v.len()).sum::<usize>(),
         "LLM memory loaded from disk"
     );
     Ok(bundle)
@@ -93,12 +98,17 @@ pub fn save_llm_memory_bundle(bundle: &LlmMemoryBundle) -> anyhow::Result<()> {
         trials_msgs = bundle.trials.values().map(|v| v.len()).sum::<usize>(),
         results_msgs = bundle.results.values().map(|v| v.len()).sum::<usize>(),
         item_msgs = bundle.item.values().map(|v| v.len()).sum::<usize>(),
+        gravestone_msgs = bundle.gravestone.values().map(|v| v.len()).sum::<usize>(),
         "LLM memory saved to disk"
     );
     Ok(())
 }
 
-fn bundle_from_generators(quest: &QuestGenerator, item: &ItemGenerator) -> LlmMemoryBundle {
+fn bundle_from_generators(
+    quest: &QuestGenerator,
+    item: &ItemGenerator,
+    gravestone: &GravestoneGenerator,
+) -> LlmMemoryBundle {
     LlmMemoryBundle {
         version: BUNDLE_VERSION,
         description: quest
@@ -111,12 +121,17 @@ fn bundle_from_generators(quest: &QuestGenerator, item: &ItemGenerator) -> LlmMe
             .memory_for_slot(LlmMemorySlot::Results)
             .export_filtered_store(),
         item: item.memory().export_filtered_store(),
+        gravestone: gravestone.memory().export_filtered_store(),
     }
 }
 
 /// Snapshot all agent memories and write them to disk.
-pub fn save_all_llm_memory(quest: &QuestGenerator, item: &ItemGenerator) -> anyhow::Result<()> {
-    let bundle = bundle_from_generators(quest, item);
+pub fn save_all_llm_memory(
+    quest: &QuestGenerator,
+    item: &ItemGenerator,
+    gravestone: &GravestoneGenerator,
+) -> anyhow::Result<()> {
+    let bundle = bundle_from_generators(quest, item, gravestone);
     save_llm_memory_bundle(&bundle)
 }
 
@@ -124,6 +139,7 @@ pub fn save_all_llm_memory(quest: &QuestGenerator, item: &ItemGenerator) -> anyh
 pub fn clear_llm_memory(
     quest: &QuestGenerator,
     item: &ItemGenerator,
+    gravestone: &GravestoneGenerator,
     slot: LlmMemorySlot,
 ) -> anyhow::Result<()> {
     match slot {
@@ -135,6 +151,7 @@ pub fn clear_llm_memory(
         LlmMemorySlot::Trials => quest.memory_for_slot(LlmMemorySlot::Trials).clear_all(),
         LlmMemorySlot::Results => quest.memory_for_slot(LlmMemorySlot::Results).clear_all(),
         LlmMemorySlot::Item => item.memory().clear_all(),
+        LlmMemorySlot::Gravestone => gravestone.memory().clear_all(),
         LlmMemorySlot::All => {
             quest
                 .memory_for_slot(LlmMemorySlot::Description)
@@ -142,8 +159,9 @@ pub fn clear_llm_memory(
             quest.memory_for_slot(LlmMemorySlot::Trials).clear_all();
             quest.memory_for_slot(LlmMemorySlot::Results).clear_all();
             item.memory().clear_all();
+            gravestone.memory().clear_all();
         }
     }
     tracing::info!(?slot, "LLM memory cleared");
-    save_all_llm_memory(quest, item)
+    save_all_llm_memory(quest, item, gravestone)
 }

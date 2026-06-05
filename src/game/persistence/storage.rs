@@ -5,7 +5,9 @@ use anyhow::Context;
 use tokio::sync::{Mutex, MutexGuard};
 
 use crate::game::domain::board::Board;
+use crate::game::domain::graveyard::Graveyard;
 use crate::game::domain::hospital::Hospital;
+use crate::game::domain::starting_benefits::StartingBenefits;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::Player;
@@ -16,6 +18,8 @@ const JOB_QUEUE_PATH: &str = "data/job_queue.yaml";
 const PLAYERS_DIR: &str = "data/players";
 const BOARD_PATH: &str = "data/board.yaml";
 const HOSPITAL_PATH: &str = "data/hospital.yaml";
+const GRAVEYARD_PATH: &str = "data/graveyard.yaml";
+const STARTING_BENEFITS_PATH: &str = "data/starting_benefits.yaml";
 const MESSAGE_CACHE_PATH: &str = "data/message_cache.yaml";
 const CHUDMASTERS_PATH: &str = "data/chudmasters.yaml";
 const ITEM_REGISTRY_PATH: &str = "data/item_registry.yaml";
@@ -81,6 +85,38 @@ pub fn load_hospital() -> anyhow::Result<Hospital> {
     serde_yaml::from_str(&yaml).context("parsing hospital")
 }
 
+/// Persist the graveyard to `data/graveyard.yaml`.
+pub fn save_graveyard(graveyard: &Graveyard) -> anyhow::Result<()> {
+    std::fs::create_dir_all("data")?;
+    let yaml = serde_yaml::to_string(graveyard).context("serializing graveyard")?;
+    std::fs::write(GRAVEYARD_PATH, yaml).context("writing graveyard")
+}
+
+/// Load the graveyard from disk, or return empty if no file exists.
+pub fn load_graveyard() -> anyhow::Result<Graveyard> {
+    if !Path::new(GRAVEYARD_PATH).exists() {
+        return Ok(Graveyard::default());
+    }
+    let yaml = std::fs::read_to_string(GRAVEYARD_PATH).context("reading graveyard")?;
+    serde_yaml::from_str(&yaml).context("parsing graveyard")
+}
+
+/// Persist starting benefits to `data/starting_benefits.yaml`.
+pub fn save_starting_benefits(benefits: &StartingBenefits) -> anyhow::Result<()> {
+    std::fs::create_dir_all("data")?;
+    let yaml = serde_yaml::to_string(benefits).context("serializing starting benefits")?;
+    std::fs::write(STARTING_BENEFITS_PATH, yaml).context("writing starting benefits")
+}
+
+/// Load starting benefits from disk, or return empty if no file exists.
+pub fn load_starting_benefits() -> anyhow::Result<StartingBenefits> {
+    if !Path::new(STARTING_BENEFITS_PATH).exists() {
+        return Ok(StartingBenefits::default());
+    }
+    let yaml = std::fs::read_to_string(STARTING_BENEFITS_PATH).context("reading starting benefits")?;
+    serde_yaml::from_str(&yaml).context("parsing starting benefits")
+}
+
 /// Persist the job queue to `data/job_queue.yaml`.
 pub fn save_job_queue(queue: &JobQueue) -> anyhow::Result<()> {
     std::fs::create_dir_all("data")?;
@@ -105,7 +141,9 @@ pub fn find_player_by_name(name: &str) -> anyhow::Result<Option<Player>> {
     }
     for &id in &list_player_ids()? {
         if let Some(player) = load_player(id)? {
-            if player.name.eq_ignore_ascii_case(needle) {
+            if player.has_chud()
+                && player.chud_ref().name.eq_ignore_ascii_case(needle)
+            {
                 return Ok(Some(player));
             }
         }

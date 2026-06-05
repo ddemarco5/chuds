@@ -30,11 +30,12 @@ const MAX_STAT: u8 = 10;
 // |  10 |  70.0%  |       85.0%   |       73.0%   |
 
 pub fn effective_stats(player: &Player, registry: &ItemRegistry) -> (u8, u8, u8) {
-    let mut strength = player.strength as i16;
-    let mut smarts = player.smarts as i16;
-    let mut stealth = player.stealth as i16;
+    let chud = player.chud_ref();
+    let mut strength = chud.strength as i16;
+    let mut smarts = chud.smarts as i16;
+    let mut stealth = chud.stealth as i16;
 
-    for id in player.chud.equipment.all_ids() {
+    for id in chud.equipment.all_ids() {
         if let Some(item) = registry.get(id) {
             let (a, b, c) = item.stats.total_modifier();
             strength += a;
@@ -54,7 +55,7 @@ fn roll_aids(player: &Player, registry: &ItemRegistry, stat: StatChoice) -> (u8,
     let mut floor = 0u8;
     let mut modifier = 0i16;
 
-    for id in player.chud.equipment.all_ids() {
+    for id in player.chud_ref().equipment.all_ids() {
         if let Some(item) = registry.get(id) {
             let (f_str, f_smt, f_sth) = item.stats.total_floor();
             let (m_str, m_smt, m_sth) = item.stats.total_modifier();
@@ -107,7 +108,7 @@ fn choose_stat(
 
     let best_margin = valid.iter().map(|&(_, m)| m).max().unwrap_or(0);
 
-    let t = (player.experience - 1) as f64 / 9.0;
+    let t = (player.chud_ref().experience - 1) as f64 / 9.0;
     let dropout_prob = EXP_DROPOUT_MIN + t * (EXP_DROPOUT_MAX - EXP_DROPOUT_MIN);
 
     let considered: Vec<StatChoice> = valid

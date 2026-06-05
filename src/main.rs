@@ -76,8 +76,15 @@ async fn main() -> anyhow::Result<()> {
         &api_key,
         &llm_memory,
     )?);
+    let gravestone_generator = Arc::new(
+        chuds::game::generation::gravestone_generator::GravestoneGenerator::new(
+            &api_key,
+            &llm_memory,
+        )?,
+    );
     let shutdown_quest = Arc::clone(&generator);
     let shutdown_item = Arc::clone(&item_generator);
+    let shutdown_gravestone = Arc::clone(&gravestone_generator);
     let game_state = GameState::load()?;
     let board = Arc::new(tokio::sync::Mutex::new(game_state.board));
     let job_queue = Arc::new(tokio::sync::Mutex::new(game_state.job_queue));
@@ -111,6 +118,8 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::delete_cm(),
                 discord::commands::admin_take_gen_item(),
                 discord::commands::admin_redraw(),
+                discord::commands::admin_kill_chud(),
+                discord::commands::graveyard(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
@@ -287,6 +296,7 @@ async fn main() -> anyhow::Result<()> {
                 Ok(Data {
                     generator,
                     item_generator,
+                    gravestone_generator,
                     board,
                     job_queue,
                     item_registry,
@@ -319,6 +329,7 @@ async fn main() -> anyhow::Result<()> {
             chuds::game::persistence::llm_memory::save_all_llm_memory(
                 &shutdown_quest,
                 &shutdown_item,
+                &shutdown_gravestone,
             )?;
             res.map_err(|e| anyhow::anyhow!("Discord client error: {e}"))
         }
@@ -327,6 +338,7 @@ async fn main() -> anyhow::Result<()> {
             chuds::game::persistence::llm_memory::save_all_llm_memory(
                 &shutdown_quest,
                 &shutdown_item,
+                &shutdown_gravestone,
             )?;
             Ok(())
         }

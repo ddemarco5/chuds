@@ -1,16 +1,32 @@
 use crate::game::domain::board::{Board, BoardQuest};
+use crate::game::domain::graveyard::{Graveyard, GraveyardEntry};
 use crate::game::domain::hospital::Hospital;
+use crate::game::domain::starting_benefits::StartingBenefits;
 use crate::game::guild_status::GuildHallStatus;
 use crate::game::domain::item::{EquipmentSlot, ItemType};
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{create_chud, Player};
 use crate::game::domain::quest_result::QuestResult;
+use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator, QuestResults, TrialResult};
 use crate::game::tuneable_rolls::{item_drop_chance, roll_item, roll_item_drop, roll_item_value, roll_trials};
 use crate::game::mechanics::simulation::{effective_stats, play_quest};
 use crate::game::persistence::storage;
+
+/// Context about what killed a chud, used for epitaph generation.
+pub struct DeathContext {
+    pub trial: String,
+    pub outcome: String,
+}
+
+pub struct KillResult {
+    pub discord_user_id: u64,
+    pub chud_name: String,
+    pub benefits_awarded: u32,
+    pub epitaph: String,
+}
 
 /// Info returned after a chud accepts a quest.
 pub struct AssignInfo {
@@ -155,12 +171,27 @@ pub fn delete_quest(board: &mut Board, quest_id: u32) -> anyhow::Result<()> {
 
 /// Create a chud for a Discord user and save it. Errors if one already exists.
 pub fn add_chud(discord_user_id: u64, name: String, description: String) -> anyhow::Result<Player> {
-    if storage::load_player(discord_user_id)?.is_some() {
-        anyhow::bail!("chud already exists for user {}", discord_user_id);
+    let mut benefits = storage::load_starting_benefits()?;
+    let bonus = benefits.take(discord_user_id);
+
+    if let Some(mut player) = storage::load_player(discord_user_id)? {
+        if player.has_chud() {
+            anyhow::bail!("chud already exists for user {}", discord_user_id);
+        }
+        let chud = create_chud(discord_user_id, name, description);
+        player.chud = chud.chud;
+        player.cash = player.cash.saturating_add(bonus);
+        storage::save_player(&player)?;
+        storage::save_starting_benefits(&benefits)?;
+        tracing::info!(name = %player.chud_ref().name, discord_user_id, bonus, "chud respawned");
+        return Ok(player);
     }
-    let player = create_chud(discord_user_id, name, description);
+
+    let mut player = create_chud(discord_user_id, name, description);
+    player.cash = player.cash.saturating_add(bonus);
     storage::save_player(&player)?;
-    tracing::info!(name = %player.name, discord_user_id, "chud created");
+    storage::save_starting_benefits(&benefits)?;
+    tracing::info!(name = %player.chud_ref().name, discord_user_id, bonus, "chud created");
     Ok(player)
 }
 
@@ -180,6 +211,7 @@ pub fn assign_chud_to_quest(
     pre_assign_status: Option<&GuildHallStatus>,
 ) -> anyhow::Result<AssignInfo> {
     let player = storage::load_player(discord_user_id)?
+        .filter(|p| p.has_chud())
         .ok_or_else(|| anyhow::anyhow!("no chud found for user {}", discord_user_id))?;
 
     let busy = match pre_assign_status {
@@ -239,15 +271,15 @@ pub fn award_pending_item(
     }
 
     if let Some(slot) = player
-        .chud
+        .chud_mut()
         .equipment
         .empty_slot_for_item_type(awarded.item_type)
     {
-        *player.chud.equipment.slot_mut(slot) = Some(id);
+        *player.chud_mut().equipment.slot_mut(slot) = Some(id);
         storage::save_player(player)?;
         storage::save_item_registry(registry)?;
         tracing::info!(
-            player = %player.name,
+            player = %player.chud_ref().name,
             item = %awarded.name,
             slot = %slot.label(),
             "stash full, auto-equipped quest item"
@@ -263,7 +295,7 @@ pub fn award_pending_item(
     storage::save_player(player)?;
     storage::save_item_registry(registry)?;
     tracing::info!(
-        player = %player.name,
+        player = %player.chud_ref().name,
         item = %awarded.name,
         gold,
         "stash full and no empty slot, auto-sold quest item"
@@ -273,7 +305,7 @@ pub fn award_pending_item(
 
 fn equip_item_id(player: &mut Player, item_id: u32, item_type: ItemType) -> Option<u32> {
     player
-        .chud
+        .chud_mut()
         .equipment
         .slot_for_item_type(item_type)
         .replace(item_id)
@@ -303,12 +335,12 @@ pub fn equip_from_stash(
 /// Move an equipped item into the stash.
 pub fn unequip_slot(player: &mut Player, slot: EquipmentSlot) -> anyhow::Result<()> {
     let item_id = player
-        .chud
+        .chud_mut()
         .equipment
         .item_id_in_slot(slot)
         .ok_or_else(|| anyhow::anyhow!("slot is empty"))?;
     player.stash.push(item_id)?;
-    *player.chud.equipment.slot_mut(slot) = None;
+    *player.chud_mut().equipment.slot_mut(slot) = None;
     storage::save_player(player)?;
     Ok(())
 }
@@ -316,14 +348,14 @@ pub fn unequip_slot(player: &mut Player, slot: EquipmentSlot) -> anyhow::Result<
 fn player_owns_item(player: &Player, item_id: u32) -> bool {
     player.stash.contains(item_id)
         || player
-            .chud
+            .chud_ref()
             .equipment
             .all_ids()
             .any(|id| id == item_id)
 }
 
 fn clear_equipped_item(player: &mut Player, item_id: u32) {
-    let eq = &mut player.chud.equipment;
+    let eq = &mut player.chud_mut().equipment;
     if eq.gear == Some(item_id) {
         eq.gear = None;
     } else if eq.weapon == Some(item_id) {
@@ -395,7 +427,7 @@ pub async fn generate_result(
         .collect();
 
     let equipped: Vec<_> = player
-        .chud
+        .chud_ref()
         .equipment
         .all_ids()
         .filter_map(|id| item_registry.get(id))
@@ -407,7 +439,7 @@ pub async fn generate_result(
             &board_quest.quest_data,
             &board_quest.generated,
             &trial_results,
-            &player.name,
+            &player.chud_ref().name,
             &adventurer_description,
         )
         .await?;
@@ -448,9 +480,89 @@ pub async fn generate_result(
     Ok(result)
 }
 
+fn collect_owned_item_ids(player: &Player) -> Vec<u32> {
+    let mut ids: Vec<u32> = player.stash.items().to_vec();
+    for id in player.chud_ref().equipment.all_ids() {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    ids
+}
+
+/// Sell all items on a chud and return the total value before halving.
+pub fn liquidate_chud_items(player: &mut Player, registry: &mut ItemRegistry) -> u32 {
+    let item_ids = collect_owned_item_ids(player);
+    let mut total = 0u32;
+    for item_id in item_ids {
+        if let Some(item) = registry.get(item_id) {
+            total = total.saturating_add(item.value);
+        }
+        player.stash.remove(item_id);
+        clear_equipped_item(player, item_id);
+        registry.remove(item_id);
+    }
+    total
+}
+
+/// Kill a chud: liquidate items, award starting benefits, bury in graveyard, remove chud.
+pub async fn kill_chud(
+    discord_user_id: u64,
+    ctx: &DeathContext,
+    graveyard: &mut Graveyard,
+    starting_benefits: &mut StartingBenefits,
+    registry: &mut ItemRegistry,
+    gravestone_generator: &GravestoneGenerator,
+) -> anyhow::Result<KillResult> {
+    let mut player = storage::load_player(discord_user_id)?
+        .filter(|p| p.has_chud())
+        .ok_or_else(|| anyhow::anyhow!("no chud found for user {}", discord_user_id))?;
+
+    let chud = player.chud.clone().expect("checked has_chud");
+    let chud_name = chud.name.clone();
+
+    let epitaph = gravestone_generator
+        .generate(&chud, &ctx.trial, &ctx.outcome)
+        .await?;
+
+    let total = liquidate_chud_items(&mut player, registry);
+    let benefits_awarded = total / 2;
+    starting_benefits.add(discord_user_id, benefits_awarded);
+
+    graveyard.bury(GraveyardEntry {
+        discord_user_id,
+        chud,
+        epitaph: epitaph.clone(),
+        death_trial: ctx.trial.clone(),
+        death_outcome: ctx.outcome.clone(),
+    });
+
+    player.chud = None;
+    storage::save_player(&player)?;
+    storage::save_graveyard(graveyard)?;
+    storage::save_starting_benefits(starting_benefits)?;
+    storage::save_item_registry(registry)?;
+
+    tracing::info!(
+        discord_user_id,
+        chud = %chud_name,
+        benefits_awarded,
+        "chud killed"
+    );
+
+    Ok(KillResult {
+        discord_user_id,
+        chud_name,
+        benefits_awarded,
+        epitaph,
+    })
+}
+
 pub fn save_all(board: &Board, item_registry: &ItemRegistry) -> anyhow::Result<()> {
     storage::save_board(board)?;
     storage::save_item_registry(item_registry)?;
+    storage::save_graveyard(&storage::load_graveyard()?)?;
+    storage::save_starting_benefits(&storage::load_starting_benefits()?)?;
     let ids = storage::list_player_ids()?;
     let count = ids.len();
     for id in ids {

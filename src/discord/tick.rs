@@ -97,7 +97,9 @@ pub async fn execute_tick(
             .next()
             .unwrap_or(&qr.player_name)
             .to_string();
-        let return_key = if qr.hospitalized {
+        let return_key = if qr.died {
+            "return_died"
+        } else if qr.hospitalized {
             "return_hospitalized"
         } else if qr.result.passed {
             "return_passed"
@@ -141,12 +143,13 @@ pub async fn execute_tick(
         let active_player_name: Option<String> = sr
             .active_discord_user_id
             .and_then(|id| storage::load_player(id).ok().flatten())
-            .map(|p| p.chud.name);
+            .filter(|p| p.has_chud())
+            .map(|p| p.chud_ref().name.clone());
         let scouting_player_names: Vec<String> = sr
             .other_scouting_discord_user_ids
             .iter()
-            .filter_map(|&id| storage::load_player(id).ok().flatten())
-            .map(|p| p.chud.name)
+            .filter_map(|&id| storage::load_player(id).ok().flatten().filter(|p| p.has_chud()))
+            .map(|p| p.chud_ref().name.clone())
             .collect();
         let scouting_name_refs: Vec<&str> = scouting_player_names.iter().map(String::as_str).collect();
         let dm_content = formatting::format_dm_scouting_report(

@@ -28,8 +28,8 @@ pub fn scouting_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyho
 
     for &(quest_id, discord_user_id) in &scouting {
         let player = match storage::load_player(discord_user_id)? {
-            Some(p) => p,
-            None => {
+            Some(p) if p.has_chud() => p,
+            _ => {
                 tracing::warn!(discord_user_id, quest_id, "scouting player not found, skipping");
                 continue;
             }
@@ -50,7 +50,7 @@ pub fn scouting_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyho
         )?;
         tracing::info!(
             "{} checked job {} and sees a {:.2}% chance of success.",
-            player.name,
+            player.chud_ref().name,
             quest_id,
             chance * 100.0
         );
@@ -64,7 +64,7 @@ pub fn scouting_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyho
             .collect();
         outcome.scout_results.push(ScoutResult {
             discord_user_id,
-            player_name: player.name.clone(),
+            player_name: player.chud_ref().name.clone(),
             quest_title,
             quest_days,
             chance,

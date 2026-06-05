@@ -12,14 +12,15 @@ use crate::game::persistence::storage;
 #[poise::command(slash_command)]
 pub async fn chud(ctx: Context<'_>, name: String, description: String) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    if storage::load_player(ctx.author().id.get())?.is_some() {
+    if storage::load_player(ctx.author().id.get())?.is_some_and(|p| p.has_chud()) {
         ctx.say("you've already got a chud").await?;
         return Ok(());
     }
     let player = engine::add_chud(ctx.author().id.get(), name, description)?;
+    let chud = player.chud_ref();
     let content = format!(
         "A chudly **{}** saunters through the door.\n{}",
-        player.name, player.description
+        chud.name, chud.description
     );
     let http = &ctx.serenity_context().http;
     append_activity_log(&ctx.data().activity_log, &content).await;
@@ -56,18 +57,19 @@ pub async fn inspect(ctx: Context<'_>, name: String) -> Result<(), Error> {
     let msg = match storage::find_player_by_name(&name)? {
         None => chud_msg!("inspect_not_found", name),
         Some(player) if player.discord_user_id == author_id => {
-            chud_msg!("inspect_self", player.name)
+            chud_msg!("inspect_self", player.chud_ref().name)
         }
         Some(player) => {
+            let chud = player.chud_ref();
             let board = ctx.data().board.lock().await;
             let hospital = storage::load_hospital()?;
             let status = guild_status::compute_guild_hall_status(&board, &hospital)?;
             match status.busy_reason(player.discord_user_id) {
-                None => chud_msg!("inspect_description", player.name, player.description),
-                Some(BusyReason::ActiveQuest { .. }) => chud_msg!("inspect_busy_job", player.name),
-                Some(BusyReason::Scouting) => chud_msg!("inspect_busy_scouting", player.name),
+                None => chud_msg!("inspect_description", chud.name, chud.description),
+                Some(BusyReason::ActiveQuest { .. }) => chud_msg!("inspect_busy_job", chud.name),
+                Some(BusyReason::Scouting) => chud_msg!("inspect_busy_scouting", chud.name),
                 Some(BusyReason::Hospitalized) => {
-                    chud_msg!("inspect_busy_hospital", player.name)
+                    chud_msg!("inspect_busy_hospital", chud.name)
                 }
             }
         }
@@ -83,10 +85,12 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     let player = storage::load_player(user_id)?;
     match player {
         None => ctx.say("You don't have a chud.").await?,
+        Some(p) if !p.has_chud() => ctx.say("You don't have a chud.").await?,
         Some(p) => {
+            let chud = p.chud_ref();
             let registry = ctx.data().item_registry.lock().await;
             let mut equipment_lines = Vec::new();
-            if let Some(id) = p.chud.equipment.gear {
+            if let Some(id) = chud.equipment.gear {
                 if let Some(item) = registry.get(id) {
                     equipment_lines.push(format!(
                         "Gear: **{}** ({}) [{}]",
@@ -96,7 +100,7 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
                     ));
                 }
             }
-            if let Some(id) = p.chud.equipment.weapon {
+            if let Some(id) = chud.equipment.weapon {
                 if let Some(item) = registry.get(id) {
                     equipment_lines.push(format!(
                         "Weapon: **{}** [{}]",
@@ -105,7 +109,7 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
                     ));
                 }
             }
-            for (i, slot) in p.chud.equipment.misc.iter().enumerate() {
+            for (i, slot) in chud.equipment.misc.iter().enumerate() {
                 if let Some(id) = slot {
                     if let Some(item) = registry.get(*id) {
                         equipment_lines.push(format!(
@@ -137,8 +141,8 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
             let msg = if equipment.is_empty() {
                 format!(
                     "**{}**\n{}\n\n{}\n{}\n{}\n\nYou've got ${} worth of loose change.",
-                    p.name,
-                    p.description,
+                    chud.name,
+                    chud.description,
                     stash_line,
                     stats_line,
                     p.format_job_record(),
@@ -147,8 +151,8 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
             } else {
                 format!(
                     "**{}**\n{}\n\n{}\n\n{}\n{}\n{}\n\nYou've got ${} worth of loose change.",
-                    p.name,
-                    p.description,
+                    chud.name,
+                    chud.description,
                     equipment,
                     stash_line,
                     stats_line,
@@ -173,7 +177,7 @@ pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let user_id = ctx.author().id.get();
     let player = storage::load_player(user_id)?;
-    let Some(player) = player else {
+    let Some(player) = player.filter(|p| p.has_chud()) else {
         ctx.say("You don't have a chud.").await?;
         return Ok(());
     };
@@ -213,12 +217,17 @@ pub async fn job(ctx: Context<'_>) -> Result<(), Error> {
             ctx.say("You don't have a chud.").await?;
             return Ok(());
         }
+        Some(p) if !p.has_chud() => {
+            ctx.say("You don't have a chud.").await?;
+            return Ok(());
+        }
         Some(p) => p,
     };
+    let chud_name = player.chud_ref().name.clone();
     let board = ctx.data().board.lock().await;
     match board.active_quest_for(user_id) {
         None => ctx
-            .say(format!("**{}** is not on a job.", player.name))
+            .say(format!("**{chud_name}** is not on a job."))
             .await?,
         Some(q) => {
             let mut msg = format!(
@@ -227,8 +236,7 @@ pub async fn job(ctx: Context<'_>) -> Result<(), Error> {
             );
             if q.quest_data.trials.len() > 1 {
                 msg.push_str(&format!(
-                    "\n\n{} is overcoming trials and tribulations.",
-                    player.name
+                    "\n\n{chud_name} is overcoming trials and tribulations.",
                 ));
             }
             ctx.say(msg).await?

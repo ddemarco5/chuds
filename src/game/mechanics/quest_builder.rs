@@ -21,10 +21,11 @@ impl StatChoice {
     }
 
     pub fn player_stat(&self, player: &Player) -> u8 {
+        let chud = player.chud_ref();
         match self {
-            Self::Strength => player.strength,
-            Self::Smarts => player.smarts,
-            Self::Stealth => player.stealth,
+            Self::Strength => chud.strength,
+            Self::Smarts => chud.smarts,
+            Self::Stealth => chud.stealth,
         }
     }
 

@@ -32,6 +32,7 @@ pub struct QuestResolved {
     pub level_up: LevelUp,
     pub reward: u32,
     pub hospitalized: bool,
+    pub died: bool,
     pub item_awarded: Option<Item>,
     pub item_award_disposition: Option<crate::game::engine::ItemAwardDisposition>,
 }

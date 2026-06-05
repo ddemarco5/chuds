@@ -11,12 +11,14 @@ use crate::game::domain::board::Board;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::engine::GenerationJob;
+use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::QuestGenerator;
 
 pub struct Data {
     pub generator: Arc<QuestGenerator>,
     pub item_generator: Arc<ItemGenerator>,
+    pub gravestone_generator: Arc<GravestoneGenerator>,
     pub board: Arc<tokio::sync::Mutex<Board>>,
     pub job_queue: Arc<tokio::sync::Mutex<JobQueue>>,
     pub item_registry: Arc<tokio::sync::Mutex<ItemRegistry>>,

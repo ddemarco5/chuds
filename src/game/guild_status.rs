@@ -89,7 +89,9 @@ pub fn compute_guild_hall_status(
             continue;
         }
         if let Some(player) = storage::load_player(id)? {
-            idle_names.push(player.name.clone());
+            if player.has_chud() {
+                idle_names.push(player.chud_ref().name.clone());
+            }
         }
     }
     idle_names.sort();

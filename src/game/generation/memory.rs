@@ -14,6 +14,7 @@ pub enum LlmMemorySlot {
     Trials,
     Results,
     Item,
+    Gravestone,
     All,
 }
 

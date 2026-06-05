@@ -216,3 +216,29 @@ inspect_busy_hospital:
   - "**{}** isn't here — they're in the hospital all messed up."
   - "**{}** is laid up in the infirmary."
   - "You won't find **{}**; they're in the hospital getting patched up."
+
+return_died:
+  - "{} won't be coming back."
+  - "{} has shuffled off this mortal coil."
+  - "RIP {}. They had a good run."
+  - "{} is dead. Long live the next chud."
+
+dm_died:
+  - "**{}** has died."
+  - "**{}** didn't make it."
+  - "Your chud **{}** is gone."
+
+dm_starting_benefits:
+  - "Their belongings sold for ${}... all the better for the next chud."
+  - "${} from their gear is set aside for your next chud."
+  - "You inherit ${} from their estate when you spawn a new chud."
+
+graveyard_visit:
+  - "{} wanders around the graveyard."
+  - "{} pays their respects at the graveyard."
+  - "{} shuffles through the graveyard, reading the stones."
+
+graveyard_empty:
+  - "The graveyard is empty. For now."
+  - "No gravestones yet. Lucky you."
+  - "Nothing here but weeds and potential."

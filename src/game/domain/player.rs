@@ -1,5 +1,3 @@
-use std::ops::{Deref, DerefMut};
-
 use serde::{Deserialize, Serialize};
 
 use crate::game::domain::item::Item;
@@ -81,20 +79,8 @@ pub struct Player {
     pub cash: u32,
     #[serde(default)]
     pub stash: Stash,
-    pub chud: Chud,
-}
-
-impl Deref for Player {
-    type Target = Chud;
-    fn deref(&self) -> &Self::Target {
-        &self.chud
-    }
-}
-
-impl DerefMut for Player {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.chud
-    }
+    #[serde(default)]
+    pub chud: Option<Chud>,
 }
 
 fn format_stat_value(label: &str, raw: u8, effective: u8) -> String {
@@ -118,18 +104,37 @@ fn apply_wins(val: &mut u8, counter: &mut u32, wins: u32, base: u32) -> bool {
 }
 
 impl Player {
+    pub fn has_chud(&self) -> bool {
+        self.chud.is_some()
+    }
+
+    pub fn chud_ref(&self) -> &Chud {
+        self.chud.as_ref().expect("player has no chud")
+    }
+
+    pub fn chud_mut(&mut self) -> &mut Chud {
+        self.chud.as_mut().expect("player has no chud")
+    }
+
     pub fn format_stats(&self) -> String {
+        let chud = self.chud_ref();
         format!(
             "{} -- *Strength {}, Smarts {}, Stealth {}, Experience {}*\n{} job completed, {} failed",
-            self.name, self.strength, self.smarts, self.stealth, self.experience,
-            self.total_job_successes, self.total_job_failures
+            chud.name,
+            chud.strength,
+            chud.smarts,
+            chud.stealth,
+            chud.experience,
+            chud.total_job_successes,
+            chud.total_job_failures
         )
     }
 
     pub fn format_job_record(&self) -> String {
+        let chud = self.chud_ref();
         format!(
             "{} job completed, {} failed",
-            self.total_job_successes, self.total_job_failures
+            chud.total_job_successes, chud.total_job_failures
         )
     }
 
@@ -138,7 +143,7 @@ impl Player {
         &self,
         equipped_items: impl IntoIterator<Item = &'a Item>,
     ) -> String {
-        let mut out = self.description.clone();
+        let mut out = self.chud_ref().description.clone();
         for item in equipped_items {
             if let Some(sentence) = item.equipped_description_sentence() {
                 if !out.is_empty() {
@@ -152,42 +157,52 @@ impl Player {
 
     /// Discord stats line with strikethrough on raw values when equipment modifies them.
     pub fn format_effective_stats_line(&self, effective: (u8, u8, u8)) -> String {
+        let chud = self.chud_ref();
         let (eff_str, eff_smt, eff_sth) = effective;
         format!(
             "Stats: {}, {}, {}, Experience {}",
-            format_stat_value("Strength", self.strength, eff_str),
-            format_stat_value("Smarts", self.smarts, eff_smt),
-            format_stat_value("Stealth", self.stealth, eff_sth),
-            self.experience,
+            format_stat_value("Strength", chud.strength, eff_str),
+            format_stat_value("Smarts", chud.smarts, eff_smt),
+            format_stat_value("Stealth", chud.stealth, eff_sth),
+            chud.experience,
         )
     }
 
     pub fn record_quest(&mut self, result: &QuestResult) -> LevelUp {
+        let chud = self.chud_mut();
         let (str_wins, smt_wins, sth_wins) = result.stat_wins();
 
-        let str_up = apply_wins(&mut self.chud.strength,  &mut self.chud.str_successes, str_wins, STAT_LEVEL_BASE);
-        let smt_up = apply_wins(&mut self.chud.smarts,    &mut self.chud.smt_successes, smt_wins, STAT_LEVEL_BASE);
-        let sth_up = apply_wins(&mut self.chud.stealth,   &mut self.chud.sth_successes, sth_wins, STAT_LEVEL_BASE);
+        let str_up = apply_wins(&mut chud.strength, &mut chud.str_successes, str_wins, STAT_LEVEL_BASE);
+        let smt_up = apply_wins(&mut chud.smarts, &mut chud.smt_successes, smt_wins, STAT_LEVEL_BASE);
+        let sth_up = apply_wins(&mut chud.stealth, &mut chud.sth_successes, sth_wins, STAT_LEVEL_BASE);
 
         let exp_up = if result.passed {
-            self.chud.total_job_successes += 1;
-            apply_wins(&mut self.chud.experience, &mut self.chud.job_successes, 1, EXP_LEVEL_BASE)
+            chud.total_job_successes += 1;
+            apply_wins(&mut chud.experience, &mut chud.job_successes, 1, EXP_LEVEL_BASE)
         } else {
-            self.chud.total_job_failures += 1;
+            chud.total_job_failures += 1;
             false
         };
 
-        if str_up { tracing::info!(name = %self.name, stat = "strength", value = self.strength, "[LEVEL UP]"); }
-        if smt_up { tracing::info!(name = %self.name, stat = "smarts",   value = self.smarts,   "[LEVEL UP]"); }
-        if sth_up { tracing::info!(name = %self.name, stat = "stealth",  value = self.stealth,  "[LEVEL UP]"); }
-        if exp_up { tracing::info!(name = %self.name, stat = "experience", value = self.experience, "[LEVEL UP]"); }
+        if str_up {
+            tracing::info!(name = %chud.name, stat = "strength", value = chud.strength, "[LEVEL UP]");
+        }
+        if smt_up {
+            tracing::info!(name = %chud.name, stat = "smarts", value = chud.smarts, "[LEVEL UP]");
+        }
+        if sth_up {
+            tracing::info!(name = %chud.name, stat = "stealth", value = chud.stealth, "[LEVEL UP]");
+        }
+        if exp_up {
+            tracing::info!(name = %chud.name, stat = "experience", value = chud.experience, "[LEVEL UP]");
+        }
 
         tracing::info!(
-            name = %self.name,
-            str = %format!("{} ({}/{})", self.strength, self.str_successes, STAT_LEVEL_BASE * self.strength as u32),
-            smt = %format!("{} ({}/{})", self.smarts, self.smt_successes, STAT_LEVEL_BASE * self.smarts as u32),
-            sth = %format!("{} ({}/{})", self.stealth, self.sth_successes, STAT_LEVEL_BASE * self.stealth as u32),
-            exp = %format!("{} ({}/{})", self.experience, self.job_successes, EXP_LEVEL_BASE * self.experience as u32),
+            name = %chud.name,
+            str = %format!("{} ({}/{})", chud.strength, chud.str_successes, STAT_LEVEL_BASE * chud.strength as u32),
+            smt = %format!("{} ({}/{})", chud.smarts, chud.smt_successes, STAT_LEVEL_BASE * chud.smarts as u32),
+            sth = %format!("{} ({}/{})", chud.stealth, chud.sth_successes, STAT_LEVEL_BASE * chud.stealth as u32),
+            exp = %format!("{} ({}/{})", chud.experience, chud.job_successes, EXP_LEVEL_BASE * chud.experience as u32),
             "chud stats updated"
         );
 
@@ -205,7 +220,7 @@ pub fn create_chud(discord_user_id: u64, name: String, description: String) -> P
         discord_user_id,
         cash: 0,
         stash: Stash::default(),
-        chud: Chud {
+        chud: Some(Chud {
             name,
             description,
             strength,
@@ -219,6 +234,6 @@ pub fn create_chud(discord_user_id: u64, name: String, description: String) -> P
             total_job_successes: 0,
             total_job_failures: 0,
             equipment: ChudEquipment::default(),
-        },
+        }),
     }
 }
