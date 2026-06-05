@@ -1,17 +1,14 @@
 use rand::Rng;
 
-use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::player::Player;
-use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, TrialStats};
+use crate::game::domain::quest::TrialStats;
+use crate::game::generation::quest_generator::{GeneratedQuest, QuestData};
 use crate::game::mechanics::quest_builder::{PlayedQuest, StatChoice, TrialOutcome};
+use crate::game::persistence::item_registry::ItemRegistry;
+use crate::game::tuneable_rolls::{EXP_DROPOUT_MAX, EXP_DROPOUT_MIN};
 
 const MIN_STAT: u8 = 1;
 const MAX_STAT: u8 = 10;
-
-/// Probability (0.0-1.0) that a non-optimal valid stat is dropped at maximum experience (10).
-const EXP_DROPOUT_MAX: f64 = 0.70;
-/// Probability (0.0-1.0) that a non-optimal valid stat is dropped at minimum experience (1).
-const EXP_DROPOUT_MIN: f64 = 0.05;
 
 // P(optimal stat chosen) by experience level.
 // dropout_prob = EXP_DROPOUT_MIN + ((exp - 1) / 9) * (EXP_DROPOUT_MAX - EXP_DROPOUT_MIN)

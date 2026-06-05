@@ -1,9 +1,10 @@
-use rand_distr::{Distribution, Normal};
 use rig::memory::InMemoryConversationMemory;
 use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
 
+use crate::game::domain::quest::TrialStats;
 use crate::game::generation::generators::{build_agent, make_memory, prompt_parse_retry, OpenRouterAgent};
+use crate::game::tuneable_rolls::calculate_quest_reward;
 
 const DESCRIPTION_SYSTEM_CONTEXT: &str = r#"You will be the be the person described in the prompts that follow writing a job for the town job board.
 
@@ -148,17 +149,6 @@ struct ResultsResponse {
     summary: String,
 }
 
-const REWARD_QUADRATIC: f64 = 0.3;
-const REWARD_LINEAR: f64 = 3.0;
-const REWARD_JITTER_STDDEV: f64 = 0.10;
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct TrialStats {
-    pub strength: u8,
-    pub smarts: u8,
-    pub stealth: u8,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestData {
     pub quest_description: String,
@@ -272,7 +262,7 @@ impl QuestGenerator {
         .trials;
         tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
 
-        let reward = Self::calculate_reward(&quest.trials);
+        let reward = calculate_quest_reward(&quest.trials);
         Ok(GeneratedQuest {
             quest_title,
             quest_giver,
@@ -323,7 +313,7 @@ impl QuestGenerator {
         .trials;
         tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
 
-        let reward = Self::calculate_reward(&quest.trials);
+        let reward = calculate_quest_reward(&quest.trials);
         Ok(GeneratedQuest {
             quest_title: title,
             quest_giver: giver,
@@ -332,30 +322,6 @@ impl QuestGenerator {
             quest_goal: quest.quest_goal.as_ref().unwrap().clone(),
             reward,
         })
-    }
-
-    fn calculate_reward(trials: &[TrialStats]) -> u32 {
-        let cumulative: f64 = trials
-            .iter()
-            .map(|t| {
-                let vals = [t.strength, t.smarts, t.stealth];
-                let nonzero: Vec<f64> = vals
-                    .iter()
-                    .filter(|&&v| v != 0)
-                    .map(|&v| v as f64)
-                    .collect();
-                if nonzero.is_empty() {
-                    0.0
-                } else {
-                    nonzero.iter().sum::<f64>() / nonzero.len() as f64
-                }
-            })
-            .sum();
-        let base = REWARD_QUADRATIC * cumulative * cumulative + REWARD_LINEAR * cumulative;
-        let mut rng = rand::thread_rng();
-        let normal = Normal::new(1.0, REWARD_JITTER_STDDEV).expect("valid normal distribution");
-        let multiplier = normal.sample(&mut rng).max(0.0);
-        (base * multiplier).round() as u32
     }
 
     pub async fn generate_results(

@@ -1,19 +1,6 @@
-use rand::Rng;
-use rand_distr::{Distribution, Normal};
 use serde::{Deserialize, Serialize};
 
 use crate::game::domain::player::ChudEquipment;
-
-/// Net stat value at which base gold should approximate `ITEM_VALUE_ANCHOR_GOLD_LOW`.
-const ITEM_VALUE_ANCHOR_STAT_LOW: f64 = 3.0;
-const ITEM_VALUE_ANCHOR_GOLD_LOW: f64 = 100.0;
-/// Net stat value at which base gold should approximate `ITEM_VALUE_ANCHOR_GOLD_HIGH`.
-const ITEM_VALUE_ANCHOR_STAT_HIGH: f64 = 8.0;
-const ITEM_VALUE_ANCHOR_GOLD_HIGH: f64 = 1000.0;
-/// Random spread around the stat-derived base price: final gold = base × Normal(1.0, σ).
-/// Raise σ for wider swings (same stats can roll noticeably higher or lower); lower σ tightens
-/// prices toward the anchor curve; 0 removes jitter entirely.
-const ITEM_VALUE_JITTER_STDDEV: f64 = 0.15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -129,18 +116,6 @@ pub fn parse_stat_modifier(s: &str) -> i16 {
 /// Per-stat contribution: roll floor plus signed modifier.
 pub fn stat_contribution(s: &str) -> i16 {
     parse_stat_floor(s) as i16 + parse_stat_modifier(s)
-}
-
-/// Roll gold value from stats: exponential base from net stat value × normal jitter.
-pub fn roll_item_value(stats: &ItemStats, rng: &mut impl Rng) -> u32 {
-    let net = stats.net_stat_value() as f64;
-    let rate = (ITEM_VALUE_ANCHOR_GOLD_HIGH / ITEM_VALUE_ANCHOR_GOLD_LOW)
-        .powf(1.0 / (ITEM_VALUE_ANCHOR_STAT_HIGH - ITEM_VALUE_ANCHOR_STAT_LOW));
-    let base_coeff = ITEM_VALUE_ANCHOR_GOLD_LOW / rate.powf(ITEM_VALUE_ANCHOR_STAT_LOW);
-    let base = base_coeff * rate.powf(net);
-    let normal = Normal::new(1.0, ITEM_VALUE_JITTER_STDDEV).expect("valid normal distribution");
-    let multiplier = normal.sample(rng).max(0.0);
-    (base * multiplier).round() as u32
 }
 
 /// Format a player roll for display: ↑/↓ with final when modified, ⌊⌋ when floor-only.

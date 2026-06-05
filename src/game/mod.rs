@@ -7,3 +7,4 @@ pub mod mechanics;
 pub mod persistence;
 pub mod state;
 pub mod tick;
+pub mod tuneable_rolls;

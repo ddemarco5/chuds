@@ -1,10 +1,6 @@
-use rand_distr::{Distribution, Normal};
 use serde::{Deserialize, Serialize};
 
-/// Base heal price per tick of recovery. Increase to make hospital stays more expensive.
-const HEAL_PRICE_PER_TICK_BASE: f64 = 5.0;
-/// Price jitter: multiplier sampled from Normal(mean=1.0, stddev=HEAL_PRICE_JITTER_STDDEV).
-const HEAL_PRICE_JITTER_STDDEV: f64 = 0.20;
+use crate::game::tuneable_rolls::roll_heal_price;
 
 /// A chud recovering in the hospital.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,11 +22,8 @@ impl Hospital {
     pub fn admit(&mut self, discord_user_id: u64, chud_name: String, ticks: u32) -> Option<String> {
         self.entries.retain(|e| e.discord_user_id != discord_user_id);
 
-        let base_price = HEAL_PRICE_PER_TICK_BASE * ticks as f64;
         let mut rng = rand::thread_rng();
-        let normal = Normal::new(1.0, HEAL_PRICE_JITTER_STDDEV).expect("valid normal distribution");
-        let multiplier = normal.sample(&mut rng).max(0.0);
-        let heal_price = (base_price * multiplier).round() as u32;
+        let heal_price = roll_heal_price(ticks, &mut rng);
 
         self.entries.push(HospitalEntry {
             discord_user_id,

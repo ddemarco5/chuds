@@ -1,9 +1,9 @@
 use std::ops::{Deref, DerefMut};
 
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::game::domain::item::Item;
+use crate::game::tuneable_rolls::roll_chud_stats;
 use crate::game::domain::quest_result::QuestResult;
 use crate::game::domain::stash::Stash;
 
@@ -199,20 +199,7 @@ impl Player {
 /// Stats are each rolled 1–3, then trimmed (highest first) until the sum is ≤ 5.
 pub fn create_chud(discord_user_id: u64, name: String, description: String) -> Player {
     let mut rng = rand::thread_rng();
-
-    let mut strength = rng.gen_range(1u8..=3);
-    let mut smarts   = rng.gen_range(1u8..=3);
-    let mut stealth  = rng.gen_range(1u8..=3);
-
-    while strength + smarts + stealth > 5 {
-        if strength >= smarts && strength >= stealth {
-            strength -= 1;
-        } else if smarts >= stealth {
-            smarts -= 1;
-        } else {
-            stealth -= 1;
-        }
-    }
+    let (strength, smarts, stealth) = roll_chud_stats(&mut rng);
 
     Player {
         discord_user_id,

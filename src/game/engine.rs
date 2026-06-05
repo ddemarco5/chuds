@@ -1,15 +1,14 @@
 use crate::game::domain::board::{Board, BoardQuest};
 use crate::game::domain::hospital::Hospital;
 use crate::game::guild_status::GuildHallStatus;
-use crate::game::domain::item::{roll_item_value, EquipmentSlot, ItemType};
+use crate::game::domain::item::{EquipmentSlot, ItemType};
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{create_chud, Player};
 use crate::game::domain::quest_result::QuestResult;
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator, QuestResults, TrialResult};
-use crate::game::mechanics::item_builder::{roll_item, roll_item_drop};
-use crate::game::mechanics::quest_builder::roll_trials;
+use crate::game::tuneable_rolls::{roll_item, roll_item_drop, roll_item_value, roll_trials};
 use crate::game::mechanics::simulation::{effective_stats, play_quest};
 use crate::game::persistence::storage;
 
