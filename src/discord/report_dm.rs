@@ -10,8 +10,16 @@ use crate::game::tick::QuestResolved;
 
 pub const DM_CHAR_LIMIT: usize = 2000;
 
-/// Users last seen on a mobile client this session (survives offline after cache drops them).
+/// Users last seen on a mobile client this session (survives going offline).
 pub type LastMobileUsers = RwLock<HashSet<UserId>>;
+
+fn has_active_mobile(cs: &serenity::ClientStatus) -> bool {
+    cs.mobile.is_some()
+}
+
+fn has_active_desktop_or_web(cs: &serenity::ClientStatus) -> bool {
+    cs.desktop.is_some() || cs.web.is_some()
+}
 
 /// DM a finished job report; logs warnings and never fails the tick.
 pub async fn send_job_completion_dm(
@@ -34,16 +42,24 @@ pub async fn send_job_completion_dm(
     let dm_plain = content.plain();
 
     let user_id = UserId::new(qr.discord_user_id);
-    let mobile_from_cache = cache.guild(guild_id).is_some_and(|guild| {
-        guild
-            .presences
-            .get(&user_id)
-            .and_then(|p| p.client_status.as_ref())
-            .is_some_and(|cs| cs.mobile.is_some())
-    });
-    let mobile_sticky = last_mobile
-        .and_then(|set| set.read().ok())
-        .is_some_and(|set| set.contains(&user_id));
+    let (mobile_from_cache, on_desktop_or_web) = cache
+        .guild(guild_id)
+        .map(|guild| {
+            let cs = guild
+                .presences
+                .get(&user_id)
+                .and_then(|p| p.client_status.as_ref());
+            (
+                cs.is_some_and(has_active_mobile),
+                cs.is_some_and(has_active_desktop_or_web),
+            )
+        })
+        .unwrap_or((false, false));
+    // Sticky only when presence does not show an active desktop/web session (e.g. offline).
+    let mobile_sticky = !on_desktop_or_web
+        && last_mobile
+            .and_then(|set| set.read().ok())
+            .is_some_and(|set| set.contains(&user_id));
     let mobile = mobile_from_cache || mobile_sticky;
     let client = if mobile { "mobile" } else { "desktop" };
 
@@ -129,12 +145,15 @@ pub async fn send_job_completion_dm(
 }
 
 pub fn record_mobile_presence(last_mobile: &LastMobileUsers, presence: &serenity::Presence) {
-    if presence
-        .client_status
-        .as_ref()
-        .is_some_and(|cs| cs.mobile.is_some())
-        && let Ok(mut set) = last_mobile.write()
-    {
+    let Some(cs) = presence.client_status.as_ref() else {
+        return;
+    };
+    let Ok(mut set) = last_mobile.write() else {
+        return;
+    };
+    if has_active_mobile(cs) {
         set.insert(presence.user.id);
+    } else if has_active_desktop_or_web(cs) {
+        set.remove(&presence.user.id);
     }
 }
