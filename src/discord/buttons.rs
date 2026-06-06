@@ -119,12 +119,12 @@ async fn announce_taken_quest(
         .to_string();
     let content = chud_msg!("chud_takes_job", first_name, info.quest_title);
 
-    append_activity_log(&data.activity_log, &content).await;
+    append_activity_log(&data.runtime.activity_log, &content).await;
     guild_hall::update_board_message(
         http,
-        data.channel_id,
+        data.runtime.channel_id,
         board,
-        data.max_jobs,
+        data.runtime.max_jobs,
         Some(status),
     )
     .await?;
@@ -150,6 +150,11 @@ pub async fn handle_take_button(
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
 
+    if !data.runtime.is_playing().await {
+        ephemeral_followup(ctx, interaction, "the game isn't running right now").await?;
+        return Ok(());
+    }
+
     let quest_id: u32 = match interaction
         .data
         .custom_id
@@ -170,7 +175,7 @@ pub async fn handle_take_button(
     };
 
     let hospital = storage::load_hospital()?;
-    let mut board = data.board.lock().await;
+    let mut board = data.runtime.board.lock().await;
     let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
     if let Some(reason) = status.busy_reason(user_id) {
         respond_to_busy(ctx, interaction, &player, user_id, reason).await?;
@@ -182,7 +187,7 @@ pub async fn handle_take_button(
         &hospital,
         user_id,
         quest_id,
-        &data.generation_queue,
+        &data.runtime.generation_queue,
         false,
         Some(&status),
     ) {
@@ -207,6 +212,11 @@ pub async fn handle_scout_button(
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
 
+    if !data.runtime.is_playing().await {
+        ephemeral_followup(ctx, interaction, "the game isn't running right now").await?;
+        return Ok(());
+    }
+
     let quest_id: u32 = match interaction
         .data
         .custom_id
@@ -227,7 +237,7 @@ pub async fn handle_scout_button(
     };
 
     let hospital = storage::load_hospital()?;
-    let mut board = data.board.lock().await;
+    let mut board = data.runtime.board.lock().await;
     let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
     if let Some(reason) = status.busy_reason(user_id) {
         respond_to_busy(ctx, interaction, &player, user_id, reason).await?;
@@ -248,12 +258,12 @@ pub async fn handle_scout_button(
         .unwrap_or(&chud_name)
         .to_string();
     let content = format!("**{}** stumbled out the door", first_name);
-    append_activity_log(&data.activity_log, &content).await;
+    append_activity_log(&data.runtime.activity_log, &content).await;
     guild_hall::update_board_message(
         &ctx.http,
-        data.channel_id,
+        data.runtime.channel_id,
         &mut *board,
-        data.max_jobs,
+        data.runtime.max_jobs,
         Some(&status),
     )
     .await?;
@@ -268,6 +278,11 @@ pub async fn handle_heal_button(
     interaction
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await?;
+
+    if !data.runtime.is_playing().await {
+        ephemeral_followup(ctx, interaction, "the game isn't running right now").await?;
+        return Ok(());
+    }
 
     let user_id: u64 = interaction
         .data
@@ -306,7 +321,7 @@ pub async fn handle_heal_button(
         .release(user_id)
         .expect("hospitalized chud exists");
     storage::save_hospital(&hospital)?;
-    append_activity_log(&data.activity_log, &release_msg).await;
+    append_activity_log(&data.runtime.activity_log, &release_msg).await;
 
     let msg = chud_msg!("heal_success", chud_name, heal_price);
     interaction
@@ -316,12 +331,12 @@ pub async fn handle_heal_button(
         )
         .await?;
 
-    let mut board = data.board.lock().await;
+    let mut board = data.runtime.board.lock().await;
     guild_hall::refresh_board_status(
         &ctx.http,
-        data.channel_id,
+        data.runtime.channel_id,
         &mut *board,
-        data.max_jobs,
+        data.runtime.max_jobs,
     )
     .await?;
 

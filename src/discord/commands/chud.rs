@@ -1,38 +1,75 @@
 use crate::chud_msg;
 use crate::discord::guild_hall;
+use crate::discord::game_screens;
 use crate::discord::channel::append_activity_log;
-use crate::discord::context::{Context, Error};
+use crate::discord::context::{Context, Error, GameRuntime};
 use crate::game::busy::BusyReason;
+use crate::game::domain::session::GamePhase;
 use crate::game::domain::stash::STASH_CAPACITY;
 use crate::game::engine;
 use crate::game::guild_status;
 use crate::game::mechanics::simulation::effective_stats;
 use crate::game::persistence::storage;
 
+/// Create a chud for `user_id` and update the channel for the current phase.
+///
+/// During Attract the attract roster is refreshed (no activity log); otherwise the normal
+/// "saunters through the door" log line and board-status refresh are used. Callers must
+/// reject the Complete phase before calling.
+pub async fn handle_chud_join(
+    runtime: &GameRuntime,
+    user_id: u64,
+    name: String,
+    description: String,
+) -> anyhow::Result<engine::AddChudResult> {
+    let result = engine::add_chud(user_id, name, description)?;
+
+    let phase = runtime.session.lock().await.phase;
+    if phase == GamePhase::Attract {
+        game_screens::update_attract_screen(runtime).await?;
+    } else {
+        let content = {
+            let chud = result.player.chud_ref();
+            format!(
+                "A chudly **{}** saunters through the door.\n{}",
+                chud.name, chud.description
+            )
+        };
+        append_activity_log(&runtime.activity_log, &content).await;
+        let mut board = runtime.board.lock().await;
+        guild_hall::refresh_board_status(
+            &runtime.http,
+            runtime.channel_id,
+            &mut *board,
+            runtime.max_jobs,
+        )
+        .await?;
+    }
+    Ok(result)
+}
+
 #[poise::command(slash_command)]
 pub async fn chud(ctx: Context<'_>, name: String, description: String) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    if storage::load_player(ctx.author().id.get())?.is_some_and(|p| p.has_chud()) {
+    let user_id = ctx.author().id.get();
+
+    if ctx.data().runtime.session.lock().await.phase == GamePhase::Complete {
+        ctx.say("the game is over, bud").await?;
+        return Ok(());
+    }
+    if storage::load_player(user_id)?.is_some_and(|p| p.has_chud()) {
         ctx.say("you've already got a chud").await?;
         return Ok(());
     }
-    let player = engine::add_chud(ctx.author().id.get(), name, description)?;
-    let chud = player.chud_ref();
-    let content = format!(
-        "A chudly **{}** saunters through the door.\n{}",
-        chud.name, chud.description
-    );
-    let http = &ctx.serenity_context().http;
-    append_activity_log(&ctx.data().activity_log, &content).await;
-    let mut board = ctx.data().board.lock().await;
-    guild_hall::refresh_board_status(
-        http,
-        ctx.data().channel_id,
-        &mut *board,
-        ctx.data().max_jobs,
-    )
-    .await?;
-    ctx.say("ok").await?;
+
+    let result = handle_chud_join(&ctx.data().runtime, user_id, name, description).await?;
+
+    if result.benefits_claimed > 0 {
+        let msg = chud_msg!("dm_starting_benefits", result.benefits_claimed);
+        ctx.say(msg).await?;
+    } else {
+        ctx.say("ok").await?;
+    }
     Ok(())
 }
 
@@ -61,7 +98,7 @@ pub async fn inspect(ctx: Context<'_>, name: String) -> Result<(), Error> {
         }
         Some(player) => {
             let chud = player.chud_ref();
-            let board = ctx.data().board.lock().await;
+            let board = ctx.data().runtime.board.lock().await;
             let hospital = storage::load_hospital()?;
             let status = guild_status::compute_guild_hall_status(&board, &hospital)?;
             match status.busy_reason(player.discord_user_id) {
@@ -88,7 +125,7 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         Some(p) if !p.has_chud() => ctx.say("You don't have a chud.").await?,
         Some(p) => {
             let chud = p.chud_ref();
-            let registry = ctx.data().item_registry.lock().await;
+            let registry = ctx.data().runtime.item_registry.lock().await;
             let mut equipment_lines = Vec::new();
             if let Some(id) = chud.equipment.gear {
                 if let Some(item) = registry.get(id) {
@@ -182,7 +219,7 @@ pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     };
 
-    let registry = ctx.data().item_registry.lock().await;
+    let registry = ctx.data().runtime.item_registry.lock().await;
     let message = crate::discord::build_gear_message(&player, &registry, None, None);
     drop(registry);
 
@@ -224,7 +261,7 @@ pub async fn job(ctx: Context<'_>) -> Result<(), Error> {
         Some(p) => p,
     };
     let chud_name = player.chud_ref().name.clone();
-    let board = ctx.data().board.lock().await;
+    let board = ctx.data().runtime.board.lock().await;
     match board.active_quest_for(user_id) {
         None => ctx
             .say(format!("**{chud_name}** is not on a job."))

@@ -13,6 +13,7 @@ use crate::game::domain::starting_benefits::StartingBenefits;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::Player;
+use crate::game::domain::session::GameSession;
 use crate::game::persistence::chudmasters::Chudmasters;
 use crate::game::persistence::message_cache::MessageCache;
 
@@ -26,6 +27,7 @@ const MESSAGE_CACHE_PATH: &str = "data/message_cache.yaml";
 const CHUDMASTERS_PATH: &str = "data/chudmasters.yaml";
 const ITEM_REGISTRY_PATH: &str = "data/item_registry.yaml";
 const GUILD_HALL_PATH: &str = "data/guild_hall.yaml";
+const SESSION_PATH: &str = "data/session.yaml";
 
 static MESSAGE_CACHE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -258,6 +260,22 @@ pub fn save_item_registry(registry: &ItemRegistry) -> anyhow::Result<()> {
     std::fs::create_dir_all("data")?;
     let yaml = serde_yaml::to_string(registry).context("serializing item registry")?;
     std::fs::write(ITEM_REGISTRY_PATH, yaml).context("writing item registry")
+}
+
+/// Persist the game-flow session to `data/session.yaml`.
+pub fn save_session(session: &GameSession) -> anyhow::Result<()> {
+    std::fs::create_dir_all("data")?;
+    let yaml = serde_yaml::to_string(session).context("serializing session")?;
+    std::fs::write(SESSION_PATH, yaml).context("writing session")
+}
+
+/// Load the game-flow session, defaulting to `Playing` if no file exists yet.
+pub fn load_session() -> anyhow::Result<GameSession> {
+    if !Path::new(SESSION_PATH).exists() {
+        return Ok(GameSession::default());
+    }
+    let yaml = std::fs::read_to_string(SESSION_PATH).context("reading session")?;
+    serde_yaml::from_str(&yaml).context("parsing session")
 }
 
 /// Return `true` if the given Discord user ID is a Chudmaster.

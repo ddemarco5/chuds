@@ -169,7 +169,7 @@ async fn prepare_shop_response(
         _ => return Ok(no_chud_message()),
     };
 
-    let mut merchant = data.merchant.lock().await;
+    let mut merchant = data.runtime.merchant.lock().await;
     let visit = match merchant.visit.as_ref() {
         Some(v) => v.clone(),
         None => {
@@ -186,7 +186,7 @@ async fn prepare_shop_response(
     let mut bought = false;
     let mut bought_slot = None;
     if let Some(slot) = buy_slot {
-        let mut registry = data.item_registry.lock().await;
+        let mut registry = data.runtime.item_registry.lock().await;
         match merchant.buy(slot, &mut player, &mut registry) {
             Ok(item) => {
                 notice = Some(format!("_Bought **{}** for ${}._", item.name, item.value));
@@ -235,7 +235,7 @@ pub async fn handle_merchant_shop_button(
     data: &Data,
 ) -> anyhow::Result<()> {
     let user_id = interaction.user.id.get();
-    let merchant = data.merchant.lock().await;
+    let merchant = data.runtime.merchant.lock().await;
     let selected = merchant.first_unsold_slot().unwrap_or(0);
     drop(merchant);
 

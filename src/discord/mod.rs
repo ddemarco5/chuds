@@ -5,13 +5,18 @@ pub mod commands;
 pub mod components_v2;
 pub mod context;
 pub mod formatting;
+pub mod game_screens;
 pub mod report_dm;
+pub mod simulation;
 pub mod tick;
 pub mod ui;
 
 pub use guild_hall::{
-    recover_persistent_board_messages, refresh_board_status, update_board_message,
+    recover_persistent_board_messages, refresh_board_status, reset_channel_cache,
+    update_board_message,
 };
+pub use context::{GameRuntime, require_playing};
+pub use simulation::SimulationController;
 pub use buttons::{handle_heal_button, handle_scout_button, handle_take_button};
 pub use ui::{
     build_gear_message, edit_ephemeral_message, handle_gear_button, handle_merchant_shop_button,

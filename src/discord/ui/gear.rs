@@ -252,8 +252,8 @@ async fn prepare_gear_update(
 ) -> anyhow::Result<ComponentsV2Message> {
     let hospital = storage::load_hospital()?;
     // Match lock order used elsewhere (board before item_registry) to avoid deadlocks.
-    let board = data.board.lock().await;
-    let mut registry = data.item_registry.lock().await;
+    let board = data.runtime.board.lock().await;
+    let mut registry = data.runtime.item_registry.lock().await;
 
     let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
     let (notice, sell_confirm) =

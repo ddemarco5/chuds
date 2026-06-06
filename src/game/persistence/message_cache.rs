@@ -96,6 +96,12 @@ pub struct MessageCache {
     /// Last content fingerprint sent to the merchant message.
     #[serde(default)]
     pub merchant_content: String,
+    /// Discord message ID of the single attract/complete phase-screen message.
+    #[serde(default)]
+    pub phase_screen_message_id: Option<u64>,
+    /// Last content fingerprint sent to the phase-screen message.
+    #[serde(default)]
+    pub phase_screen_content: String,
     /// Discord message ID of the persistent activity log below the board.
     #[serde(default)]
     pub activity_log_message_id: Option<u64>,

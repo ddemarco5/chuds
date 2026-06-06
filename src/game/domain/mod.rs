@@ -7,5 +7,6 @@ pub mod job_queue;
 pub mod player;
 pub mod quest;
 pub mod quest_result;
+pub mod session;
 pub mod stash;
 pub mod starting_benefits;

@@ -1,11 +1,13 @@
 use poise::serenity_prelude as serenity;
 
-use crate::discord::guild_hall::recover_persistent_board_messages;
 use crate::discord::buttons::post_quest_taken_announcement;
 use crate::discord::channel::{append_activity_log, append_activity_log_deferred};
-use crate::discord::context::{admin_guard, Context, Error};
+use crate::discord::context::{admin_guard, require_playing, Context, Error};
+use crate::discord::game_screens;
+use crate::discord::guild_hall::recover_persistent_board_messages;
 use crate::discord::report_dm;
 use crate::discord::tick;
+use crate::game::domain::session::GamePhase;
 use crate::game::engine::{self, DeathContext};
 use crate::game::guild_status;
 use crate::game::persistence::message_cache::ActivityLogKind;
@@ -35,7 +37,7 @@ pub async fn add_cm(ctx: Context<'_>, discord_user_id: String) -> Result<(), Err
         Err(_) => discord_user_id.to_string(),
     };
     let content = format!("{} is now a Chudmaster™", display_name);
-    append_activity_log(&ctx.data().activity_log, &content).await;
+    append_activity_log(&ctx.data().runtime.activity_log, &content).await;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -68,7 +70,10 @@ pub async fn admin_spawn_merchant(ctx: Context<'_>) -> Result<(), Error> {
     if !admin_guard(ctx).await {
         return Ok(());
     }
-    let mut merchant = ctx.data().merchant.lock().await;
+    if !require_playing(ctx).await {
+        return Ok(());
+    }
+    let mut merchant = ctx.data().runtime.merchant.lock().await;
     if merchant.set_spawn_flag().is_ok() {
         ctx.say("ok, merchant will appear next tick").await?;
     } else {
@@ -83,22 +88,82 @@ pub async fn admin_redraw(ctx: Context<'_>) -> Result<(), Error> {
     if !admin_guard(ctx).await {
         return Ok(());
     }
+    if !require_playing(ctx).await {
+        return Ok(());
+    }
     let http = &ctx.serenity_context().http;
-    let mut board = ctx.data().board.lock().await;
-    let mut queue = ctx.data().job_queue.lock().await;
-    let merchant = ctx.data().merchant.lock().await;
+    let rt = &ctx.data().runtime;
+    let mut board = rt.board.lock().await;
+    let mut queue = rt.job_queue.lock().await;
+    let merchant = rt.merchant.lock().await;
     recover_persistent_board_messages(
         http,
-        ctx.data().channel_id,
+        rt.channel_id,
         &mut *board,
         &mut *queue,
         &merchant,
-        ctx.data().bot_user_id,
-        ctx.data().max_non_bot_messages,
-        ctx.data().max_jobs,
+        rt.bot_user_id,
+        rt.max_non_bot_messages,
+        rt.max_jobs,
     )
     .await?;
     ctx.say("ok").await?;
+    Ok(())
+}
+
+/// Switch the game into the Attract phase and post the attract screen (simulation off).
+#[poise::command(slash_command)]
+pub async fn admin_attract(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let data = ctx.data();
+    data.simulation.stop().await;
+    {
+        let mut session = data.runtime.session.lock().await;
+        session.phase = GamePhase::Attract;
+        storage::save_session(&session)?;
+    }
+    game_screens::post_attract_screen(&data.runtime).await?;
+    ctx.say("ok, switched to attract").await?;
+    Ok(())
+}
+
+/// Switch the game into the Playing phase and start the simulation (normal game loop).
+#[poise::command(slash_command)]
+pub async fn admin_game(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let data = ctx.data();
+    {
+        let mut session = data.runtime.session.lock().await;
+        session.phase = GamePhase::Playing;
+        storage::save_session(&session)?;
+    }
+    data.simulation.start().await?;
+    ctx.say("ok, switched to playing").await?;
+    Ok(())
+}
+
+/// Switch the game into the Complete phase and post the game-over screen (simulation off).
+#[poise::command(slash_command)]
+pub async fn admin_complete(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let data = ctx.data();
+    data.simulation.stop().await;
+    {
+        let mut session = data.runtime.session.lock().await;
+        session.phase = GamePhase::Complete;
+        storage::save_session(&session)?;
+    }
+    game_screens::post_complete_screen(&data.runtime).await?;
+    ctx.say("ok, switched to complete").await?;
     Ok(())
 }
 
@@ -108,26 +173,10 @@ pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
     if !admin_guard(ctx).await {
         return Ok(());
     }
-    tick::execute_tick(
-        &ctx.serenity_context().http,
-        &ctx.serenity_context().cache,
-        ctx.data().guild_id,
-        Some(ctx.data().last_mobile.as_ref()),
-        &ctx.data().board,
-        &ctx.data().job_queue,
-        &ctx.data().item_registry,
-        ctx.data().channel_id,
-        &ctx.data().activity_log,
-        ctx.data().max_jobs,
-        ctx.data().bot_user_id,
-        ctx.data().max_non_bot_messages,
-        &ctx.data().gravestone_generator,
-        &ctx.data().merchant,
-        &ctx.data().generation_queue,
-        &ctx.data().pending_quests,
-        &ctx.data().story_shutdown_tx,
-    )
-    .await?;
+    if !require_playing(ctx).await {
+        return Ok(());
+    }
+    tick::execute_tick(&ctx.data().runtime).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -142,6 +191,9 @@ pub async fn admin_take_gen_item(
     if !admin_guard(ctx).await {
         return Ok(());
     }
+    if !require_playing(ctx).await {
+        return Ok(());
+    }
     let target_user_id: u64 = match target_user_id.trim().parse() {
         Ok(id) => id,
         Err(_) => {
@@ -151,14 +203,14 @@ pub async fn admin_take_gen_item(
     };
     let http = &ctx.serenity_context().http;
     let hospital = storage::load_hospital()?;
-    let mut board = ctx.data().board.lock().await;
+    let mut board = ctx.data().runtime.board.lock().await;
     let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
     let info = engine::take_and_enqueue_quest(
         &mut *board,
         &hospital,
         target_user_id,
         quest_id,
-        &ctx.data().generation_queue,
+        &ctx.data().runtime.generation_queue,
         true,
         Some(&status),
     )?;
@@ -186,7 +238,11 @@ pub async fn add_chud(
             return Ok(());
         }
     };
-    engine::add_chud(target_user_id, name, description)?;
+    if ctx.data().runtime.session.lock().await.phase == GamePhase::Complete {
+        ctx.say("the game is over").await?;
+        return Ok(());
+    }
+    super::chud::handle_chud_join(&ctx.data().runtime, target_user_id, name, description).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -208,15 +264,20 @@ pub async fn save(ctx: Context<'_>) -> Result<(), Error> {
     if !admin_guard(ctx).await {
         return Ok(());
     }
-    let board = ctx.data().board.lock().await;
-    let registry = ctx.data().item_registry.lock().await;
+    let rt = &ctx.data().runtime;
+    let board = rt.board.lock().await;
+    let registry = rt.item_registry.lock().await;
     engine::save_all(&*board, &*registry)?;
-    let merchant = ctx.data().merchant.lock().await;
+    let merchant = rt.merchant.lock().await;
     storage::save_guild_hall(&merchant)?;
+    {
+        let session = rt.session.lock().await;
+        storage::save_session(&session)?;
+    }
     crate::game::persistence::llm_memory::save_all_llm_memory(
-        &ctx.data().generator,
-        &ctx.data().item_generator,
-        &ctx.data().gravestone_generator,
+        &rt.generator,
+        &rt.item_generator,
+        &rt.gravestone_generator,
     )?;
     ctx.say("ok").await?;
     Ok(())
@@ -233,6 +294,9 @@ pub async fn admin_kill_chud(
     if !admin_guard(ctx).await {
         return Ok(());
     }
+    if !require_playing(ctx).await {
+        return Ok(());
+    }
     let target_user_id: u64 = match target_user_id.trim().parse() {
         Ok(id) => id,
         Err(_) => {
@@ -242,7 +306,7 @@ pub async fn admin_kill_chud(
     };
 
     let hospital = storage::load_hospital()?;
-    let board = ctx.data().board.lock().await;
+    let board = ctx.data().runtime.board.lock().await;
     let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
     if status.is_busy(target_user_id) {
         ctx.say("chud is busy").await?;
@@ -257,7 +321,7 @@ pub async fn admin_kill_chud(
 
     let mut graveyard = storage::load_graveyard()?;
     let mut starting_benefits = storage::load_starting_benefits()?;
-    let mut registry = ctx.data().item_registry.lock().await;
+    let mut registry = ctx.data().runtime.item_registry.lock().await;
 
     let kill = engine::kill_chud(
         target_user_id,
@@ -265,7 +329,7 @@ pub async fn admin_kill_chud(
         &mut graveyard,
         &mut starting_benefits,
         &mut *registry,
-        &ctx.data().gravestone_generator,
+        &ctx.data().runtime.gravestone_generator,
     )
     .await?;
 
@@ -277,7 +341,7 @@ pub async fn admin_kill_chud(
         .to_string();
     let return_msg = crate::chud_msg!("return_died", first_name);
     append_activity_log_deferred(
-        &ctx.data().activity_log,
+        &ctx.data().runtime.activity_log,
         ActivityLogKind::Standard,
         &return_msg,
     )
@@ -286,19 +350,19 @@ pub async fn admin_kill_chud(
     report_dm::send_death_dm(
         &ctx.serenity_context().http,
         &ctx.serenity_context().cache,
-        poise::serenity_prelude::GuildId::new(ctx.data().guild_id),
-        Some(ctx.data().last_mobile.as_ref()),
+        poise::serenity_prelude::GuildId::new(ctx.data().runtime.guild_id),
+        Some(ctx.data().runtime.last_mobile.as_ref()),
         &kill,
         None,
     )
     .await;
 
-    let mut board = ctx.data().board.lock().await;
+    let mut board = ctx.data().runtime.board.lock().await;
     crate::discord::guild_hall::refresh_board_status(
         &ctx.serenity_context().http,
-        ctx.data().channel_id,
+        ctx.data().runtime.channel_id,
         &mut *board,
-        ctx.data().max_jobs,
+        ctx.data().runtime.max_jobs,
     )
     .await?;
 
@@ -314,13 +378,13 @@ pub async fn load(ctx: Context<'_>) -> Result<(), Error> {
     }
     let (new_board, new_registry) = engine::load_all()?;
     let guild_hall = storage::load_guild_hall()?;
-    let mut board = ctx.data().board.lock().await;
-    *board = new_board;
-    let mut registry = ctx.data().item_registry.lock().await;
-    *registry = new_registry;
-    let mut merchant = ctx.data().merchant.lock().await;
-    *merchant = guild_hall.merchant;
-    tracing::info!("board, item registry, and guild hall reloaded from disk");
+    let new_session = storage::load_session()?;
+    let rt = &ctx.data().runtime;
+    *rt.board.lock().await = new_board;
+    *rt.item_registry.lock().await = new_registry;
+    *rt.merchant.lock().await = guild_hall.merchant;
+    *rt.session.lock().await = new_session;
+    tracing::info!("board, item registry, guild hall, and session reloaded from disk");
     ctx.say("ok").await?;
     Ok(())
 }

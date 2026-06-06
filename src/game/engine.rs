@@ -37,6 +37,13 @@ pub struct AssignInfo {
     pub quest_title: String,
 }
 
+/// Result of creating (or respawning) a chud.
+pub struct AddChudResult {
+    pub player: Player,
+    /// Inherited starting-benefit cash claimed on creation (0 if none pending).
+    pub benefits_claimed: u32,
+}
+
 /// A pending generation job sent to the background worker.
 pub enum GenerationJob {
     /// Generate the LLM result narrative for an already-assigned quest.
@@ -212,7 +219,11 @@ pub fn delete_quest(board: &mut Board, quest_id: u32) -> anyhow::Result<()> {
 }
 
 /// Create a chud for a Discord user and save it. Errors if one already exists.
-pub fn add_chud(discord_user_id: u64, name: String, description: String) -> anyhow::Result<Player> {
+pub fn add_chud(
+    discord_user_id: u64,
+    name: String,
+    description: String,
+) -> anyhow::Result<AddChudResult> {
     let mut benefits = storage::load_starting_benefits()?;
     let bonus = benefits.take(discord_user_id);
 
@@ -226,7 +237,10 @@ pub fn add_chud(discord_user_id: u64, name: String, description: String) -> anyh
         storage::save_player(&player)?;
         storage::save_starting_benefits(&benefits)?;
         tracing::info!(name = %player.chud_ref().name, discord_user_id, bonus, "chud respawned");
-        return Ok(player);
+        return Ok(AddChudResult {
+            player,
+            benefits_claimed: bonus,
+        });
     }
 
     let mut player = create_chud(discord_user_id, name, description);
@@ -234,7 +248,10 @@ pub fn add_chud(discord_user_id: u64, name: String, description: String) -> anyh
     storage::save_player(&player)?;
     storage::save_starting_benefits(&benefits)?;
     tracing::info!(name = %player.chud_ref().name, discord_user_id, bonus, "chud created");
-    Ok(player)
+    Ok(AddChudResult {
+        player,
+        benefits_claimed: bonus,
+    })
 }
 
 /// Delete a chud's save file. Errors if not found.

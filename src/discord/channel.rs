@@ -231,6 +231,10 @@ pub async fn validate_cached_messages_exist(
         message_ids.push(("activity_log", id));
     }
 
+    if let Some(id) = cache.phase_screen_message_id {
+        message_ids.push(("phase_screen", id));
+    }
+
     for slot in &cache.slots {
         if let Some(id) = slot.message_id {
             message_ids.push(("slot", id));

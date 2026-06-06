@@ -4,7 +4,7 @@ use poise::Modal;
 
 use crate::discord::guild_hall;
 use crate::discord::context::{
-    admin_guard, chudmaster_check, parse_difficulty, say_ephemeral, Context, Error,
+    admin_guard, chudmaster_check, parse_difficulty, require_playing, say_ephemeral, Context, Error,
     GenerateJobModal, WriteJobModal,
 };
 use crate::game::engine;
@@ -18,6 +18,9 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
         tracing::info!("Non-CM tried to submit a generate job");
         tracing::warn!(user = user_id, channel = channel_id, "unauthorized or off-channel command ignored");
         say_ephemeral(ctx, "you don't have permission for this command (sorry bud)").await?;
+        return Ok(());
+    }
+    if !require_playing(ctx).await {
         return Ok(());
     }
 
@@ -35,18 +38,19 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
             return Ok(());
         }
     };
+    let max_job_queue = ctx.data().runtime.max_job_queue;
     let queued_count = {
-        let queue = ctx.data().job_queue.lock().await;
-        let pending = ctx.data().pending_quests.load(Ordering::SeqCst);
-        if queue.entries.len() + pending >= ctx.data().max_job_queue {
+        let queue = ctx.data().runtime.job_queue.lock().await;
+        let pending = ctx.data().runtime.pending_quests.load(Ordering::SeqCst);
+        if queue.entries.len() + pending >= max_job_queue {
             say_ephemeral(
                 ctx,
-                format!("Job queue is full ({} queued max).", ctx.data().max_job_queue),
+                format!("Job queue is full ({} queued max).", max_job_queue),
             )
             .await?;
             return Ok(());
         }
-        ctx.data().pending_quests.fetch_add(1, Ordering::SeqCst);
+        ctx.data().runtime.pending_quests.fetch_add(1, Ordering::SeqCst);
         queue.entries.len() + pending + 1
     };
     let goal = data
@@ -60,6 +64,7 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
         "submitted generate_job"
     );
     ctx.data()
+        .runtime
         .generation_queue
         .send(engine::make_quest_creation_job(
             data.description,
@@ -69,11 +74,7 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
         .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
     say_ephemeral(
         ctx,
-        format!(
-            "{}/{} jobs in queue",
-            queued_count,
-            ctx.data().max_job_queue
-        ),
+        format!("{}/{} jobs in queue", queued_count, max_job_queue),
     )
     .await?;
     Ok(())
@@ -87,6 +88,9 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
         tracing::info!("Non-CM tried to submit a write job");
         tracing::warn!(user = user_id, channel = channel_id, "unauthorized or off-channel command ignored");
         say_ephemeral(ctx, "you don't have permission for this command (sorry bud)").await?;
+        return Ok(());
+    }
+    if !require_playing(ctx).await {
         return Ok(());
     }
 
@@ -104,12 +108,13 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
             return Ok(());
         }
     };
+    let max_job_queue = ctx.data().runtime.max_job_queue;
     {
-        let queue = ctx.data().job_queue.lock().await;
-        if queue.entries.len() >= ctx.data().max_job_queue {
+        let queue = ctx.data().runtime.job_queue.lock().await;
+        if queue.entries.len() >= max_job_queue {
             say_ephemeral(
                 ctx,
-                format!("Job queue is full ({} queued max).", ctx.data().max_job_queue),
+                format!("Job queue is full ({} queued max).", max_job_queue),
             )
             .await?;
             return Ok(());
@@ -120,9 +125,9 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
         ctx.author().name,
         data.description
     );
-    let mut queue = ctx.data().job_queue.lock().await;
+    let mut queue = ctx.data().runtime.job_queue.lock().await;
     engine::write_job(
-        &ctx.data().generator,
+        &ctx.data().runtime.generator,
         &mut *queue,
         data.title,
         data.giver,
@@ -133,22 +138,24 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
     .await?;
     drop(queue);
 
-    let mut board = ctx.data().board.lock().await;
-    let mut queue = ctx.data().job_queue.lock().await;
+    let max_jobs = ctx.data().runtime.max_jobs;
+    let channel_id = ctx.data().runtime.channel_id;
+    let mut board = ctx.data().runtime.board.lock().await;
+    let mut queue = ctx.data().runtime.job_queue.lock().await;
     engine::refill_board(
         &mut *board,
         &mut *queue,
-        ctx.data().max_jobs,
-        Some(&ctx.data().generation_queue),
-        Some(&ctx.data().pending_quests),
+        max_jobs,
+        Some(&ctx.data().runtime.generation_queue),
+        Some(&ctx.data().runtime.pending_quests),
     );
     storage::save_board(&*board)?;
     storage::save_job_queue(&*queue)?;
     guild_hall::update_board_message(
         &ctx.serenity_context().http,
-        ctx.data().channel_id,
+        channel_id,
         &mut *board,
-        ctx.data().max_jobs,
+        max_jobs,
         None,
     )
     .await?;
@@ -162,22 +169,27 @@ pub async fn delete_job(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
     if !admin_guard(ctx).await {
         return Ok(());
     }
-    let mut board = ctx.data().board.lock().await;
-    let mut queue = ctx.data().job_queue.lock().await;
+    if !require_playing(ctx).await {
+        return Ok(());
+    }
+    let max_jobs = ctx.data().runtime.max_jobs;
+    let channel_id = ctx.data().runtime.channel_id;
+    let mut board = ctx.data().runtime.board.lock().await;
+    let mut queue = ctx.data().runtime.job_queue.lock().await;
     engine::delete_quest(&mut *board, quest_id)?;
     engine::refill_board(
         &mut *board,
         &mut *queue,
-        ctx.data().max_jobs,
-        Some(&ctx.data().generation_queue),
-        Some(&ctx.data().pending_quests),
+        max_jobs,
+        Some(&ctx.data().runtime.generation_queue),
+        Some(&ctx.data().runtime.pending_quests),
     );
     storage::save_job_queue(&*queue)?;
     guild_hall::update_board_message(
         &ctx.serenity_context().http,
-        ctx.data().channel_id,
+        channel_id,
         &mut *board,
-        ctx.data().max_jobs,
+        max_jobs,
         None,
     )
     .await?;
@@ -195,6 +207,9 @@ pub async fn assign(
     if !admin_guard(ctx).await {
         return Ok(());
     }
+    if !require_playing(ctx).await {
+        return Ok(());
+    }
     let target_user_id: u64 = match target_user_id.trim().parse() {
         Ok(id) => id,
         Err(_) => {
@@ -203,16 +218,17 @@ pub async fn assign(
         }
     };
     let http = &ctx.serenity_context().http;
-    let channel_id = ctx.data().channel_id;
+    let max_jobs = ctx.data().runtime.max_jobs;
+    let channel_id = ctx.data().runtime.channel_id;
     let hospital = storage::load_hospital()?;
-    let mut board = ctx.data().board.lock().await;
+    let mut board = ctx.data().runtime.board.lock().await;
     let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
     engine::take_and_enqueue_quest(
         &mut *board,
         &hospital,
         target_user_id,
         quest_id,
-        &ctx.data().generation_queue,
+        &ctx.data().runtime.generation_queue,
         false,
         Some(&status),
     )?;
@@ -221,7 +237,7 @@ pub async fn assign(
         http,
         channel_id,
         &mut *board,
-        ctx.data().max_jobs,
+        max_jobs,
         Some(&status),
     )
     .await?;

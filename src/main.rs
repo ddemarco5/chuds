@@ -5,17 +5,15 @@ use std::{
 };
 
 use chuds::discord::{
-    self, cleanup_non_bot_messages, execute_tick, handle_gear_button, handle_heal_button,
-    handle_merchant_shop_button, handle_scout_button, handle_shop_buy, handle_shop_select,
-    handle_take_button, recover_persistent_board_messages, update_board_message,
-    update_merchant_message, validate_cached_messages_exist, ActivityLogSync, Data,
+    self, game_screens, handle_gear_button, handle_heal_button, handle_merchant_shop_button,
+    handle_scout_button, handle_shop_buy, handle_shop_select, handle_take_button,
+    update_board_message, ActivityLogSync, Data, GameRuntime, SimulationController,
 };
-use chuds::game::engine;
+use chuds::game::domain::session::GamePhase;
+use chuds::game::engine::GenerationJob;
 use chuds::game::generation::worker::{spawn_generation_worker, WorkerEffect};
-use chuds::game::persistence::storage;
 use chuds::game::state::GameState;
 use poise::serenity_prelude as serenity;
-use tokio::time::MissedTickBehavior;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -91,6 +89,7 @@ async fn main() -> anyhow::Result<()> {
     let job_queue = Arc::new(tokio::sync::Mutex::new(game_state.job_queue));
     let item_registry = Arc::new(tokio::sync::Mutex::new(game_state.item_registry));
     let merchant = Arc::new(tokio::sync::Mutex::new(game_state.guild_hall.merchant));
+    let session = Arc::new(tokio::sync::Mutex::new(game_state.session));
     let pending_quests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     tracing::info!(tick_time_s, "chuds bot starting");
@@ -124,13 +123,19 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::admin_redraw(),
                 discord::commands::admin_kill_chud(),
                 discord::commands::admin_spawn_merchant(),
+                discord::commands::admin_attract(),
+                discord::commands::admin_game(),
+                discord::commands::admin_complete(),
                 discord::commands::graveyard(),
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
                     if let serenity::FullEvent::PresenceUpdate { new_data } = &event {
-                        if new_data.guild_id == Some(serenity::GuildId::new(data.guild_id)) {
-                            discord::report_dm::record_mobile_presence(&data.last_mobile, new_data);
+                        if new_data.guild_id == Some(serenity::GuildId::new(data.runtime.guild_id)) {
+                            discord::report_dm::record_mobile_presence(
+                                &data.runtime.last_mobile,
+                                new_data,
+                            );
                         }
                     }
                     if let serenity::FullEvent::InteractionCreate { interaction } = event {
@@ -190,60 +195,52 @@ async fn main() -> anyhow::Result<()> {
                     Duration::from_millis(activity_log_debounce_ms),
                 );
 
-                let messages_exist = {
-                    let _cache_guard = storage::message_cache_lock().await;
-                    let cache = storage::load_message_cache().unwrap_or_default();
-                    validate_cached_messages_exist(&ctx.http, channel_id, &cache).await
-                };
-                if !messages_exist {
-                    let mut b = board.lock().await;
-                    let mut q = job_queue.lock().await;
-                    let merchant_guard = merchant.lock().await;
-                    recover_persistent_board_messages(
-                        &ctx.http,
-                        channel_id,
-                        &mut *b,
-                        &mut *q,
-                        &merchant_guard,
-                        bot_user_id,
-                        max_non_bot_messages,
-                        max_jobs,
-                    )
-                    .await?;
-                } else {
-                    cleanup_non_bot_messages(
-                        &ctx.http,
-                        channel_id,
-                        bot_user_id,
-                        max_non_bot_messages,
-                    )
-                    .await;
-                    let mut b = board.lock().await;
-                    let mut q = job_queue.lock().await;
-                    engine::refill_board(&mut *b, &mut *q, max_jobs, None, None);
-                    storage::save_board(&*b)?;
-                    storage::save_job_queue(&*q)?;
-                    update_board_message(&ctx.http, channel_id, &mut b, max_jobs, None).await?;
-                    let merchant_guard = merchant.lock().await;
-                    update_merchant_message(&ctx.http, channel_id, &merchant_guard).await?;
-                }
-
                 let (generation_tx, generation_rx) =
-                    tokio::sync::mpsc::unbounded_channel::<chuds::game::engine::GenerationJob>();
+                    tokio::sync::mpsc::unbounded_channel::<GenerationJob>();
 
+                let runtime = Arc::new(GameRuntime {
+                    http: Arc::clone(&ctx.http),
+                    cache: Arc::clone(&ctx.cache),
+                    board,
+                    job_queue,
+                    item_registry,
+                    merchant,
+                    generator,
+                    item_generator,
+                    gravestone_generator,
+                    activity_log,
+                    pending_quests,
+                    last_mobile,
+                    session,
+                    generation_queue: generation_tx,
+                    story_shutdown_tx: setup_story_shutdown_tx,
+                    admin_user_id,
+                    bot_user_id,
+                    channel_id,
+                    guild_id,
+                    max_jobs,
+                    max_job_queue,
+                    max_non_bot_messages,
+                    tick_time_s,
+                });
+
+                // Generation worker: spawned once and left running; it simply idles until a
+                // job arrives. Every enqueue path is gated on the Playing phase, so attract /
+                // complete produce no work.
                 {
-                    let worker_board = Arc::clone(&board);
-                    let worker_queue = Arc::clone(&job_queue);
-                    let worker_registry = Arc::clone(&item_registry);
-                    let worker_generator = Arc::clone(&generator);
-                    let worker_item_generator = Arc::clone(&item_generator);
-                    let worker_http = Arc::clone(&ctx.http);
-                    let worker_pending = Arc::clone(&pending_quests);
+                    let worker_board = Arc::clone(&runtime.board);
+                    let worker_queue = Arc::clone(&runtime.job_queue);
+                    let worker_registry = Arc::clone(&runtime.item_registry);
+                    let worker_generator = Arc::clone(&runtime.generator);
+                    let worker_item_generator = Arc::clone(&runtime.item_generator);
+                    let worker_http = Arc::clone(&runtime.http);
+                    let worker_pending = Arc::clone(&runtime.pending_quests);
+                    let worker_session = Arc::clone(&runtime.session);
                     spawn_generation_worker(
                         generation_rx,
                         Arc::clone(&worker_board),
-                        Arc::clone(&worker_queue),
-                        Arc::clone(&worker_registry),
+                        worker_queue,
+                        worker_registry,
                         worker_generator,
                         worker_item_generator,
                         max_jobs,
@@ -251,10 +248,15 @@ async fn main() -> anyhow::Result<()> {
                         move |effects| {
                             let worker_http = Arc::clone(&worker_http);
                             let worker_board = Arc::clone(&worker_board);
+                            let worker_session = Arc::clone(&worker_session);
                             Box::pin(async move {
                                 if effects.iter().any(|e| {
                                     matches!(e, WorkerEffect::BoardRefilled { .. })
                                 }) {
+                                    // Attract/complete own the channel; don't redraw the board.
+                                    if !worker_session.lock().await.is_playing() {
+                                        return;
+                                    }
                                     let mut b = worker_board.lock().await;
                                     if let Err(e) = update_board_message(
                                         &worker_http,
@@ -273,86 +275,20 @@ async fn main() -> anyhow::Result<()> {
                     );
                 }
 
-                {
-                    let mut b = board.lock().await;
-                    let mut q = job_queue.lock().await;
-                    engine::refill_board(
-                        &mut *b,
-                        &mut *q,
-                        max_jobs,
-                        Some(&generation_tx),
-                        Some(&pending_quests),
-                    );
-                    storage::save_board(&*b)?;
-                    storage::save_job_queue(&*q)?;
-                    update_board_message(&ctx.http, channel_id, &mut b, max_jobs, None).await?;
+                let simulation = SimulationController::new(Arc::clone(&runtime));
+
+                // Phase-aware startup: only Playing brings up the simulation; attract and
+                // complete just paint their screen with no ticks.
+                let phase = runtime.session.lock().await.phase;
+                match phase {
+                    GamePhase::Playing => simulation.start().await?,
+                    GamePhase::Attract => game_screens::post_attract_screen(&runtime).await?,
+                    GamePhase::Complete => game_screens::post_complete_screen(&runtime).await?,
                 }
 
-                let tick_board = Arc::clone(&board);
-                let tick_queue = Arc::clone(&job_queue);
-                let tick_registry = Arc::clone(&item_registry);
-                let tick_http = Arc::clone(&ctx.http);
-                let tick_cache = Arc::clone(&ctx.cache);
-                let tick_last_mobile = Arc::clone(&last_mobile);
-                let tick_activity_log = Arc::clone(&activity_log);
-                let tick_gravestone = Arc::clone(&gravestone_generator);
-                let tick_merchant = Arc::clone(&merchant);
-                let tick_generation = generation_tx.clone();
-                let tick_pending = Arc::clone(&pending_quests);
-                let tick_story_shutdown = setup_story_shutdown_tx.clone();
-                tokio::spawn(async move {
-                    let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
-                    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-                    interval.tick().await;
-                    loop {
-                        interval.tick().await;
-                        tracing::info!("background tick firing");
-                        if let Err(e) = execute_tick(
-                            &tick_http,
-                            &tick_cache,
-                            guild_id,
-                            Some(tick_last_mobile.as_ref()),
-                            &tick_board,
-                            &tick_queue,
-                            &tick_registry,
-                            channel_id,
-                            &tick_activity_log,
-                            max_jobs,
-                            bot_user_id,
-                            max_non_bot_messages,
-                            &tick_gravestone,
-                            &tick_merchant,
-                            &tick_generation,
-                            &tick_pending,
-                            &tick_story_shutdown,
-                        )
-                        .await
-                        {
-                            tracing::error!(err = %e, "background tick failed");
-                        }
-                    }
-                });
-
                 Ok(Data {
-                    generator,
-                    item_generator,
-                    gravestone_generator,
-                    board,
-                    job_queue,
-                    item_registry,
-                    merchant,
-                    admin_user_id,
-                    bot_user_id,
-                    channel_id,
-                    activity_log,
-                    max_jobs,
-                    max_job_queue,
-                    max_non_bot_messages,
-                    generation_queue: generation_tx,
-                    pending_quests,
-                    story_shutdown_tx: setup_story_shutdown_tx,
-                    guild_id,
-                    last_mobile,
+                    runtime,
+                    simulation,
                 })
             })
         })

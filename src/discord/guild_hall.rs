@@ -10,7 +10,7 @@ use crate::game::guild_status::{self, GuildHallStatus};
 /// Accent colors for job-slot containers (RGB integers).
 const ACCENT_INACTIVE: u32 = 0x4E5058; // empty slots and taken regular jobs
 const ACCENT_JOB_OPEN: u32 = 0x57F287;
-const ACCENT_STORY_JOB: u32 = 0xE67E22;
+pub(crate) const ACCENT_STORY_JOB: u32 = 0xE67E22;
 const ACCENT_STORY_JOB_INACTIVE: u32 = 0x6B5A4E;
 use crate::discord::channel::{cleanup_non_bot_messages, delete_all_messages_in_channel};
 use crate::game::domain::board::{Board, BoardQuest};
@@ -210,7 +210,7 @@ pub async fn refresh_board_status(
     update_board_message(http, channel_id, board, max_jobs, Some(&status)).await
 }
 
-async fn send_cv2(
+pub(crate) async fn send_cv2(
     http: &Http,
     channel: serenity::ChannelId,
     message: &ComponentsV2Message,
@@ -218,7 +218,7 @@ async fn send_cv2(
     http.send_message(channel, vec![], message).await
 }
 
-async fn edit_cv2(
+pub(crate) async fn edit_cv2(
     http: &Http,
     channel: serenity::ChannelId,
     message_id: MessageId,
@@ -307,6 +307,17 @@ pub async fn format_chudlerboard(http: &serenity::Http) -> String {
     format!("```\n----- Chudlerboard -----\n{}\n```", lines.join("\n"))
 }
 
+/// Purge every message in the channel and reset the persistent message cache to default.
+/// Shared by the job-board redraw and the attract/complete phase transitions.
+pub async fn reset_channel_cache(http: &serenity::Http, channel_id: u64) {
+    let _cache_guard = storage::message_cache_lock().await;
+    tracing::info!("channel reset triggered");
+    delete_all_messages_in_channel(http, channel_id).await;
+    if let Err(e) = storage::save_message_cache(&Default::default()) {
+        tracing::warn!(err = %e, "failed to clear message cache");
+    }
+}
+
 /// Purge the channel, reset the message cache, and re-post all persistent board UI.
 pub async fn recover_persistent_board_messages(
     http: &serenity::Http,
@@ -318,15 +329,7 @@ pub async fn recover_persistent_board_messages(
     max_non_bot_messages: usize,
     max_jobs: usize,
 ) -> anyhow::Result<()> {
-    {
-        let _cache_guard = storage::message_cache_lock().await;
-        tracing::info!("channel redraw triggered");
-        delete_all_messages_in_channel(http, channel_id).await;
-        if let Err(e) = storage::save_message_cache(&Default::default()) {
-            tracing::warn!(err = %e, "failed to clear message cache");
-        }
-    }
-
+    reset_channel_cache(http, channel_id).await;
     cleanup_non_bot_messages(http, channel_id, bot_user_id, max_non_bot_messages).await;
 
     engine::refill_board(board, job_queue, max_jobs, None, None);

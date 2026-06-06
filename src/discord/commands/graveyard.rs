@@ -33,16 +33,19 @@ pub async fn graveyard(ctx: Context<'_>) -> Result<(), Error> {
     let message = formatting::build_graveyard_components(&graveyard.entries);
     edit_ephemeral_message(&http, &token, &message).await?;
 
-    let content = chud_msg!("graveyard_visit", player.chud_ref().name);
-    append_activity_log(&ctx.data().activity_log, &content).await;
-    let mut board = ctx.data().board.lock().await;
-    guild_hall::refresh_board_status(
-        &http,
-        ctx.data().channel_id,
-        &mut *board,
-        ctx.data().max_jobs,
-    )
-    .await?;
+    // Only touch the channel while playing; attract/complete own the screen.
+    if ctx.data().runtime.is_playing().await {
+        let content = chud_msg!("graveyard_visit", player.chud_ref().name);
+        append_activity_log(&ctx.data().runtime.activity_log, &content).await;
+        let mut board = ctx.data().runtime.board.lock().await;
+        guild_hall::refresh_board_status(
+            &http,
+            ctx.data().runtime.channel_id,
+            &mut *board,
+            ctx.data().runtime.max_jobs,
+        )
+        .await?;
+    }
 
     Ok(())
 }
