@@ -33,7 +33,8 @@ pub struct GameRuntime {
     pub last_mobile: Arc<RwLock<HashSet<UserId>>>,
     pub session: Arc<tokio::sync::Mutex<GameSession>>,
     pub generation_queue: tokio::sync::mpsc::UnboundedSender<GenerationJob>,
-    pub story_shutdown_tx: tokio::sync::mpsc::UnboundedSender<()>,
+    /// Signals the completion supervisor to transition the game into the Complete phase.
+    pub complete_tx: tokio::sync::mpsc::UnboundedSender<GameCompletion>,
     pub admin_user_id: u64,
     pub bot_user_id: u64,
     pub channel_id: u64,
@@ -49,6 +50,14 @@ impl GameRuntime {
     pub async fn is_playing(&self) -> bool {
         self.session.lock().await.is_playing()
     }
+}
+
+/// Payload sent when the final story mission is completed, driving the Playing -> Complete
+/// transition (handled off the tick task so the simulation can stop itself cleanly).
+#[derive(Debug, Clone)]
+pub struct GameCompletion {
+    pub user_id: u64,
+    pub chud_name: String,
 }
 
 pub struct Data {

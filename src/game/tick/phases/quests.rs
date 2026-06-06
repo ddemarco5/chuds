@@ -83,6 +83,8 @@ fn resolve_quest(
             );
             if board.story_next_index >= catalog_len {
                 outcome.story_series_complete = true;
+                outcome.final_completer_user_id = Some(discord_user_id);
+                outcome.final_completer_chud_name = Some(player_name.clone());
             }
         }
     }

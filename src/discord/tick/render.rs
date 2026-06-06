@@ -199,9 +199,16 @@ pub async fn render_tick_outcome(
             story_line = %crate::story_jobs::catalog().story_line_name,
             "story series complete"
         );
-        // TODO: transition to the Complete phase (stop sim + post complete screen) instead of
-        // signalling bot shutdown, once auto-transitions are hooked up.
-        let _ = runtime.story_shutdown_tx.send(());
+        // Hand off to the completion supervisor: we're running on the simulation's own tick
+        // task, so it (not us) must stop the simulation and paint the complete screen.
+        let completion = crate::discord::context::GameCompletion {
+            user_id: outcome.final_completer_user_id.unwrap_or_default(),
+            chud_name: outcome
+                .final_completer_chud_name
+                .clone()
+                .unwrap_or_else(|| "a chud".to_string()),
+        };
+        let _ = runtime.complete_tx.send(completion);
     }
 
     Ok(())

@@ -55,6 +55,10 @@ pub struct TickOutcome {
     pub quest_resolved: Vec<QuestResolved>,
     pub slots_filled: usize,
     pub story_series_complete: bool,
+    /// Discord user ID of the chud that finished the final story mission (when complete).
+    pub final_completer_user_id: Option<u64>,
+    /// Name of the chud that finished the final story mission (when complete).
+    pub final_completer_chud_name: Option<String>,
 }
 
 /// Advance the game by one tick through the phase pipeline.

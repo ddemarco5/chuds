@@ -7,11 +7,12 @@ use std::{
 use chuds::discord::{
     self, game_screens, handle_gear_button, handle_heal_button, handle_merchant_shop_button,
     handle_scout_button, handle_shop_buy, handle_shop_select, handle_take_button,
-    update_board_message, ActivityLogSync, Data, GameRuntime, SimulationController,
+    update_board_message, ActivityLogSync, Data, GameCompletion, GameRuntime, SimulationController,
 };
 use chuds::game::domain::session::GamePhase;
 use chuds::game::engine::GenerationJob;
 use chuds::game::generation::worker::{spawn_generation_worker, WorkerEffect};
+use chuds::game::persistence::storage;
 use chuds::game::state::GameState;
 use poise::serenity_prelude as serenity;
 
@@ -95,8 +96,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(tick_time_s, "chuds bot starting");
 
     let last_mobile = Arc::new(RwLock::new(HashSet::new()));
-    let (story_shutdown_tx, mut story_shutdown_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
-    let setup_story_shutdown_tx = story_shutdown_tx.clone();
+    let (complete_tx, complete_rx) = tokio::sync::mpsc::unbounded_channel::<GameCompletion>();
+    let setup_complete_tx = complete_tx.clone();
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -213,7 +214,7 @@ async fn main() -> anyhow::Result<()> {
                     last_mobile,
                     session,
                     generation_queue: generation_tx,
-                    story_shutdown_tx: setup_story_shutdown_tx,
+                    complete_tx: setup_complete_tx,
                     admin_user_id,
                     bot_user_id,
                     channel_id,
@@ -277,6 +278,37 @@ async fn main() -> anyhow::Result<()> {
 
                 let simulation = SimulationController::new(Arc::clone(&runtime));
 
+                // Completion supervisor: the tick task signals here when the final story
+                // mission is finished. Running off the tick task lets us stop the simulation
+                // (which aborts that task) and then paint the complete screen cleanly.
+                {
+                    let sup_sim = Arc::clone(&simulation);
+                    let sup_rt = Arc::clone(&runtime);
+                    let mut complete_rx = complete_rx;
+                    tokio::spawn(async move {
+                        while let Some(completion) = complete_rx.recv().await {
+                            tracing::info!(
+                                user_id = completion.user_id,
+                                chud = %completion.chud_name,
+                                "final story mission complete; transitioning to Complete phase"
+                            );
+                            {
+                                let mut session = sup_rt.session.lock().await;
+                                session.phase = GamePhase::Complete;
+                                session.final_completer_user_id = Some(completion.user_id);
+                                session.final_completer_chud_name = Some(completion.chud_name);
+                                if let Err(e) = storage::save_session(&session) {
+                                    tracing::warn!(err = %e, "failed to save session on completion");
+                                }
+                            }
+                            sup_sim.stop().await;
+                            if let Err(e) = game_screens::post_complete_screen(&sup_rt).await {
+                                tracing::warn!(err = %e, "failed to post complete screen");
+                            }
+                        }
+                    });
+                }
+
                 // Phase-aware startup: only Playing brings up the simulation; attract and
                 // complete just paint their screen with no ticks.
                 let phase = runtime.session.lock().await.phase;
@@ -313,16 +345,6 @@ async fn main() -> anyhow::Result<()> {
         }
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("shutdown signal received, saving LLM memory");
-            chuds::game::persistence::llm_memory::save_all_llm_memory(
-                &shutdown_quest,
-                &shutdown_item,
-                &shutdown_gravestone,
-            )?;
-            Ok(())
-        }
-        _ = story_shutdown_rx.recv() => {
-            tracing::info!("story series complete, shutting down");
-            // TODO: post game-over summary with player/game statistics snapshot
             chuds::game::persistence::llm_memory::save_all_llm_memory(
                 &shutdown_quest,
                 &shutdown_item,
