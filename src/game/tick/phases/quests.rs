@@ -21,6 +21,11 @@ pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::
         }
     }
 
+    // Trigger the next story job the moment a story success is recorded (story_next_index
+    // was advanced above). Guarded, so it is a no-op except right after a story quest
+    // passes; refill remains only as the bootstrap/recovery fallback.
+    engine::ensure_story_generation(ctx.board, ctx.generation_queue, ctx.pending_quests);
+
     storage::save_board(ctx.board)?;
     storage::save_hospital(&ctx.hospital)?;
     storage::save_item_registry(ctx.item_registry)?;

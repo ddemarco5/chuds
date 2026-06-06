@@ -103,6 +103,50 @@ pub fn take_and_enqueue_quest(
     Ok(info)
 }
 
+/// Ensure the next story job is being generated. Enqueues a story `QuestCreation`
+/// when a story slot is open (none currently on the board and catalog entries remain)
+/// and no generation is already in flight. Returns true if a job was enqueued.
+pub fn ensure_story_generation(
+    board: &Board,
+    generation_queue: Option<&tokio::sync::mpsc::UnboundedSender<GenerationJob>>,
+    pending_quests: Option<&AtomicUsize>,
+) -> bool {
+    let catalog = story_jobs::catalog();
+    if catalog.stories.is_empty()
+        || board.story_next_index >= catalog.stories.len()
+        || board.has_story_quest()
+    {
+        return false;
+    }
+
+    let (Some(gen_q), Some(pending)) = (generation_queue, pending_quests) else {
+        return false;
+    };
+    if pending.load(Ordering::SeqCst) != 0 {
+        return false;
+    }
+
+    let index = board.story_next_index;
+    let entry = &catalog.stories[index];
+    pending.fetch_add(1, Ordering::SeqCst);
+    if gen_q
+        .send(GenerationJob::QuestCreation {
+            quest_data: QuestData {
+                quest_description: entry.description.clone(),
+                quest_goal: Some(entry.goal.clone()),
+                quest_difficulty: entry.difficulty,
+                trials: roll_trials(entry.difficulty),
+            },
+            story_index: Some(index),
+        })
+        .is_err()
+    {
+        pending.fetch_sub(1, Ordering::SeqCst);
+        return false;
+    }
+    true
+}
+
 /// Refill the board: ensure a story job is present (via async generation) before
 /// pulling from the regular queue. Returns the number of queue jobs added.
 pub fn refill_board(
@@ -113,32 +157,13 @@ pub fn refill_board(
     pending_quests: Option<&AtomicUsize>,
 ) -> usize {
     let catalog = story_jobs::catalog();
-    // Story job takes priority: generate from catalog before filling from the regular queue.
+    // Story job takes priority: keep its slot reserved while it is generated from the
+    // catalog (bootstrap/recovery fallback) before filling from the regular queue.
     if !catalog.stories.is_empty()
         && board.story_next_index < catalog.stories.len()
         && !board.has_story_quest()
     {
-        if let (Some(gen_q), Some(pending)) = (generation_queue, pending_quests) {
-            if pending.load(Ordering::SeqCst) == 0 {
-                let index = board.story_next_index;
-                let entry = &catalog.stories[index];
-                pending.fetch_add(1, Ordering::SeqCst);
-                if gen_q
-                    .send(GenerationJob::QuestCreation {
-                        quest_data: QuestData {
-                            quest_description: entry.description.clone(),
-                            quest_goal: Some(entry.goal.clone()),
-                            quest_difficulty: entry.difficulty,
-                            trials: roll_trials(entry.difficulty),
-                        },
-                        story_index: Some(index),
-                    })
-                    .is_err()
-                {
-                    pending.fetch_sub(1, Ordering::SeqCst);
-                }
-            }
-        }
+        ensure_story_generation(board, generation_queue, pending_quests);
         return 0;
     }
 
