@@ -262,6 +262,30 @@ pub fn save_item_registry(registry: &ItemRegistry) -> anyhow::Result<()> {
     std::fs::write(ITEM_REGISTRY_PATH, yaml).context("writing item registry")
 }
 
+/// Reset all per-game state to a fresh game: deletes every player and resets the board,
+/// queue, hospital, graveyard, starting benefits, merchant, item registry, and session.
+///
+/// Preserves chudmasters and learned LLM memory (those are not per-game state).
+pub fn reset_game_data() -> anyhow::Result<()> {
+    for id in list_player_ids()? {
+        let path = format!("{}/{}.yaml", PLAYERS_DIR, id);
+        if Path::new(&path).exists() {
+            std::fs::remove_file(&path)
+                .with_context(|| format!("deleting player {}", id))?;
+        }
+    }
+    save_board(&Board::default())?;
+    save_job_queue(&JobQueue::default())?;
+    save_hospital(&Hospital::default())?;
+    save_graveyard(&Graveyard::default())?;
+    save_starting_benefits(&StartingBenefits::default())?;
+    save_guild_hall_full(&GuildHall::default())?;
+    save_item_registry(&ItemRegistry::default())?;
+    save_session(&GameSession::default())?;
+    tracing::info!("game data reset to a fresh game");
+    Ok(())
+}
+
 /// Persist the game-flow session to `data/session.yaml`.
 pub fn save_session(session: &GameSession) -> anyhow::Result<()> {
     std::fs::create_dir_all("data")?;

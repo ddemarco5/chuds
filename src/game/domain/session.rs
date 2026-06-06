@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum GamePhase {
     /// Pre-game lobby: attract screen, players join, no simulation.
+    /// Default so a fresh boot (no `data/session.yaml`) lands in the lobby.
+    #[default]
     Attract,
     /// Normal gameplay: ticks, generation, job board.
-    #[default]
     Playing,
     /// Post-game: complete screen with final stats, no simulation.
     Complete,

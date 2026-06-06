@@ -3,6 +3,7 @@ use poise::serenity_prelude::{self as serenity, MessageId};
 use crate::discord::components_v2::{Component, ComponentsV2Message, TextDisplay};
 use crate::discord::context::GameRuntime;
 use crate::discord::guild_hall::{edit_cv2, format_chudlerboard, reset_channel_cache, send_cv2};
+use crate::game::engine;
 use crate::game::persistence::storage;
 use crate::story_jobs;
 
@@ -161,6 +162,19 @@ async fn render_phase_screen(
 /// Purge the channel and post a fresh attract screen (used on transition into Attract).
 pub async fn post_attract_screen(runtime: &GameRuntime) -> anyhow::Result<()> {
     reset_channel_cache(&runtime.http, runtime.channel_id).await;
+
+    // Kick off the first story job now (idempotent) so it's generated and waiting on the
+    // board the moment the game switches to Playing. The worker persists it but skips the
+    // board UI update while we're in attract.
+    {
+        let board = runtime.board.lock().await;
+        engine::ensure_story_generation(
+            &board,
+            Some(&runtime.generation_queue),
+            Some(&runtime.pending_quests),
+        );
+    }
+
     let message = build_attract_message(runtime).await;
     render_phase_screen(runtime, &message).await
 }

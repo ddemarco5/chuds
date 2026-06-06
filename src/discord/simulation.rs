@@ -9,6 +9,7 @@ use crate::discord::context::GameRuntime;
 use crate::discord::guild_hall::{recover_persistent_board_messages, update_board_message};
 use crate::discord::tick::execute_tick;
 use crate::discord::ui::update_merchant_message;
+use crate::game::domain::session::GamePhase;
 use crate::game::engine;
 use crate::game::persistence::storage;
 
@@ -20,6 +21,7 @@ use crate::game::persistence::storage;
 pub struct SimulationController {
     runtime: Arc<GameRuntime>,
     tick_handle: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+    start_handle: tokio::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl SimulationController {
@@ -27,12 +29,51 @@ impl SimulationController {
         Arc::new(Self {
             runtime,
             tick_handle: tokio::sync::Mutex::new(None),
+            start_handle: tokio::sync::Mutex::new(None),
         })
     }
 
     /// True if the background tick loop is currently running.
     pub async fn is_running(&self) -> bool {
         self.tick_handle.lock().await.is_some()
+    }
+
+    /// Arm a timer that transitions Attract -> Playing at `at_unix` (unix seconds). Replaces
+    /// any previously scheduled start. The timer no-ops if the game has left Attract by then.
+    pub async fn schedule_start(self: &Arc<Self>, at_unix: i64) {
+        self.cancel_scheduled_start().await;
+        let this = Arc::clone(self);
+        let handle = tokio::spawn(async move {
+            let now = chrono::Utc::now().timestamp();
+            let delay = (at_unix - now).max(0) as u64;
+            tracing::info!(at_unix, delay_s = delay, "game start scheduled");
+            tokio::time::sleep(Duration::from_secs(delay)).await;
+
+            {
+                let mut session = this.runtime.session.lock().await;
+                if session.phase != GamePhase::Attract {
+                    tracing::info!("scheduled start fired but game is no longer in attract; ignoring");
+                    return;
+                }
+                session.phase = GamePhase::Playing;
+                if let Err(e) = storage::save_session(&session) {
+                    tracing::warn!(err = %e, "failed to save session on scheduled start");
+                }
+            }
+            tracing::info!("scheduled start firing: entering playing phase");
+            if let Err(e) = this.start().await {
+                tracing::error!(err = %e, "failed to start simulation on scheduled start");
+            }
+        });
+        *self.start_handle.lock().await = Some(handle);
+    }
+
+    /// Cancel a pending scheduled start, if any.
+    pub async fn cancel_scheduled_start(&self) {
+        if let Some(handle) = self.start_handle.lock().await.take() {
+            handle.abort();
+            tracing::info!("scheduled start cancelled");
+        }
     }
 
     /// Bring the simulation up: rebuild/refresh the job board channel and spawn the tick loop.

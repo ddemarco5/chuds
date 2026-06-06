@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use poise::serenity_prelude as serenity;
 
 use crate::discord::buttons::post_quest_taken_announcement;
@@ -7,11 +9,34 @@ use crate::discord::game_screens;
 use crate::discord::guild_hall::recover_persistent_board_messages;
 use crate::discord::report_dm;
 use crate::discord::tick;
-use crate::game::domain::session::GamePhase;
+use crate::game::domain::board::Board;
+use crate::game::domain::job_queue::JobQueue;
+use crate::game::domain::session::{GamePhase, GameSession};
 use crate::game::engine::{self, DeathContext};
 use crate::game::guild_status;
+use crate::game::merchant::MerchantState;
+use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::message_cache::ActivityLogKind;
 use crate::game::persistence::storage;
+
+/// Parse an admin-supplied start time into unix seconds. Accepts a raw unix timestamp, an
+/// RFC3339 datetime (e.g. `2026-06-10T18:00:00-07:00`), or a naive `YYYY-MM-DD HH:MM[:SS]`
+/// which is interpreted as UTC.
+fn parse_start_time(input: &str) -> Option<i64> {
+    let s = input.trim();
+    if let Ok(unix) = s.parse::<i64>() {
+        return Some(unix);
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.timestamp());
+    }
+    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"] {
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
+            return Some(naive.and_utc().timestamp());
+        }
+    }
+    None
+}
 
 #[poise::command(slash_command)]
 pub async fn add_cm(ctx: Context<'_>, discord_user_id: String) -> Result<(), Error> {
@@ -164,6 +189,72 @@ pub async fn admin_complete(ctx: Context<'_>) -> Result<(), Error> {
     }
     game_screens::post_complete_screen(&data.runtime).await?;
     ctx.say("ok, switched to complete").await?;
+    Ok(())
+}
+
+/// Reset to a brand-new game: wipe all chuds and game state, then drop into the attract lobby.
+#[poise::command(slash_command)]
+pub async fn admin_reset(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let data = ctx.data();
+    data.simulation.cancel_scheduled_start().await;
+    data.simulation.stop().await;
+
+    storage::reset_game_data()?;
+
+    let rt = &data.runtime;
+    *rt.board.lock().await = Board::default();
+    *rt.job_queue.lock().await = JobQueue::default();
+    *rt.merchant.lock().await = MerchantState::default();
+    *rt.item_registry.lock().await = ItemRegistry::default();
+    rt.pending_quests.store(0, Ordering::SeqCst);
+    *rt.session.lock().await = GameSession::default();
+
+    game_screens::post_attract_screen(rt).await?;
+    ctx.say("ok, reset to a fresh game (attract)").await?;
+    Ok(())
+}
+
+/// Schedule when the game leaves attract and enters playing (updates the attract countdown).
+#[poise::command(slash_command)]
+pub async fn admin_schedule_start(
+    ctx: Context<'_>,
+    #[description = "unix timestamp, RFC3339, or `YYYY-MM-DD HH:MM` (UTC)"] when: String,
+) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    let data = ctx.data();
+
+    if data.runtime.session.lock().await.phase != GamePhase::Attract {
+        ctx.say("you can only schedule a start while in the attract phase").await?;
+        return Ok(());
+    }
+
+    let at_unix = match parse_start_time(&when) {
+        Some(t) => t,
+        None => {
+            ctx.say(
+                "couldn't parse that time. try a unix timestamp, `2026-06-10T18:00:00-07:00`, or `2026-06-10 18:00` (UTC)",
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    {
+        let mut session = data.runtime.session.lock().await;
+        session.game_start_at = Some(at_unix);
+        storage::save_session(&session)?;
+    }
+    data.simulation.schedule_start(at_unix).await;
+    game_screens::update_attract_screen(&data.runtime).await?;
+
+    ctx.say(format!("ok, game starts <t:{at_unix}:R>")).await?;
     Ok(())
 }
 

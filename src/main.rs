@@ -127,6 +127,8 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::admin_attract(),
                 discord::commands::admin_game(),
                 discord::commands::admin_complete(),
+                discord::commands::admin_reset(),
+                discord::commands::admin_schedule_start(),
                 discord::commands::graveyard(),
             ],
             event_handler: |ctx, event, _framework, data| {
@@ -311,10 +313,19 @@ async fn main() -> anyhow::Result<()> {
 
                 // Phase-aware startup: only Playing brings up the simulation; attract and
                 // complete just paint their screen with no ticks.
-                let phase = runtime.session.lock().await.phase;
+                let (phase, scheduled_start) = {
+                    let session = runtime.session.lock().await;
+                    (session.phase, session.game_start_at)
+                };
                 match phase {
                     GamePhase::Playing => simulation.start().await?,
-                    GamePhase::Attract => game_screens::post_attract_screen(&runtime).await?,
+                    GamePhase::Attract => {
+                        game_screens::post_attract_screen(&runtime).await?;
+                        // Re-arm a previously scheduled start across restarts.
+                        if let Some(at) = scheduled_start {
+                            simulation.schedule_start(at).await;
+                        }
+                    }
                     GamePhase::Complete => game_screens::post_complete_screen(&runtime).await?,
                 }
 
