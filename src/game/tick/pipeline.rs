@@ -44,6 +44,8 @@ pub struct TickContext<'a> {
     pub queue: &'a mut JobQueue,
     pub item_registry: &'a mut ItemRegistry,
     pub max_jobs: usize,
+    pub generation_queue: Option<&'a tokio::sync::mpsc::UnboundedSender<crate::game::engine::GenerationJob>>,
+    pub pending_quests: Option<&'a std::sync::atomic::AtomicUsize>,
 }
 
 #[derive(Default)]
@@ -52,6 +54,7 @@ pub struct TickOutcome {
     pub scout_results: Vec<ScoutResult>,
     pub quest_resolved: Vec<QuestResolved>,
     pub slots_filled: usize,
+    pub story_series_complete: bool,
 }
 
 /// Advance the game by one tick through the phase pipeline.

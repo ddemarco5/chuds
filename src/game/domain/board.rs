@@ -26,9 +26,15 @@ pub struct BoardQuest {
     /// Empty = open/available. One or more entries = actively being run by those players.
     #[serde(default)]
     pub states: Vec<QuestState>,
+    /// Catalog index when this is a story job; None for regular jobs.
+    #[serde(default)]
+    pub story_index: Option<usize>,
 }
 
 impl BoardQuest {
+    pub fn is_story(&self) -> bool {
+        self.story_index.is_some()
+    }
     pub fn has_active(&self) -> bool {
         self.states
             .iter()
@@ -52,11 +58,23 @@ pub struct Board {
     /// Tick applies a result only when ticks_remaining reaches zero AND an entry is present here.
     #[serde(default)]
     pub completed_results: HashMap<u32, QuestResult>,
+    /// Index of the next story job to post from the catalog.
+    #[serde(default)]
+    pub story_next_index: usize,
 }
 
 impl Board {
+    pub fn has_story_quest(&self) -> bool {
+        self.quests.iter().any(|q| q.is_story())
+    }
+
     /// Add a fully-generated quest to the board and return its assigned id.
-    pub fn add_quest(&mut self, quest_data: QuestData, generated: GeneratedQuest) -> u32 {
+    pub fn add_quest(
+        &mut self,
+        quest_data: QuestData,
+        generated: GeneratedQuest,
+        story_index: Option<usize>,
+    ) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
         self.quests.push(BoardQuest {
@@ -64,6 +82,7 @@ impl Board {
             quest_data,
             generated,
             states: Vec::new(),
+            story_index,
         });
         id
     }

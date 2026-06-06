@@ -37,6 +37,9 @@ pub async fn execute_tick(
     max_non_bot_messages: usize,
     gravestone_generator: &GravestoneGenerator,
     merchant: &tokio::sync::Mutex<MerchantState>,
+    generation_queue: &tokio::sync::mpsc::UnboundedSender<engine::GenerationJob>,
+    pending_quests: &std::sync::atomic::AtomicUsize,
+    story_shutdown_tx: &tokio::sync::mpsc::UnboundedSender<()>,
 ) -> anyhow::Result<()> {
     cleanup_non_bot_messages(http, channel_id, bot_user_id, max_non_bot_messages).await;
 
@@ -59,6 +62,8 @@ pub async fn execute_tick(
         queue: &mut *queue,
         item_registry: &mut *registry,
         max_jobs,
+        generation_queue: Some(generation_queue),
+        pending_quests: Some(pending_quests),
     })?;
 
     storage::save_hospital(&hospital)?;
@@ -223,6 +228,15 @@ pub async fn execute_tick(
         merchant_guard.advance_tick(force);
         storage::save_guild_hall(&merchant_guard)?;
         update_merchant_message(http, channel_id, &merchant_guard).await?;
+    }
+
+    if outcome.story_series_complete {
+        tracing::info!(
+            story_line = %crate::story_jobs::catalog().story_line_name,
+            "story series complete"
+        );
+        // TODO: post game-over summary with player/game statistics snapshot
+        let _ = story_shutdown_tx.send(());
     }
 
     Ok(())

@@ -96,6 +96,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(tick_time_s, "chuds bot starting");
 
     let last_mobile = Arc::new(RwLock::new(HashSet::new()));
+    let (story_shutdown_tx, mut story_shutdown_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+    let setup_story_shutdown_tx = story_shutdown_tx.clone();
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
@@ -218,7 +220,7 @@ async fn main() -> anyhow::Result<()> {
                     .await;
                     let mut b = board.lock().await;
                     let mut q = job_queue.lock().await;
-                    engine::refill_board_from_queue(&mut *b, &mut *q, max_jobs);
+                    engine::refill_board(&mut *b, &mut *q, max_jobs, None, None);
                     storage::save_board(&*b)?;
                     storage::save_job_queue(&*q)?;
                     update_board_message(&ctx.http, channel_id, &mut b, max_jobs, None).await?;
@@ -271,6 +273,21 @@ async fn main() -> anyhow::Result<()> {
                     );
                 }
 
+                {
+                    let mut b = board.lock().await;
+                    let mut q = job_queue.lock().await;
+                    engine::refill_board(
+                        &mut *b,
+                        &mut *q,
+                        max_jobs,
+                        Some(&generation_tx),
+                        Some(&pending_quests),
+                    );
+                    storage::save_board(&*b)?;
+                    storage::save_job_queue(&*q)?;
+                    update_board_message(&ctx.http, channel_id, &mut b, max_jobs, None).await?;
+                }
+
                 let tick_board = Arc::clone(&board);
                 let tick_queue = Arc::clone(&job_queue);
                 let tick_registry = Arc::clone(&item_registry);
@@ -280,6 +297,9 @@ async fn main() -> anyhow::Result<()> {
                 let tick_activity_log = Arc::clone(&activity_log);
                 let tick_gravestone = Arc::clone(&gravestone_generator);
                 let tick_merchant = Arc::clone(&merchant);
+                let tick_generation = generation_tx.clone();
+                let tick_pending = Arc::clone(&pending_quests);
+                let tick_story_shutdown = setup_story_shutdown_tx.clone();
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(Duration::from_secs(tick_time_s));
                     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -302,6 +322,9 @@ async fn main() -> anyhow::Result<()> {
                             max_non_bot_messages,
                             &tick_gravestone,
                             &tick_merchant,
+                            &tick_generation,
+                            &tick_pending,
+                            &tick_story_shutdown,
                         )
                         .await
                         {
@@ -327,6 +350,7 @@ async fn main() -> anyhow::Result<()> {
                     max_non_bot_messages,
                     generation_queue: generation_tx,
                     pending_quests,
+                    story_shutdown_tx: setup_story_shutdown_tx,
                     guild_id,
                     last_mobile,
                 })
@@ -353,6 +377,16 @@ async fn main() -> anyhow::Result<()> {
         }
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("shutdown signal received, saving LLM memory");
+            chuds::game::persistence::llm_memory::save_all_llm_memory(
+                &shutdown_quest,
+                &shutdown_item,
+                &shutdown_gravestone,
+            )?;
+            Ok(())
+        }
+        _ = story_shutdown_rx.recv() => {
+            tracing::info!("story series complete, shutting down");
+            // TODO: post game-over summary with player/game statistics snapshot
             chuds::game::persistence::llm_memory::save_all_llm_memory(
                 &shutdown_quest,
                 &shutdown_item,

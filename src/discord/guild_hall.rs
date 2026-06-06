@@ -8,8 +8,10 @@ use crate::discord::components_v2::{
 use crate::game::guild_status::{self, GuildHallStatus};
 
 /// Accent colors for job-slot containers (RGB integers).
-const ACCENT_INACTIVE: u32 = 0x4E5058; // empty slots and taken jobs
+const ACCENT_INACTIVE: u32 = 0x4E5058; // empty slots and taken regular jobs
 const ACCENT_JOB_OPEN: u32 = 0x57F287;
+const ACCENT_STORY_JOB: u32 = 0xE67E22;
+const ACCENT_STORY_JOB_INACTIVE: u32 = 0x6B5A4E;
 use crate::discord::channel::{cleanup_non_bot_messages, delete_all_messages_in_channel};
 use crate::game::domain::board::{Board, BoardQuest};
 use crate::game::domain::job_queue::JobQueue;
@@ -48,7 +50,13 @@ fn format_job_slot(quest: Option<&BoardQuest>) -> String {
 }
 
 fn job_slot_accent(q: &BoardQuest) -> u32 {
-    if q.has_active() {
+    if q.is_story() {
+        if q.has_active() {
+            ACCENT_STORY_JOB_INACTIVE
+        } else {
+            ACCENT_STORY_JOB
+        }
+    } else if q.has_active() {
         ACCENT_INACTIVE
     } else {
         ACCENT_JOB_OPEN
@@ -321,7 +329,7 @@ pub async fn recover_persistent_board_messages(
 
     cleanup_non_bot_messages(http, channel_id, bot_user_id, max_non_bot_messages).await;
 
-    engine::refill_board_from_queue(board, job_queue, max_jobs);
+    engine::refill_board(board, job_queue, max_jobs, None, None);
     storage::save_board(board)?;
     storage::save_job_queue(job_queue)?;
     update_board_message(http, channel_id, board, max_jobs, None).await?;

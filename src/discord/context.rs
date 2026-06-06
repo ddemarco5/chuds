@@ -33,6 +33,7 @@ pub struct Data {
     pub max_non_bot_messages: usize,
     pub generation_queue: tokio::sync::mpsc::UnboundedSender<GenerationJob>,
     pub pending_quests: Arc<AtomicUsize>,
+    pub story_shutdown_tx: tokio::sync::mpsc::UnboundedSender<()>,
     pub guild_id: u64,
     pub last_mobile: Arc<RwLock<HashSet<UserId>>>,
 }

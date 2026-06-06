@@ -12,8 +12,10 @@ use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator, QuestResults, TrialResult};
 use crate::game::tuneable_rolls::{item_drop_chance, roll_item, roll_item_drop, roll_item_value, roll_trials};
+use crate::story_jobs;
 use crate::game::mechanics::simulation::{effective_stats, play_quest};
 use crate::game::persistence::storage;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Context about what killed a chud, used for epitaph generation.
 #[derive(Clone)]
@@ -46,6 +48,8 @@ pub enum GenerationJob {
     /// Fully generate a new quest from a description and add it to the board.
     QuestCreation {
         quest_data: QuestData,
+        /// Some(catalog index) for story jobs; None for regular jobs.
+        story_index: Option<usize>,
     },
 }
 
@@ -92,16 +96,50 @@ pub fn take_and_enqueue_quest(
     Ok(info)
 }
 
-/// Move quests from the front of the queue onto the board until full or queue empty.
-pub fn refill_board_from_queue(
+/// Refill the board: ensure a story job is present (via async generation) before
+/// pulling from the regular queue. Returns the number of queue jobs added.
+pub fn refill_board(
     board: &mut Board,
     queue: &mut JobQueue,
     max_jobs: usize,
+    generation_queue: Option<&tokio::sync::mpsc::UnboundedSender<GenerationJob>>,
+    pending_quests: Option<&AtomicUsize>,
 ) -> usize {
+    let catalog = story_jobs::catalog();
+    // Story job takes priority: generate from catalog before filling from the regular queue.
+    if !catalog.stories.is_empty()
+        && board.story_next_index < catalog.stories.len()
+        && !board.has_story_quest()
+    {
+        if let (Some(gen_q), Some(pending)) = (generation_queue, pending_quests) {
+            if pending.load(Ordering::SeqCst) == 0 {
+                let index = board.story_next_index;
+                let entry = &catalog.stories[index];
+                pending.fetch_add(1, Ordering::SeqCst);
+                if gen_q
+                    .send(GenerationJob::QuestCreation {
+                        quest_data: QuestData {
+                            quest_description: entry.description.clone(),
+                            quest_goal: Some(entry.goal.clone()),
+                            quest_difficulty: entry.difficulty,
+                            trials: roll_trials(entry.difficulty),
+                        },
+                        story_index: Some(index),
+                    })
+                    .is_err()
+                {
+                    pending.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+        }
+        return 0;
+    }
+
+    // Regular jobs: pull pre-generated quests from the chudmaster queue.
     let mut added = 0usize;
     while board.quests.len() < max_jobs && !queue.entries.is_empty() {
         let entry = queue.entries.remove(0);
-        board.add_quest(entry.quest_data, entry.generated);
+        board.add_quest(entry.quest_data, entry.generated, None);
         added += 1;
     }
     if added > 0 {
@@ -132,7 +170,10 @@ pub fn make_quest_creation_job(
         quest_difficulty: difficulty,
         trials: roll_trials(difficulty),
     };
-    GenerationJob::QuestCreation { quest_data }
+    GenerationJob::QuestCreation {
+        quest_data,
+        story_index: None, // chudmaster /generate_job — goes to queue after generation
+    }
 }
 
 /// Generate trial flavor via LLM and enqueue the quest (does not add directly to board).
@@ -465,26 +506,55 @@ pub async fn generate_result(
 
     let difficulty = board_quest.quest_data.quest_difficulty;
     let trial_count = board_quest.quest_data.trials.len();
-    if result.passed && (force_item_drop || roll_item_drop(difficulty, trial_count, &mut rand::thread_rng())) {
-        let seed = roll_item(difficulty, &mut rand::thread_rng());
-        let (name, description) = item_generator
-            .generate_from_quest(&seed, &result, board_quest)
-            .await?;
-        let rarity = seed.rarity.clone();
-        let mut item = seed.into_item(name, description);
-        item.value = roll_item_value(&item.stats, &mut rand::thread_rng());
-        tracing::info!(
-            name = %item.name,
-            item_type = ?item.item_type,
-            rarity = %rarity,
-            drop_chance = item_drop_chance(difficulty, trial_count),
-            difficulty,
-            trial_count,
-            net_stat = item.stats.net_stat_value(),
-            value = item.value,
-            "item generated for quest result"
-        );
-        result.pending_item = Some(item);
+    if result.passed {
+        let story_reward = board_quest
+            .story_index
+            .and_then(|i| story_jobs::catalog().stories.get(i))
+            .map(|entry| &entry.reward);
+
+        let seed = if let Some(reward) = story_reward {
+            Some(roll_item(
+                difficulty,
+                &mut rand::thread_rng(),
+                Some(&reward.rarity),
+                reward.stats.as_ref(),
+            ))
+        } else if force_item_drop || roll_item_drop(difficulty, trial_count, &mut rand::thread_rng()) {
+            Some(roll_item(
+                difficulty,
+                &mut rand::thread_rng(),
+                None,
+                None,
+            ))
+        } else {
+            None
+        };
+
+        if let Some(seed) = seed {
+            let (name, description) = item_generator
+                .generate_from_quest(&seed, &result, board_quest)
+                .await?;
+            let rarity = seed.rarity.clone();
+            let mut item = seed.into_item(name, description);
+            item.value = roll_item_value(&item.stats, &mut rand::thread_rng());
+            tracing::info!(
+                name = %item.name,
+                item_type = ?item.item_type,
+                rarity = %rarity,
+                story = board_quest.story_index.is_some(),
+                drop_chance = if board_quest.story_index.is_some() {
+                    1.0
+                } else {
+                    item_drop_chance(difficulty, trial_count)
+                },
+                difficulty,
+                trial_count,
+                net_stat = item.stats.net_stat_value(),
+                value = item.value,
+                "item generated for quest result"
+            );
+            result.pending_item = Some(item);
+        }
     }
 
     result.log();

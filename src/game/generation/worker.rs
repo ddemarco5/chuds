@@ -65,16 +65,32 @@ pub async fn process_job(
                 }
             }
         }
-        GenerationJob::QuestCreation { quest_data } => {
+        GenerationJob::QuestCreation {
+            quest_data,
+            story_index,
+        } => {
+            let is_story = story_index.is_some();
             match generator.generate_from_description(&quest_data).await {
                 Ok(generated) => {
-                    tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest generated");
-                    engine::enqueue_quest(queue, quest_data, generated)?;
+                    tracing::info!(
+                        title = %generated.quest_title,
+                        giver = %generated.quest_giver,
+                        story = is_story,
+                        "quest generated"
+                    );
+                    if is_story {
+                        // Story jobs skip the queue and go straight onto the board.
+                        board.add_quest(quest_data, generated, story_index);
+                        storage::save_board(board)?;
+                    } else {
+                        // Regular jobs wait in the queue until refill_board pulls them on.
+                        engine::enqueue_quest(queue, quest_data, generated)?;
+                    }
                     pending_quests.fetch_sub(1, Ordering::SeqCst);
-                    let added = engine::refill_board_from_queue(board, queue, max_jobs);
+                    let added = engine::refill_board(board, queue, max_jobs, None, None);
                     storage::save_board(board)?;
                     storage::save_job_queue(queue)?;
-                    tracing::info!(queued = queue.entries.len(), added, "quest queued");
+                    tracing::info!(queued = queue.entries.len(), added, story = is_story, "quest placement complete");
                     Ok(vec![WorkerEffect::BoardRefilled { added }])
                 }
                 Err(e) => {

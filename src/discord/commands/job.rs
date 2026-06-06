@@ -135,7 +135,13 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
 
     let mut board = ctx.data().board.lock().await;
     let mut queue = ctx.data().job_queue.lock().await;
-    engine::refill_board_from_queue(&mut *board, &mut *queue, ctx.data().max_jobs);
+    engine::refill_board(
+        &mut *board,
+        &mut *queue,
+        ctx.data().max_jobs,
+        Some(&ctx.data().generation_queue),
+        Some(&ctx.data().pending_quests),
+    );
     storage::save_board(&*board)?;
     storage::save_job_queue(&*queue)?;
     guild_hall::update_board_message(
@@ -159,7 +165,13 @@ pub async fn delete_job(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
     let mut board = ctx.data().board.lock().await;
     let mut queue = ctx.data().job_queue.lock().await;
     engine::delete_quest(&mut *board, quest_id)?;
-    engine::refill_board_from_queue(&mut *board, &mut *queue, ctx.data().max_jobs);
+    engine::refill_board(
+        &mut *board,
+        &mut *queue,
+        ctx.data().max_jobs,
+        Some(&ctx.data().generation_queue),
+        Some(&ctx.data().pending_quests),
+    );
     storage::save_job_queue(&*queue)?;
     guild_hall::update_board_message(
         &ctx.serenity_context().http,

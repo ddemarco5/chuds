@@ -1,0 +1,19 @@
+story_line_name: The Lighthouse Letters
+
+stories:
+  - description: |
+      The guild master found a sealed letter in the basement with strict instructions
+      not to open it. The lighthouse keeper is expecting a delivery before the next storm.
+    goal: Deliver the sealed letter to the lighthouse keeper without opening it
+    difficulty: 4
+    reward:
+      rarity: uncommon
+      stats: ["-", "7", "-"]
+
+  - description: |
+      The lighthouse keeper sent word that something is scratching at the cellar door
+      each night. The guild wants someone to investigate before the next shipment arrives.
+    goal: Discover what is scratching at the lighthouse cellar and report back
+    difficulty: 6
+    reward:
+      rarity: rare

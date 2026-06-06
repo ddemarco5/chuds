@@ -3,6 +3,7 @@ use crate::game::engine::{self, DeathContext};
 use crate::game::persistence::storage;
 use crate::game::tick::{QuestResolved, TickContext, TickOutcome};
 use crate::game::tuneable_rolls::{death_chance, injury_chance, roll_death, roll_injury_outcome};
+use crate::story_jobs;
 
 pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::Result<()> {
     let due = ctx.board.tick_and_take_due();
@@ -14,6 +15,7 @@ pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::
             &mut ctx.hospital,
             ctx.item_registry,
             board_quest,
+            outcome,
         )? {
             outcome.quest_resolved.push(resolved);
         }
@@ -30,6 +32,7 @@ fn resolve_quest(
     hospital: &mut crate::game::domain::hospital::Hospital,
     item_registry: &mut crate::game::persistence::item_registry::ItemRegistry,
     board_quest: BoardQuest,
+    outcome: &mut TickOutcome,
 ) -> anyhow::Result<Option<QuestResolved>> {
     let discord_user_id = match board_quest.assigned_to() {
         Some(id) => id,
@@ -69,6 +72,19 @@ fn resolve_quest(
     if passed {
         tracing::info!("{} made ${}", player_name, reward);
         player.cash += reward;
+
+        if board_quest.story_index.is_some() {
+            board.story_next_index += 1;
+            let catalog_len = story_jobs::catalog().stories.len();
+            tracing::info!(
+                story_next_index = board.story_next_index,
+                catalog_len,
+                "story quest passed, advancing progress"
+            );
+            if board.story_next_index >= catalog_len {
+                outcome.story_series_complete = true;
+            }
+        }
     }
 
     let mut item_awarded = None;
@@ -144,6 +160,7 @@ fn resolve_quest(
             quest_data: board_quest.quest_data,
             generated: board_quest.generated,
             states: Vec::new(),
+            story_index: board_quest.story_index,
         });
     }
 

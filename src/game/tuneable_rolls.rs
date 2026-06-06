@@ -228,10 +228,23 @@ pub fn roll_item_drop(difficulty: u8, trial_count: usize, rng: &mut impl Rng) ->
     rng.gen_bool(item_drop_chance(difficulty, trial_count))
 }
 
-pub fn roll_item(difficulty: u8, rng: &mut impl Rng) -> ItemSeed {
+pub fn roll_item(
+    difficulty: u8,
+    rng: &mut impl Rng,
+    rarity_override: Option<&str>,
+    stats_override: Option<&ItemStats>,
+) -> ItemSeed {
     let item_type = roll_item_type(rng);
     let subtype = roll_subtype(item_type, rng);
-    let (stats, rarity) = roll_item_stats(difficulty, rng);
+    let (stats, rarity) = if let Some(stats) = stats_override {
+        (stats.clone(), rarity_override.unwrap_or("common").to_string())
+    } else {
+        let (stats, rolled_rarity) = roll_item_stats(difficulty, rng);
+        let rarity = rarity_override
+            .map(str::to_string)
+            .unwrap_or(rolled_rarity);
+        (stats, rarity)
+    };
     ItemSeed {
         item_type,
         subtype,
