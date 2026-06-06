@@ -14,9 +14,16 @@ pub use render::render_tick_outcome;
 /// No-op outside the `Playing` phase, so a stray background tick during attract/complete
 /// never mutates state or touches the channel.
 pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
-    if !runtime.is_playing().await {
-        tracing::debug!("tick skipped: game is not in the playing phase");
-        return Ok(());
+    {
+        let mut session = runtime.session.lock().await;
+        if !session.is_playing() {
+            tracing::debug!("tick skipped: game is not in the playing phase");
+            return Ok(());
+        }
+        session.total_ticks = session.total_ticks.saturating_add(1);
+        if let Err(e) = storage::save_session(&session) {
+            tracing::warn!(err = %e, "failed to persist tick count");
+        }
     }
 
     cleanup_non_bot_messages(
