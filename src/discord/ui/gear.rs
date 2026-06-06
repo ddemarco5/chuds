@@ -1,20 +1,21 @@
-use poise::serenity_prelude::{self as serenity, ComponentInteraction, Http};
+use poise::serenity_prelude::{self as serenity, ComponentInteraction};
 
-use crate::game::busy::BusyReason;
-use crate::game::guild_status;
 use crate::discord::formatting::format_item_block;
+use crate::game::busy::BusyReason;
 use crate::game::domain::item::EquipmentSlot;
 use crate::game::domain::player::Player;
 use crate::game::domain::stash::STASH_CAPACITY;
 use crate::game::engine;
+use crate::game::guild_status;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::storage;
 
-use super::components_v2::{
-    components_v2_flags, ActionRow, Button, Component, ComponentsV2Message, InteractionUpdateResponse,
-    Separator, TextDisplay,
+use super::super::components_v2::{
+    components_v2_flags, ActionRow, Button, Component, ComponentsV2Message, Separator,
+    TextDisplay,
 };
-use super::context::Data;
+use super::super::context::Data;
+use super::{no_chud_message, push_notice, respond_ephemeral_update};
 
 fn format_equipped_block(slot: EquipmentSlot, item: Option<&crate::game::domain::item::Item>) -> String {
     match item {
@@ -58,9 +59,7 @@ pub fn build_gear_message(
 ) -> ComponentsV2Message {
     let mut components = Vec::new();
 
-    if let Some(notice) = notice {
-        components.push(Component::Text(TextDisplay::new(notice)));
-    }
+    push_notice(&mut components, notice);
 
     components.push(Component::Text(TextDisplay::new(format!(
         "**Equipped** — ${} on hand",
@@ -272,16 +271,6 @@ async fn prepare_gear_update(
     ))
 }
 
-pub async fn edit_gear_message(
-    http: &Http,
-    interaction_token: &str,
-    message: &ComponentsV2Message,
-) -> anyhow::Result<()> {
-    http.edit_original_interaction_response(interaction_token, message, vec![])
-        .await?;
-    Ok(())
-}
-
 pub async fn handle_gear_button(
     ctx: &serenity::Context,
     interaction: &ComponentInteraction,
@@ -294,36 +283,13 @@ pub async fn handle_gear_button(
     let mut player = match storage::load_player(user_id)? {
         Some(p) if p.has_chud() => p,
         _ => {
-            let payload = InteractionUpdateResponse::update(ComponentsV2Message {
-                flags: components_v2_flags(),
-                components: vec![Component::Text(TextDisplay::new(
-                    "You don't have a chud.",
-                ))],
-            });
-            if let Err(e) = http
-                .create_interaction_response(interaction.id, &interaction.token, &payload, vec![])
-                .await
-            {
-                tracing::debug!(err = %e, "gear button response failed (ephemeral may be dismissed)");
-            }
+            respond_ephemeral_update(http, interaction, &no_chud_message()).await;
             return Ok(());
         }
     };
 
     let message = prepare_gear_update(data, &mut player, &custom_id).await?;
-
-    if let Err(e) = http
-        .create_interaction_response(
-            interaction.id,
-            &interaction.token,
-            &InteractionUpdateResponse::update(message),
-            vec![],
-        )
-        .await
-    {
-        // Expected when the user dismissed the ephemeral or the interaction token expired.
-        tracing::debug!(err = %e, user_id, "gear button update failed (ephemeral may be dismissed)");
-    }
+    respond_ephemeral_update(http, interaction, &message).await;
 
     Ok(())
 }

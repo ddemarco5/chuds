@@ -1,9 +1,9 @@
 use crate::chud_msg;
-use crate::discord::board_ui;
+use crate::discord::guild_hall;
 use crate::discord::channel::append_activity_log;
 use crate::discord::context::{Context, Error};
 use crate::discord::formatting;
-use crate::discord::gear_ui;
+use crate::discord::edit_ephemeral_message;
 use crate::game::persistence::storage;
 
 #[poise::command(slash_command)]
@@ -31,12 +31,12 @@ pub async fn graveyard(ctx: Context<'_>) -> Result<(), Error> {
     }
 
     let message = formatting::build_graveyard_components(&graveyard.entries);
-    gear_ui::edit_gear_message(&http, &token, &message).await?;
+    edit_ephemeral_message(&http, &token, &message).await?;
 
     let content = chud_msg!("graveyard_visit", player.chud_ref().name);
     append_activity_log(&ctx.data().activity_log, &content).await;
     let mut board = ctx.data().board.lock().await;
-    board_ui::refresh_board_status(
+    guild_hall::refresh_board_status(
         &http,
         ctx.data().channel_id,
         &mut *board,

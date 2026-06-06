@@ -3,7 +3,7 @@ use std::sync::Arc;
 use poise::serenity_prelude::{self as serenity, CreateMessage};
 
 use crate::chud_msg;
-use crate::discord::board_ui;
+use crate::discord::guild_hall;
 use crate::discord::channel::{
     append_activity_log_deferred, cleanup_non_bot_messages, sync_activity_log_now,
     ActivityLogSync,
@@ -17,7 +17,7 @@ use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::persistence::storage;
-use crate::discord::merchant_ui::update_merchant_message;
+use crate::discord::ui::update_merchant_message;
 use crate::game::merchant::MerchantState;
 use crate::game::tick::{run_tick, TickContext};
 
@@ -214,7 +214,7 @@ pub async fn execute_tick(
     {
         storage::save_board(&*board)?;
     }
-    board_ui::update_board_message(http, channel_id, &mut *board, max_jobs, None).await?;
+    guild_hall::update_board_message(http, channel_id, &mut *board, max_jobs, None).await?;
 
     {
         let mut merchant_guard = merchant.lock().await;

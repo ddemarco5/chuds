@@ -1,6 +1,6 @@
 use poise::serenity_prelude as serenity;
 
-use crate::discord::board_ui::recover_persistent_board_messages;
+use crate::discord::guild_hall::recover_persistent_board_messages;
 use crate::discord::buttons::post_quest_taken_announcement;
 use crate::discord::channel::{append_activity_log, append_activity_log_deferred};
 use crate::discord::context::{admin_guard, Context, Error};
@@ -291,7 +291,7 @@ pub async fn admin_kill_chud(
     .await;
 
     let mut board = ctx.data().board.lock().await;
-    crate::discord::board_ui::refresh_board_status(
+    crate::discord::guild_hall::refresh_board_status(
         &ctx.serenity_context().http,
         ctx.data().channel_id,
         &mut *board,

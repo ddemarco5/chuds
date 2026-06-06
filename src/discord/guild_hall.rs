@@ -15,7 +15,7 @@ use crate::game::domain::board::{Board, BoardQuest};
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::Player;
 use crate::game::engine;
-use crate::discord::merchant_ui::update_merchant_message;
+use crate::discord::ui::update_merchant_message;
 use crate::game::merchant::MerchantState;
 use crate::game::persistence::message_cache::JobSlot;
 use crate::game::persistence::storage;

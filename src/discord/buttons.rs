@@ -4,7 +4,7 @@ use poise::serenity_prelude::{
 };
 
 use crate::chud_msg;
-use crate::discord::board_ui;
+use crate::discord::guild_hall;
 use crate::discord::channel::append_activity_log;
 use crate::discord::context::Data;
 use crate::game::busy::BusyReason;
@@ -120,7 +120,7 @@ async fn announce_taken_quest(
     let content = chud_msg!("chud_takes_job", first_name, info.quest_title);
 
     append_activity_log(&data.activity_log, &content).await;
-    board_ui::update_board_message(
+    guild_hall::update_board_message(
         http,
         data.channel_id,
         board,
@@ -249,7 +249,7 @@ pub async fn handle_scout_button(
         .to_string();
     let content = format!("**{}** stumbled out the door", first_name);
     append_activity_log(&data.activity_log, &content).await;
-    board_ui::update_board_message(
+    guild_hall::update_board_message(
         &ctx.http,
         data.channel_id,
         &mut *board,
@@ -317,7 +317,7 @@ pub async fn handle_heal_button(
         .await?;
 
     let mut board = data.board.lock().await;
-    board_ui::refresh_board_status(
+    guild_hall::refresh_board_status(
         &ctx.http,
         data.channel_id,
         &mut *board,

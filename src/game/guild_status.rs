@@ -47,8 +47,8 @@ impl GuildHallStatus {
 /// Called whenever assignments might change, including: every game tick
 /// ([`crate::discord::tick::execute_tick`]), job-board Take and Scout buttons (before and
 /// after the mutation), heal and `/chud` registration, admin assign flows, gear UI updates,
-/// and any path that calls [`crate::discord::board_ui::update_board_message`] or
-/// [`crate::discord::board_ui::refresh_board_status`] without an already-fresh snapshot.
+/// and any path that calls [`crate::discord::guild_hall::update_board_message`] or
+/// [`crate::discord::guild_hall::refresh_board_status`] without an already-fresh snapshot.
 pub fn compute_guild_hall_status(
     board: &Board,
     hospital: &Hospital,

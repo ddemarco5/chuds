@@ -1,5 +1,5 @@
 use crate::chud_msg;
-use crate::discord::board_ui;
+use crate::discord::guild_hall;
 use crate::discord::channel::append_activity_log;
 use crate::discord::context::{Context, Error};
 use crate::game::busy::BusyReason;
@@ -25,7 +25,7 @@ pub async fn chud(ctx: Context<'_>, name: String, description: String) -> Result
     let http = &ctx.serenity_context().http;
     append_activity_log(&ctx.data().activity_log, &content).await;
     let mut board = ctx.data().board.lock().await;
-    board_ui::refresh_board_status(
+    guild_hall::refresh_board_status(
         http,
         ctx.data().channel_id,
         &mut *board,
@@ -39,7 +39,7 @@ pub async fn chud(ctx: Context<'_>, name: String, description: String) -> Result
 #[poise::command(slash_command)]
 pub async fn chudlerboard(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    let content = crate::discord::board_ui::format_chudlerboard(&ctx.serenity_context().http).await;
+    let content = crate::discord::guild_hall::format_chudlerboard(&ctx.serenity_context().http).await;
     let msg = if content.is_empty() {
         "*No chuds yet.*".to_string()
     } else {
@@ -183,10 +183,10 @@ pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
     };
 
     let registry = ctx.data().item_registry.lock().await;
-    let message = crate::discord::gear_ui::build_gear_message(&player, &registry, None, None);
+    let message = crate::discord::build_gear_message(&player, &registry, None, None);
     drop(registry);
 
-    if let Err(e) = crate::discord::gear_ui::edit_gear_message(&http, &token, &message).await {
+    if let Err(e) = crate::discord::edit_ephemeral_message(&http, &token, &message).await {
         tracing::debug!(err = %e, user_id, "gear command edit failed (ephemeral may be dismissed)");
     }
     Ok(())

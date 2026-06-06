@@ -1,22 +1,21 @@
-pub mod board_ui;
+pub mod guild_hall;
 pub mod buttons;
 pub mod channel;
 pub mod commands;
 pub mod components_v2;
 pub mod context;
 pub mod formatting;
-pub mod gear_ui;
-pub mod merchant_ui;
 pub mod report_dm;
 pub mod tick;
+pub mod ui;
 
-pub use board_ui::{
+pub use guild_hall::{
     recover_persistent_board_messages, refresh_board_status, update_board_message,
 };
 pub use buttons::{handle_heal_button, handle_scout_button, handle_take_button};
-pub use gear_ui::handle_gear_button;
-pub use merchant_ui::{
-    handle_merchant_shop_button, handle_shop_buy, handle_shop_select, update_merchant_message,
+pub use ui::{
+    build_gear_message, edit_ephemeral_message, handle_gear_button, handle_merchant_shop_button,
+    handle_shop_buy, handle_shop_select, update_merchant_message,
 };
 pub use channel::{
     append_activity_log, append_activity_log_deferred, cleanup_non_bot_messages,

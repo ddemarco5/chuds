@@ -2,15 +2,17 @@ use poise::serenity_prelude::{
     self as serenity, ComponentInteraction, ComponentInteractionDataKind, Http, MessageId,
 };
 
-use crate::discord::components_v2::{
-    components_v2_flags, ActionRow, Button, Component, ComponentsV2Message, ContainerChild,
-    InteractionCreateResponse, InteractionUpdateResponse, SelectOption, StringSelect, TextDisplay,
-};
-use crate::discord::context::Data;
 use crate::discord::formatting::format_item_block;
 use crate::game::domain::player::Player;
 use crate::game::merchant::{BuyError, MerchantState, MerchantVisit};
 use crate::game::persistence::storage;
+
+use super::super::components_v2::{
+    components_v2_flags, ActionRow, Button, Component, ComponentsV2Message, ContainerChild,
+    SelectOption, StringSelect, TextDisplay,
+};
+use super::super::context::Data;
+use super::{no_chud_message, push_notice, respond_ephemeral_create, respond_ephemeral_update};
 
 fn build_merchant_channel_message(merchant: &MerchantState) -> ComponentsV2Message {
     match &merchant.visit {
@@ -84,9 +86,7 @@ pub fn build_shop_message(
 ) -> ComponentsV2Message {
     let mut components = Vec::new();
 
-    if let Some(notice) = notice {
-        components.push(Component::Text(TextDisplay::new(notice)));
-    }
+    push_notice(&mut components, notice);
 
     components.push(Component::Text(TextDisplay::new(format!(
         "You have ${} on hand",
@@ -149,34 +149,6 @@ pub fn build_shop_message(
     }
 }
 
-async fn respond_shop_create(
-    http: &Http,
-    interaction: &ComponentInteraction,
-    message: &ComponentsV2Message,
-) {
-    let payload = InteractionCreateResponse::ephemeral(message.clone());
-    if let Err(e) = http
-        .create_interaction_response(interaction.id, &interaction.token, &payload, vec![])
-        .await
-    {
-        tracing::debug!(err = %e, "shop create response failed");
-    }
-}
-
-async fn respond_shop_update(
-    http: &Http,
-    interaction: &ComponentInteraction,
-    message: &ComponentsV2Message,
-) {
-    let payload = InteractionUpdateResponse::update(message.clone());
-    if let Err(e) = http
-        .create_interaction_response(interaction.id, &interaction.token, &payload, vec![])
-        .await
-    {
-        tracing::debug!(err = %e, "shop update response failed (ephemeral may be dismissed)");
-    }
-}
-
 fn buy_notice(err: BuyError) -> String {
     match err {
         BuyError::SoldOut => "_Sorry, someone snagged that._".into(),
@@ -194,12 +166,7 @@ async fn prepare_shop_response(
 ) -> anyhow::Result<ComponentsV2Message> {
     let mut player = match storage::load_player(user_id)? {
         Some(p) if p.has_chud() => p,
-        _ => {
-            return Ok(ComponentsV2Message {
-                flags: components_v2_flags(),
-                components: vec![Component::Text(TextDisplay::new("You don't have a chud."))],
-            });
-        }
+        _ => return Ok(no_chud_message()),
     };
 
     let mut merchant = data.merchant.lock().await;
@@ -273,7 +240,7 @@ pub async fn handle_merchant_shop_button(
     drop(merchant);
 
     let message = prepare_shop_response(data, user_id, selected, None).await?;
-    respond_shop_create(&ctx.http, interaction, &message).await;
+    respond_ephemeral_create(&ctx.http, interaction, &message).await;
     Ok(())
 }
 
@@ -292,7 +259,7 @@ pub async fn handle_shop_select(
     };
 
     let message = prepare_shop_response(data, user_id, selected, None).await?;
-    respond_shop_update(&ctx.http, interaction, &message).await;
+    respond_ephemeral_update(&ctx.http, interaction, &message).await;
     Ok(())
 }
 
@@ -309,6 +276,6 @@ pub async fn handle_shop_buy(
         .unwrap_or(0);
 
     let message = prepare_shop_response(data, user_id, slot, Some(slot)).await?;
-    respond_shop_update(&ctx.http, interaction, &message).await;
+    respond_ephemeral_update(&ctx.http, interaction, &message).await;
     Ok(())
 }

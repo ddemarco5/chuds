@@ -2,7 +2,7 @@ use std::sync::atomic::Ordering;
 
 use poise::Modal;
 
-use crate::discord::board_ui;
+use crate::discord::guild_hall;
 use crate::discord::context::{
     admin_guard, chudmaster_check, parse_difficulty, say_ephemeral, Context, Error,
     GenerateJobModal, WriteJobModal,
@@ -138,7 +138,7 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
     engine::refill_board_from_queue(&mut *board, &mut *queue, ctx.data().max_jobs);
     storage::save_board(&*board)?;
     storage::save_job_queue(&*queue)?;
-    board_ui::update_board_message(
+    guild_hall::update_board_message(
         &ctx.serenity_context().http,
         ctx.data().channel_id,
         &mut *board,
@@ -161,7 +161,7 @@ pub async fn delete_job(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
     engine::delete_quest(&mut *board, quest_id)?;
     engine::refill_board_from_queue(&mut *board, &mut *queue, ctx.data().max_jobs);
     storage::save_job_queue(&*queue)?;
-    board_ui::update_board_message(
+    guild_hall::update_board_message(
         &ctx.serenity_context().http,
         ctx.data().channel_id,
         &mut *board,
@@ -205,7 +205,7 @@ pub async fn assign(
         Some(&status),
     )?;
     let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
-    board_ui::update_board_message(
+    guild_hall::update_board_message(
         http,
         channel_id,
         &mut *board,
