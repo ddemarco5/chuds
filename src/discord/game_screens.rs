@@ -65,7 +65,7 @@ async fn build_complete_message(runtime: &GameRuntime) -> ComponentsV2Message {
     };
 
     let mut body = format!(
-        "# {title}\n## GAME COMPLETE\nFinal mission completed by: **{completer}**\nTotal ticks: {total_ticks}\n"
+        "# {title}\n## GAME COMPLETE\nFinal mission completed by: **{completer}**\nDays taken: {total_ticks}\n"
     );
 
     let chudlerboard = format_chudlerboard(&runtime.http).await;
