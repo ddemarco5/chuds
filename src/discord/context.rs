@@ -95,9 +95,14 @@ pub async fn require_playing(ctx: Context<'_>) -> bool {
         user = ctx.author().id.get(),
         "command rejected: game is not in the playing phase"
     );
-    ctx.say("the game isn't running right now (sorry bud)")
-        .await
-        .ok();
+    // Keep the rejection out of the channel — reply only to the caller.
+    ctx.send(
+        poise::CreateReply::default()
+            .content("the game isn't running right now (sorry bud)")
+            .ephemeral(true),
+    )
+    .await
+    .ok();
     false
 }
 

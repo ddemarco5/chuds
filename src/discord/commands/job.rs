@@ -20,9 +20,8 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
         say_ephemeral(ctx, "you don't have permission for this command (sorry bud)").await?;
         return Ok(());
     }
-    if !require_playing(ctx).await {
-        return Ok(());
-    }
+    // Intentionally not gated on the Playing phase: chudmasters pre-fill the job queue during
+    // attract so jobs are ready the moment the game starts.
 
     let poise::Context::Application(app_ctx) = ctx else {
         return Ok(());
@@ -90,9 +89,8 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
         say_ephemeral(ctx, "you don't have permission for this command (sorry bud)").await?;
         return Ok(());
     }
-    if !require_playing(ctx).await {
-        return Ok(());
-    }
+    // Intentionally not gated on the Playing phase: chudmasters pre-fill the job queue during
+    // attract. The board redraw below is skipped while we're not playing.
 
     let poise::Context::Application(app_ctx) = ctx else {
         return Ok(());
@@ -151,14 +149,17 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
     );
     storage::save_board(&*board)?;
     storage::save_job_queue(&*queue)?;
-    guild_hall::update_board_message(
-        &ctx.serenity_context().http,
-        channel_id,
-        &mut *board,
-        max_jobs,
-        None,
-    )
-    .await?;
+    // Only redraw the board while playing; attract/complete own the channel.
+    if ctx.data().runtime.is_playing().await {
+        guild_hall::update_board_message(
+            &ctx.serenity_context().http,
+            channel_id,
+            &mut *board,
+            max_jobs,
+            None,
+        )
+        .await?;
+    }
     say_ephemeral(ctx, "ok").await?;
     Ok(())
 }
