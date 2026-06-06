@@ -66,6 +66,38 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("TICK_TIME_S not set"))?
         .parse()
         .map_err(|_| anyhow::anyhow!("TICK_TIME_S must be a positive integer"))?;
+    let job_gen_low_threshold: usize = std::env::var("JOB_GEN_LOW_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    let mut job_gen_high_threshold: usize = std::env::var("JOB_GEN_HIGH_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+    let job_gen_min_history_msgs: usize = std::env::var("JOB_GEN_MIN_HISTORY_MSGS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(6);
+    // The high threshold is the backlog target; it must exceed the low trigger and never
+    // exceed the queue cap. Clamp loud rather than silently misbehaving at runtime.
+    if job_gen_high_threshold <= job_gen_low_threshold {
+        let clamped = job_gen_low_threshold + 1;
+        tracing::warn!(
+            high = job_gen_high_threshold,
+            low = job_gen_low_threshold,
+            clamped,
+            "JOB_GEN_HIGH_THRESHOLD must be greater than JOB_GEN_LOW_THRESHOLD; clamping"
+        );
+        job_gen_high_threshold = clamped;
+    }
+    if job_gen_high_threshold > max_job_queue {
+        tracing::warn!(
+            high = job_gen_high_threshold,
+            max_job_queue,
+            "JOB_GEN_HIGH_THRESHOLD exceeds MAX_JOB_QUEUE; clamping to MAX_JOB_QUEUE"
+        );
+        job_gen_high_threshold = max_job_queue;
+    }
 
     let llm_memory = chuds::game::persistence::llm_memory::load_llm_memory_bundle();
     let generator = Arc::new(chuds::game::generation::quest_generator::QuestGenerator::new(
@@ -225,6 +257,9 @@ async fn main() -> anyhow::Result<()> {
                     max_job_queue,
                     max_non_bot_messages,
                     tick_time_s,
+                    job_gen_low_threshold,
+                    job_gen_high_threshold,
+                    job_gen_min_history_msgs,
                 });
 
                 // Generation worker: spawned once and left running; it simply idles until a

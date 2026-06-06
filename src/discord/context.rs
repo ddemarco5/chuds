@@ -43,6 +43,12 @@ pub struct GameRuntime {
     pub max_job_queue: usize,
     pub max_non_bot_messages: usize,
     pub tick_time_s: u64,
+    /// Backlog fill at/below which the create_jobs phase triggers auto-generation.
+    pub job_gen_low_threshold: usize,
+    /// Backlog fill the create_jobs phase tops the queue up to when triggered.
+    pub job_gen_high_threshold: usize,
+    /// Minimum description-memory messages required before auto-generation runs.
+    pub job_gen_min_history_msgs: usize,
 }
 
 impl GameRuntime {

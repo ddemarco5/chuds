@@ -46,6 +46,14 @@ pub struct TickContext<'a> {
     pub max_jobs: usize,
     pub generation_queue: Option<&'a tokio::sync::mpsc::UnboundedSender<crate::game::engine::GenerationJob>>,
     pub pending_quests: Option<&'a std::sync::atomic::AtomicUsize>,
+    /// Messages currently in the quest description LLM memory; gates auto job generation.
+    pub description_history_msgs: usize,
+    /// Backlog fill at/below which auto job generation triggers.
+    pub job_gen_low_threshold: usize,
+    /// Backlog fill auto job generation tops the queue up to when triggered.
+    pub job_gen_high_threshold: usize,
+    /// Minimum `description_history_msgs` required before auto generation runs.
+    pub job_gen_min_history_msgs: usize,
 }
 
 #[derive(Default)]
@@ -54,6 +62,8 @@ pub struct TickOutcome {
     pub scout_results: Vec<ScoutResult>,
     pub quest_resolved: Vec<QuestResolved>,
     pub slots_filled: usize,
+    /// Number of jobs the create_jobs phase requested for generation this tick.
+    pub jobs_requested: usize,
     pub story_series_complete: bool,
     /// Discord user ID of the chud that finished the final story mission (when complete).
     pub final_completer_user_id: Option<u64>,
@@ -68,5 +78,6 @@ pub fn run_tick(ctx: &mut TickContext) -> anyhow::Result<TickOutcome> {
     phases::scouting::scouting_phase(ctx, &mut outcome)?;
     phases::quests::quest_phase(ctx, &mut outcome)?;
     phases::refill::refill_phase(ctx, &mut outcome)?;
+    phases::create_jobs::create_jobs_phase(ctx, &mut outcome)?;
     Ok(outcome)
 }

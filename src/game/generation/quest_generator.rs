@@ -203,6 +203,17 @@ impl QuestGenerator {
         })
     }
 
+    /// Total messages currently held in the description agent's memory (post char-budget
+    /// filter, i.e. what the LLM actually sees). Used to gate auto job generation on having
+    /// enough prior job postings to imitate. Matches the `history_msgs` log field.
+    pub fn description_history_len(&self) -> usize {
+        self.description_memory
+            .export_filtered_store()
+            .values()
+            .map(|msgs| msgs.len())
+            .sum()
+    }
+
     pub(crate) fn memory_for_slot(&self, slot: LlmMemorySlot) -> &GameConversationMemory {
         match slot {
             LlmMemorySlot::Description => &self.description_memory,

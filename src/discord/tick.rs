@@ -48,6 +48,8 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
     let mut queue = runtime.job_queue.lock().await;
     let mut registry = runtime.item_registry.lock().await;
 
+    let description_history_msgs = runtime.generator.description_history_len();
+
     let outcome = run_tick(&mut TickContext {
         board: &mut *board,
         hospital: &mut hospital,
@@ -56,6 +58,10 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
         max_jobs: runtime.max_jobs,
         generation_queue: Some(&runtime.generation_queue),
         pending_quests: Some(&runtime.pending_quests),
+        description_history_msgs,
+        job_gen_low_threshold: runtime.job_gen_low_threshold,
+        job_gen_high_threshold: runtime.job_gen_high_threshold,
+        job_gen_min_history_msgs: runtime.job_gen_min_history_msgs,
     })?;
 
     storage::save_hospital(&hospital)?;
