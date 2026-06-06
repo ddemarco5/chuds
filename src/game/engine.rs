@@ -167,10 +167,16 @@ pub fn refill_board(
         return 0;
     }
 
-    // Regular jobs: pull pre-generated quests from the chudmaster queue.
+    // Regular jobs: pull pre-generated quests from the chudmaster queue. Selection is an
+    // age-weighted random draw rather than strict FIFO so that contiguous blocks of
+    // auto-generated jobs do not come off the queue in a row. Older entries (toward the
+    // front) get proportionally higher weight, and a waiting entry's weight rises as
+    // others are consumed, so nothing starves.
     let mut added = 0usize;
+    let mut rng = rand::thread_rng();
     while board.quests.len() < max_jobs && !queue.entries.is_empty() {
-        let entry = queue.entries.remove(0);
+        let index = weighted_oldest_index(queue.entries.len(), &mut rng);
+        let entry = queue.entries.remove(index);
         board.add_quest(entry.quest_data, entry.generated, None);
         added += 1;
     }
@@ -178,6 +184,24 @@ pub fn refill_board(
         tracing::info!(added, "board refilled from queue");
     }
     added
+}
+
+/// Pick an index into a `len`-long queue with linear age weighting: the oldest entry
+/// (front, index 0) has weight `len`, the newest (back) has weight 1. Older jobs are
+/// favored while any entry can still be drawn.
+fn weighted_oldest_index(len: usize, rng: &mut impl rand::Rng) -> usize {
+    debug_assert!(len > 0);
+    // Total weight = len + (len-1) + ... + 1 = len * (len + 1) / 2.
+    let total = len * (len + 1) / 2;
+    let mut pick = rng.gen_range(0..total);
+    for index in 0..len {
+        let weight = len - index;
+        if pick < weight {
+            return index;
+        }
+        pick -= weight;
+    }
+    len - 1
 }
 
 /// Push a fully generated quest onto the job queue and persist.
