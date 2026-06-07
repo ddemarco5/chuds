@@ -15,6 +15,7 @@ pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::
             &mut ctx.hospital,
             ctx.item_registry,
             board_quest,
+            ctx.job_timeout_tick,
             outcome,
         )? {
             outcome.quest_resolved.push(resolved);
@@ -37,6 +38,7 @@ fn resolve_quest(
     hospital: &mut crate::game::domain::hospital::Hospital,
     item_registry: &mut crate::game::persistence::item_registry::ItemRegistry,
     board_quest: BoardQuest,
+    job_timeout_tick: u32,
     outcome: &mut TickOutcome,
 ) -> anyhow::Result<Option<QuestResolved>> {
     let discord_user_id = match board_quest.assigned_to() {
@@ -171,6 +173,7 @@ fn resolve_quest(
             generated: board_quest.generated,
             states: Vec::new(),
             story_index: board_quest.story_index,
+            timeout: job_timeout_tick,
         });
     }
 

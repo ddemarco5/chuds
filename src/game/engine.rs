@@ -5,7 +5,7 @@ use crate::game::domain::starting_benefits::StartingBenefits;
 use crate::game::guild_status::GuildHallStatus;
 use crate::game::domain::item::{EquipmentSlot, ItemType};
 use crate::game::persistence::item_registry::ItemRegistry;
-use crate::game::domain::job_queue::JobQueue;
+use crate::game::domain::job_queue::{JobQueue, QueuedQuest};
 use crate::game::domain::player::{create_chud, Player};
 use crate::game::domain::quest_result::QuestResult;
 use crate::game::generation::gravestone_generator::GravestoneGenerator;
@@ -90,6 +90,7 @@ pub fn take_and_enqueue_quest(
     generation_queue: &tokio::sync::mpsc::UnboundedSender<GenerationJob>,
     force_item_drop: bool,
     pre_assign_status: Option<&GuildHallStatus>,
+    job_timeout_tick: u32,
 ) -> anyhow::Result<AssignInfo> {
     let info = assign_chud_to_quest(
         board,
@@ -97,6 +98,7 @@ pub fn take_and_enqueue_quest(
         discord_user_id,
         quest_id,
         pre_assign_status,
+        job_timeout_tick,
     )?;
     let board_quest = board
         .quests
@@ -152,12 +154,34 @@ pub fn ensure_story_generation(
     true
 }
 
+/// Decrement idle regular job timeouts, remove expired jobs, return them for re-queue.
+pub fn drain_expired_board_jobs(board: &mut Board) -> Vec<QueuedQuest> {
+    let mut expired = Vec::new();
+    board.quests.retain_mut(|q| {
+        if !q.states.is_empty() || q.is_story() {
+            return true;
+        }
+        q.timeout = q.timeout.saturating_sub(1);
+        if q.timeout == 0 {
+            expired.push(QueuedQuest {
+                quest_data: q.quest_data.clone(),
+                generated: q.generated.clone(),
+            });
+            false
+        } else {
+            true
+        }
+    });
+    expired
+}
+
 /// Refill the board: ensure a story job is present (via async generation) before
 /// pulling from the regular queue. Returns the number of queue jobs added.
 pub fn refill_board(
     board: &mut Board,
     queue: &mut JobQueue,
     max_jobs: usize,
+    job_timeout_tick: u32,
     generation_queue: Option<&tokio::sync::mpsc::UnboundedSender<GenerationJob>>,
     pending_quests: Option<&AtomicUsize>,
 ) -> usize {
@@ -182,7 +206,7 @@ pub fn refill_board(
     while board.quests.len() < max_jobs && !queue.entries.is_empty() {
         let index = weighted_oldest_index(queue.entries.len(), &mut rng);
         let entry = queue.entries.remove(index);
-        board.add_quest(entry.quest_data, entry.generated, None);
+        board.add_quest(entry.quest_data, entry.generated, None, job_timeout_tick);
         added += 1;
     }
     if added > 0 {
@@ -382,6 +406,7 @@ pub fn assign_chud_to_quest(
     discord_user_id: u64,
     quest_id: u32,
     pre_assign_status: Option<&GuildHallStatus>,
+    job_timeout_tick: u32,
 ) -> anyhow::Result<AssignInfo> {
     let player = storage::load_player(discord_user_id)?
         .filter(|p| p.has_chud())
@@ -405,7 +430,12 @@ pub fn assign_chud_to_quest(
     let quest_title = quest.generated.quest_title.clone();
     let ticks_remaining = trial_count;
 
-    if !board.assign(quest_id, discord_user_id, ticks_remaining) {
+    if !board.assign(
+        quest_id,
+        discord_user_id,
+        ticks_remaining,
+        job_timeout_tick,
+    ) {
         anyhow::bail!("quest {} is not available for assignment", quest_id);
     }
 

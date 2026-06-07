@@ -136,6 +136,7 @@ impl SimulationController {
                     rt.bot_user_id,
                     rt.max_non_bot_messages,
                     rt.max_jobs,
+                    rt.job_timeout_tick,
                 )
                 .await?;
             } else {
@@ -152,6 +153,7 @@ impl SimulationController {
                 &mut board,
                 &mut queue,
                 rt.max_jobs,
+                rt.job_timeout_tick,
                 Some(&rt.generation_queue),
                 Some(&rt.pending_quests),
             );

@@ -190,6 +190,7 @@ pub async fn handle_take_button(
         &data.runtime.generation_queue,
         false,
         Some(&status),
+        data.runtime.job_timeout_tick,
     ) {
         Ok(info) => info,
         Err(_) => {
@@ -244,7 +245,7 @@ pub async fn handle_scout_button(
         return Ok(());
     }
 
-    if !board.scout(quest_id, user_id) {
+    if !board.scout(quest_id, user_id, data.runtime.job_timeout_tick) {
         ephemeral_followup(ctx, interaction, "That job is no longer available.").await?;
         return Ok(());
     }

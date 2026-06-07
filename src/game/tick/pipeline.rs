@@ -54,6 +54,8 @@ pub struct TickContext<'a> {
     pub job_gen_high_threshold: usize,
     /// Minimum `description_history_msgs` required before auto generation runs.
     pub job_gen_min_history_msgs: usize,
+    /// Ticks an idle regular job may sit on the board before returning to the queue.
+    pub job_timeout_tick: u32,
 }
 
 #[derive(Default)]
@@ -62,6 +64,8 @@ pub struct TickOutcome {
     pub scout_results: Vec<ScoutResult>,
     pub quest_resolved: Vec<QuestResolved>,
     pub slots_filled: usize,
+    /// Number of idle board jobs recycled to the queue during refill.
+    pub jobs_expired: usize,
     /// Number of jobs the create_jobs phase requested for generation this tick.
     pub jobs_requested: usize,
     pub story_series_complete: bool,

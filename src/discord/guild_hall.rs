@@ -352,11 +352,12 @@ pub async fn recover_persistent_board_messages(
     bot_user_id: u64,
     max_non_bot_messages: usize,
     max_jobs: usize,
+    job_timeout_tick: u32,
 ) -> anyhow::Result<()> {
     reset_channel_cache(http, channel_id).await;
     cleanup_non_bot_messages(http, channel_id, bot_user_id, max_non_bot_messages).await;
 
-    engine::refill_board(board, job_queue, max_jobs, None, None);
+    engine::refill_board(board, job_queue, max_jobs, job_timeout_tick, None, None);
     storage::save_board(board)?;
     storage::save_job_queue(job_queue)?;
     update_board_message(http, channel_id, board, max_jobs, None).await?;

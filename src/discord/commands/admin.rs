@@ -130,6 +130,7 @@ pub async fn admin_redraw(ctx: Context<'_>) -> Result<(), Error> {
         rt.bot_user_id,
         rt.max_non_bot_messages,
         rt.max_jobs,
+        rt.job_timeout_tick,
     )
     .await?;
     ctx.say("ok").await?;
@@ -304,6 +305,7 @@ pub async fn admin_take_gen_item(
         &ctx.data().runtime.generation_queue,
         true,
         Some(&status),
+        ctx.data().runtime.job_timeout_tick,
     )?;
     let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
     post_quest_taken_announcement(http, &mut *board, ctx.data(), &info, &status).await?;

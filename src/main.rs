@@ -78,6 +78,10 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(6);
+    let job_timeout_tick: u32 = std::env::var("JOB_TIMEOUT_TICK")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
     // The high threshold is the backlog target; it must exceed the low trigger and never
     // exceed the queue cap. Clamp loud rather than silently misbehaving at runtime.
     if job_gen_high_threshold <= job_gen_low_threshold {
@@ -118,7 +122,12 @@ async fn main() -> anyhow::Result<()> {
     let shutdown_item = Arc::clone(&item_generator);
     let shutdown_gravestone = Arc::clone(&gravestone_generator);
     let game_state = GameState::load()?;
-    let board = Arc::new(tokio::sync::Mutex::new(game_state.board));
+    let mut board = game_state.board;
+    board.backfill_job_timeouts(job_timeout_tick);
+    if let Err(e) = storage::save_board(&board) {
+        tracing::warn!(err = %e, "failed to persist job timeout backfill");
+    }
+    let board = Arc::new(tokio::sync::Mutex::new(board));
     let job_queue = Arc::new(tokio::sync::Mutex::new(game_state.job_queue));
     let item_registry = Arc::new(tokio::sync::Mutex::new(game_state.item_registry));
     let merchant = Arc::new(tokio::sync::Mutex::new(game_state.guild_hall.merchant));
@@ -268,6 +277,7 @@ async fn main() -> anyhow::Result<()> {
                     job_gen_low_threshold,
                     job_gen_high_threshold,
                     job_gen_min_history_msgs,
+                    job_timeout_tick,
                 });
 
                 // Generation worker: spawned once and left running; it simply idles until a
@@ -290,6 +300,7 @@ async fn main() -> anyhow::Result<()> {
                         worker_generator,
                         worker_item_generator,
                         max_jobs,
+                        job_timeout_tick,
                         worker_pending,
                         move |effects| {
                             let worker_http = Arc::clone(&worker_http);

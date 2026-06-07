@@ -146,6 +146,7 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
         &mut *board,
         &mut *queue,
         max_jobs,
+        ctx.data().runtime.job_timeout_tick,
         Some(&ctx.data().runtime.generation_queue),
         Some(&ctx.data().runtime.pending_quests),
     );
@@ -184,6 +185,7 @@ pub async fn delete_job(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
         &mut *board,
         &mut *queue,
         max_jobs,
+        ctx.data().runtime.job_timeout_tick,
         Some(&ctx.data().runtime.generation_queue),
         Some(&ctx.data().runtime.pending_quests),
     );
@@ -234,6 +236,7 @@ pub async fn assign(
         &ctx.data().runtime.generation_queue,
         false,
         Some(&status),
+        ctx.data().runtime.job_timeout_tick,
     )?;
     let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
     guild_hall::update_board_message(

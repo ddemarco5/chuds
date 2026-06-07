@@ -62,6 +62,7 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
         job_gen_low_threshold: runtime.job_gen_low_threshold,
         job_gen_high_threshold: runtime.job_gen_high_threshold,
         job_gen_min_history_msgs: runtime.job_gen_min_history_msgs,
+        job_timeout_tick: runtime.job_timeout_tick,
     })?;
 
     storage::save_hospital(&hospital)?;

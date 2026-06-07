@@ -49,6 +49,8 @@ pub struct GameRuntime {
     pub job_gen_high_threshold: usize,
     /// Minimum description-memory messages required before auto-generation runs.
     pub job_gen_min_history_msgs: usize,
+    /// Ticks an idle regular job may sit on the board before returning to the queue.
+    pub job_timeout_tick: u32,
 }
 
 impl GameRuntime {

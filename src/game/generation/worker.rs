@@ -106,6 +106,7 @@ fn commit_generation(
     board: &mut Board,
     queue: &mut JobQueue,
     max_jobs: usize,
+    job_timeout_tick: u32,
     pending_quests: &AtomicUsize,
 ) -> anyhow::Result<Vec<WorkerEffect>> {
     match outcome {
@@ -128,13 +129,13 @@ fn commit_generation(
                 "quest generated"
             );
             if is_story {
-                board.add_quest(quest_data, generated, story_index);
+                board.add_quest(quest_data, generated, story_index, job_timeout_tick);
                 storage::save_board(board)?;
             } else {
                 engine::enqueue_quest(queue, quest_data, generated)?;
             }
             pending_quests.fetch_sub(1, Ordering::SeqCst);
-            let added = engine::refill_board(board, queue, max_jobs, None, None);
+            let added = engine::refill_board(board, queue, max_jobs, job_timeout_tick, None, None);
             storage::save_board(board)?;
             storage::save_job_queue(queue)?;
             tracing::info!(
@@ -164,6 +165,7 @@ pub fn spawn_generation_worker(
     generator: Arc<QuestGenerator>,
     item_generator: Arc<ItemGenerator>,
     max_jobs: usize,
+    job_timeout_tick: u32,
     pending_quests: Arc<AtomicUsize>,
     on_effects: impl Fn(Vec<WorkerEffect>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
         + Send
@@ -189,7 +191,14 @@ pub fn spawn_generation_worker(
             let effects = {
                 let mut b = board.lock().await;
                 let mut q = job_queue.lock().await;
-                match commit_generation(outcome, &mut *b, &mut *q, max_jobs, &pending_quests) {
+                match commit_generation(
+                    outcome,
+                    &mut *b,
+                    &mut *q,
+                    max_jobs,
+                    job_timeout_tick,
+                    &pending_quests,
+                ) {
                     Ok(effects) => effects,
                     Err(e) => {
                         tracing::error!(err = %e, "generation worker commit failed");

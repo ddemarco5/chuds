@@ -29,6 +29,9 @@ pub struct BoardQuest {
     /// Catalog index when this is a story job; None for regular jobs.
     #[serde(default)]
     pub story_index: Option<usize>,
+    /// Ticks until an idle job is recycled to the queue. Only decremented while idle.
+    #[serde(default)]
+    pub timeout: u32,
 }
 
 impl BoardQuest {
@@ -80,6 +83,7 @@ impl Board {
         quest_data: QuestData,
         generated: GeneratedQuest,
         story_index: Option<usize>,
+        job_timeout_tick: u32,
     ) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
@@ -89,19 +93,31 @@ impl Board {
             generated,
             states: Vec::new(),
             story_index,
+            timeout: if story_index.is_some() {
+                0
+            } else {
+                job_timeout_tick
+            },
         });
         id
     }
 
     /// Assign an open quest to a player with a tick countdown.
     /// Returns `false` if the quest doesn't exist or is already taken.
-    pub fn assign(&mut self, quest_id: u32, discord_user_id: u64, ticks_remaining: u32) -> bool {
+    pub fn assign(
+        &mut self,
+        quest_id: u32,
+        discord_user_id: u64,
+        ticks_remaining: u32,
+        job_timeout_tick: u32,
+    ) -> bool {
         match self
             .quests
             .iter_mut()
             .find(|q| q.id == quest_id && !q.has_active())
         {
             Some(q) => {
+                q.timeout = job_timeout_tick;
                 q.states
                     .push(QuestState::Active { discord_user_id, ticks_remaining });
                 true
@@ -112,14 +128,24 @@ impl Board {
 
     /// Add a Scouting state for a player on any quest.
     /// Returns `false` if the quest doesn't exist.
-    pub fn scout(&mut self, quest_id: u32, discord_user_id: u64) -> bool {
+    pub fn scout(&mut self, quest_id: u32, discord_user_id: u64, job_timeout_tick: u32) -> bool {
         match self.quests.iter_mut().find(|q| q.id == quest_id) {
             Some(q) => {
+                q.timeout = job_timeout_tick;
                 q.states
                     .push(QuestState::Scouting { discord_user_id });
                 true
             }
             None => false,
+        }
+    }
+
+    /// Set timeout on open non-story quests that lack one (legacy saves).
+    pub fn backfill_job_timeouts(&mut self, job_timeout_tick: u32) {
+        for q in &mut self.quests {
+            if q.states.is_empty() && !q.is_story() && q.timeout == 0 {
+                q.timeout = job_timeout_tick;
+            }
         }
     }
 
