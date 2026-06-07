@@ -484,12 +484,25 @@ fn equip_item_id(player: &mut Player, item_id: u32, item_type: ItemType) -> Opti
         .replace(item_id)
 }
 
+pub fn is_item_equipped(player: &Player, item_id: u32) -> bool {
+    player
+        .chud_ref()
+        .equipment
+        .all_ids()
+        .any(|id| id == item_id)
+}
+
 /// Move an item from stash into the appropriate equipment slot, swapping any displaced item into stash.
 pub fn equip_from_stash(
+    board: &Board,
+    hospital: &Hospital,
     player: &mut Player,
     item_id: u32,
     registry: &ItemRegistry,
 ) -> anyhow::Result<()> {
+    if crate::game::busy::is_player_busy(board, hospital, player.discord_user_id).is_some() {
+        anyhow::bail!("equipment locked");
+    }
     if !player.stash.contains(item_id) {
         anyhow::bail!("item not in stash");
     }
@@ -506,7 +519,15 @@ pub fn equip_from_stash(
 }
 
 /// Move an equipped item into the stash.
-pub fn unequip_slot(player: &mut Player, slot: EquipmentSlot) -> anyhow::Result<()> {
+pub fn unequip_slot(
+    board: &Board,
+    hospital: &Hospital,
+    player: &mut Player,
+    slot: EquipmentSlot,
+) -> anyhow::Result<()> {
+    if crate::game::busy::is_player_busy(board, hospital, player.discord_user_id).is_some() {
+        anyhow::bail!("equipment locked");
+    }
     let item_id = player
         .chud_mut()
         .equipment
@@ -554,12 +575,19 @@ pub fn buy_merchant_item(
 
 /// Sell an item the player owns: credit `cash`, remove from stash/equipment and registry.
 pub fn sell_item(
+    board: &Board,
+    hospital: &Hospital,
     player: &mut Player,
     registry: &mut ItemRegistry,
     item_id: u32,
 ) -> anyhow::Result<u32> {
     if !player_owns_item(player, item_id) {
         anyhow::bail!("item not owned");
+    }
+    if is_item_equipped(player, item_id)
+        && crate::game::busy::is_player_busy(board, hospital, player.discord_user_id).is_some()
+    {
+        anyhow::bail!("equipment locked");
     }
     let item = registry
         .get(item_id)

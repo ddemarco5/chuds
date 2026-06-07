@@ -14,7 +14,7 @@ use super::super::components_v2::{
     SelectOption, StringSelect, TextDisplay,
 };
 use super::super::context::Data;
-use super::{no_chud_message, push_notice, respond_ephemeral_create, respond_ephemeral_update};
+use super::{no_chud_message, push_status_notice, respond_ephemeral_create, respond_ephemeral_update};
 
 fn build_merchant_channel_message(merchant: &MerchantState) -> ComponentsV2Message {
     match &merchant.visit {
@@ -88,8 +88,6 @@ pub fn build_shop_message(
 ) -> ComponentsV2Message {
     let mut components = Vec::new();
 
-    push_notice(&mut components, notice);
-
     components.push(Component::Text(TextDisplay::new(format!(
         "You have ${} on hand",
         player.cash
@@ -105,6 +103,7 @@ pub fn build_shop_message(
 
     if unsold.is_empty() {
         components.push(Component::Text(TextDisplay::new("_The merchant is sold out._")));
+        push_status_notice(&mut components, notice);
         return ComponentsV2Message {
             flags: components_v2_flags(),
             components,
@@ -145,6 +144,8 @@ pub fn build_shop_message(
         Button::primary(format!("shop_buy:{selected}"), format!("Buy ${price}")),
     )));
 
+    push_status_notice(&mut components, notice);
+
     ComponentsV2Message {
         flags: components_v2_flags(),
         components,
@@ -153,10 +154,10 @@ pub fn build_shop_message(
 
 fn buy_notice(err: BuyError) -> String {
     match err {
-        BuyError::SoldOut => "_Sorry, someone snagged that._".into(),
-        BuyError::InsufficientFunds => "_You don't have enough cash._".into(),
-        BuyError::StashFull => "_Your stash is full._".into(),
-        BuyError::InvalidSlot => "_That item is no longer available._".into(),
+        BuyError::SoldOut => "Sorry, someone snagged that.".into(),
+        BuyError::InsufficientFunds => "You don't have enough cash.".into(),
+        BuyError::StashFull => "Your stash is full.".into(),
+        BuyError::InvalidSlot => "That item is no longer available.".into(),
     }
 }
 
@@ -191,7 +192,7 @@ async fn prepare_shop_response(
         let mut registry = data.runtime.item_registry.lock().await;
         match merchant.buy(slot, &mut player, &mut registry) {
             Ok(item) => {
-                notice = Some(format!("_Bought **{}** for ${}._", item.name, item.value));
+                notice = Some(format!("Bought {} for ${}.", item.name, item.value));
                 bought = true;
                 bought_slot = Some(slot);
                 let chud_name = player.chud_ref().name.clone();

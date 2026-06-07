@@ -7,7 +7,6 @@ use crate::game::busy::BusyReason;
 use crate::game::domain::session::GamePhase;
 use crate::game::domain::stash::STASH_CAPACITY;
 use crate::game::engine;
-use crate::game::guild_status;
 use crate::game::mechanics::simulation::effective_stats;
 use crate::game::persistence::storage;
 
@@ -97,8 +96,7 @@ pub async fn inspect(ctx: Context<'_>, name: String) -> Result<(), Error> {
             let chud = player.chud_ref();
             let board = ctx.data().runtime.board.lock().await;
             let hospital = storage::load_hospital()?;
-            let status = guild_status::compute_guild_hall_status(&board, &hospital)?;
-            match status.busy_reason(player.discord_user_id) {
+            match crate::game::busy::is_player_busy(&*board, &hospital, player.discord_user_id) {
                 None => chud_msg!("inspect_description", chud.name, chud.description),
                 Some(BusyReason::ActiveQuest { .. }) => chud_msg!("inspect_busy_job", chud.name),
                 Some(BusyReason::Scouting) => chud_msg!("inspect_busy_scouting", chud.name),
@@ -216,10 +214,7 @@ pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     };
 
-    let read_only = ctx.data().runtime.session.lock().await.phase == GamePhase::Complete;
-    let registry = ctx.data().runtime.item_registry.lock().await;
-    let message = crate::discord::build_gear_message(&player, &registry, None, None, read_only);
-    drop(registry);
+    let message = crate::discord::build_gear_open_message(ctx.data(), &player).await?;
 
     if let Err(e) = crate::discord::edit_ephemeral_message(&http, &token, &message).await {
         tracing::debug!(err = %e, user_id, "gear command edit failed (ephemeral may be dismissed)");

@@ -198,6 +198,11 @@ busy_hospitalized:
   - "{} is in the infirmary. {} days until they're back."
   - "{} is being patched up. {} days left on the clock."
 
+gear_equipment_locked:
+  - "{} is {}. You can still buy and sell stash items."
+  - "{} is {}. Stash buys and sells still work."
+  - "{} is {}. You can't swap equipped gear right now, only manage stash items."
+
 # DM notification when chud is hospitalized
 dm_hospitalized:
   - "**{}** has been admitted to the hospital and will be unavailable until they recover."
@@ -328,8 +333,8 @@ merchant_visiting:
   - "**{}** unpacked a cart of goods."
   - "**{}** is hawking wares from a stall."
   - "**{}** rolled in and opened for busines."
-  - "**{}** has laid out their stock in the  corner."
-  - "**{}** is doing business out of the again."
+  - "**{}** has laid out their stock in the corner."
+  - "**{}** is doing business again."
   - "**{}** is hoping to make a quick buck."
 
 merchant_names:

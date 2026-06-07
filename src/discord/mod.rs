@@ -19,8 +19,9 @@ pub use context::{GameCompletion, GameRuntime, require_playing};
 pub use simulation::SimulationController;
 pub use buttons::{handle_heal_button, handle_scout_button, handle_take_button};
 pub use ui::{
-    build_gear_message, edit_ephemeral_message, handle_gear_button, handle_merchant_shop_button,
-    handle_shop_buy, handle_shop_select, update_merchant_message,
+    build_gear_message, build_gear_open_message, derive_gear_mode, edit_ephemeral_message,
+    gear_equipment_locked_notice, handle_gear_button, handle_merchant_shop_button, handle_shop_buy,
+    handle_shop_select, update_merchant_message, GearInteractionMode,
 };
 pub use channel::{
     append_activity_log, append_activity_log_deferred, cleanup_non_bot_messages,

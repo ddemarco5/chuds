@@ -15,9 +15,9 @@ pub fn no_chud_message() -> ComponentsV2Message {
     }
 }
 
-pub fn push_notice(components: &mut Vec<Component>, notice: Option<&str>) {
+pub fn push_status_notice(components: &mut Vec<Component>, notice: Option<&str>) {
     if let Some(notice) = notice {
-        components.push(Component::Text(TextDisplay::new(notice)));
+        components.push(Component::Text(TextDisplay::new(format!("```{notice}```"))));
     }
 }
 
@@ -59,7 +59,10 @@ pub async fn respond_ephemeral_update(
     }
 }
 
-pub use gear::{build_gear_message, handle_gear_button};
+pub use gear::{
+    build_gear_message, build_gear_open_message, derive_gear_mode, gear_equipment_locked_notice,
+    handle_gear_button, GearInteractionMode,
+};
 pub use merchant::{
     handle_merchant_shop_button, handle_shop_buy, handle_shop_select, update_merchant_message,
 };
