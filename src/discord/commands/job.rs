@@ -4,8 +4,8 @@ use poise::Modal;
 
 use crate::discord::guild_hall;
 use crate::discord::context::{
-    admin_guard, chudmaster_check, parse_difficulty, require_playing, say_ephemeral, Context, Error,
-    GenerateJobModal, WriteJobModal,
+    admin_guard, chudmaster_check, parse_difficulty, parse_difficulty_optional, require_playing,
+    say_ephemeral, Context, Error, GenerateJobModal, WriteJobModal,
 };
 use crate::game::engine;
 use crate::game::persistence::storage;
@@ -30,7 +30,7 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     };
 
-    let difficulty = match parse_difficulty(&data.difficulty) {
+    let difficulty = match parse_difficulty_optional(data.difficulty.as_deref()) {
         Ok(d) => d,
         Err(msg) => {
             say_ephemeral(ctx, msg).await?;
@@ -60,6 +60,8 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
         author = %ctx.author().name,
         description = %data.description,
         has_goal = goal.is_some(),
+        difficulty,
+        auto_difficulty = data.difficulty.as_deref().map(str::trim).filter(|s| !s.is_empty()).is_none(),
         "submitted generate_job"
     );
     ctx.data()

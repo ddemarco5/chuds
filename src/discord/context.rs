@@ -128,6 +128,14 @@ pub fn parse_difficulty(raw: &str) -> Result<u8, &'static str> {
     Ok(difficulty)
 }
 
+/// Parse an optional difficulty field; blank/missing values roll auto difficulty from chud stats.
+pub fn parse_difficulty_optional(raw: Option<&str>) -> Result<u8, &'static str> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(crate::game::engine::roll_job_difficulty()),
+        Some(s) => parse_difficulty(s),
+    }
+}
+
 pub async fn say_ephemeral(ctx: Context<'_>, text: impl Into<String>) -> Result<(), Error> {
     ctx.send(poise::CreateReply::default().content(text).ephemeral(true))
         .await?;
@@ -143,9 +151,9 @@ pub struct GenerateJobModal {
     #[name = "Goal (optional)"]
     #[paragraph]
     pub goal: Option<String>,
-    #[name = "Difficulty (1-10)"]
-    #[placeholder = "e.g. 5"]
-    pub difficulty: String,
+    #[name = "Difficulty (optional, 1-10)"]
+    #[placeholder = "leave blank for auto"]
+    pub difficulty: Option<String>,
 }
 
 #[derive(Debug, poise::Modal)]

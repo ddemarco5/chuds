@@ -11,7 +11,10 @@ use crate::game::domain::quest_result::QuestResult;
 use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator, QuestResults, TrialResult};
-use crate::game::tuneable_rolls::{item_drop_chance, roll_item, roll_item_drop, roll_item_value, roll_trials};
+use crate::game::tuneable_rolls::{
+    item_drop_chance, roll_auto_job_difficulty, roll_item, roll_item_drop, roll_item_value,
+    roll_trials,
+};
 use crate::story_jobs;
 use crate::game::mechanics::simulation::{effective_stats, play_quest};
 use crate::game::persistence::storage;
@@ -212,6 +215,49 @@ pub fn enqueue_quest(
 ) -> anyhow::Result<()> {
     queue.push(quest_data, generated);
     storage::save_job_queue(queue)
+}
+
+/// Mean stat level assumed when no chuds exist yet, roughly a starting chud's power.
+pub const DEFAULT_MEAN_CHUD_STAT: f64 = 3.0;
+
+/// Average of every chud's strength/smarts/stealth across all saved players. Falls back to
+/// [`DEFAULT_MEAN_CHUD_STAT`] when there are no chuds yet.
+pub fn mean_chud_stat() -> f64 {
+    let ids = match storage::list_player_ids() {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!(err = %e, "failed to list players for mean stat; using default");
+            return DEFAULT_MEAN_CHUD_STAT;
+        }
+    };
+
+    let mut total: u64 = 0;
+    let mut count: u64 = 0;
+    for id in ids {
+        match storage::load_player(id) {
+            Ok(Some(player)) => {
+                if let Some(chud) = player.chud {
+                    total += chud.strength as u64 + chud.smarts as u64 + chud.stealth as u64;
+                    count += 3;
+                }
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!(err = %e, player = id, "failed to load player for mean stat"),
+        }
+    }
+
+    if count == 0 {
+        DEFAULT_MEAN_CHUD_STAT
+    } else {
+        total as f64 / count as f64
+    }
+}
+
+/// Difficulty for a new job when the chudmaster leaves the field blank: a broad normal roll
+/// centered on the mean stat level of all chuds.
+pub fn roll_job_difficulty() -> u8 {
+    let mut rng = rand::thread_rng();
+    roll_auto_job_difficulty(mean_chud_stat(), &mut rng)
 }
 
 /// Build a [`GenerationJob::QuestCreation`] from a raw description and difficulty.
