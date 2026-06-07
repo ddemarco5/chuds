@@ -127,18 +127,8 @@ pub async fn render_tick_outcome(
             .next()
             .unwrap_or(&sr.player_name)
             .to_string();
-        let scout_key = if sr.chance == 0.0 {
-            "scout_returned_impossible"
-        } else if sr.chance <= 0.25 {
-            "scout_returned_terrified"
-        } else if sr.chance <= 0.50 {
-            "scout_returned_nervous"
-        } else if sr.chance <= 0.80 {
-            "scout_returned_confident"
-        } else {
-            "scout_returned_cocky"
-        };
-        let scout_return_msg = chud_msg!(scout_key, first_name);
+        let scout_return_msg =
+            chud_msg!(formatting::scout_returned_message_key(sr.chance), first_name);
         append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &scout_return_msg).await;
 
         let active_player_name: Option<String> = sr

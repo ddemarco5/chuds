@@ -133,6 +133,11 @@ scout_returned_cocky:
   - "{} returns smirking confidently."
   - "{} bounces in, completely unfazed."
 
+scout_scouted:
+  - "**{}** scouted \"{}\"."
+  - "**{}** went and checked out \"{}\"."
+  - "**{}** came back from sizing up \"{}\"."
+
 scout_days:
   - "They say it'll take {} days."
   - "Word is it's a {}-day job."
@@ -141,6 +146,31 @@ scout_days:
   - "According to them, it'll run {} days."
   - "They mutter it'll be {} days before anyone's done."
   - "They figure {} days start to finish."
+
+scout_chance_impossible:
+  - "They reckon there's no shot of them pulling it off."
+  - "They say it's impossible... not happening."
+  - "They don't think anyone could finish that one."
+
+scout_chance_terrified:
+  - "They whisper there's barely a {} shot of them succeeding."
+  - "They reckon there's a {} shot at best, and they're being generous."
+  - "They mutter a {} chance like they'd rather not think about it."
+
+scout_chance_nervous:
+  - "They reckon there's a {} shot of them succeeding."
+  - "They figure it's about a {} chance they'll pull it off."
+  - "They guess they stand a {} shot."
+
+scout_chance_confident:
+  - "They reckon there's a solid {} shot of them succeeding."
+  - "They think a {} shot is realistic."
+  - "They're fairly sure about a {} chance."
+
+scout_chance_cocky:
+  - "They reckon they've got a {} shot. Easy money."
+  - "They brag about a {} shot like it's already done."
+  - "They're cocky: {} chance, no sweat."
 
 chud_hospital_admit:
   - "{} has been admitted to the hospital."

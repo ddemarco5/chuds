@@ -373,6 +373,68 @@ fn oxford_join(names: &[&str]) -> String {
     }
 }
 
+fn gcd(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
+/// Rough fraction for scout success odds (denominator capped at 10).
+fn format_chance_fraction(chance: f64) -> String {
+    let mut best_num = 1u32;
+    let mut best_den = 1u32;
+    let mut best_err = f64::MAX;
+    for den in 1..=10 {
+        let num = (chance * den as f64).round() as u32;
+        if num == 0 {
+            continue;
+        }
+        let err = (num as f64 / den as f64 - chance).abs();
+        if err < best_err {
+            best_err = err;
+            best_num = num;
+            best_den = den;
+        }
+    }
+    let g = gcd(best_num, best_den);
+    format!("{}/{}", best_num / g, best_den / g)
+}
+
+pub fn scout_returned_message_key(chance: f64) -> &'static str {
+    match scout_mood_from_chance(chance) {
+        "impossible" => "scout_returned_impossible",
+        "terrified" => "scout_returned_terrified",
+        "nervous" => "scout_returned_nervous",
+        "confident" => "scout_returned_confident",
+        _ => "scout_returned_cocky",
+    }
+}
+
+fn scout_chance_message_key(chance: f64) -> &'static str {
+    match scout_mood_from_chance(chance) {
+        "impossible" => "scout_chance_impossible",
+        "terrified" => "scout_chance_terrified",
+        "nervous" => "scout_chance_nervous",
+        "confident" => "scout_chance_confident",
+        _ => "scout_chance_cocky",
+    }
+}
+
+pub fn scout_mood_from_chance(chance: f64) -> &'static str {
+    if chance == 0.0 {
+        "impossible"
+    } else if chance <= 0.25 {
+        "terrified"
+    } else if chance <= 0.50 {
+        "nervous"
+    } else if chance <= 0.75 {
+        "confident"
+    } else {
+        "cocky"
+    }
+}
+
 pub fn format_dm_scouting_report(
     player_name: &str,
     quest_title: &str,
@@ -381,20 +443,7 @@ pub fn format_dm_scouting_report(
     active_player_name: Option<&str>,
     scouting_player_names: &[&str],
 ) -> String {
-    let scout_key = if chance == 0.0 {
-        "scout_returned_impossible"
-    } else if chance <= 0.25 {
-        "scout_returned_terrified"
-    } else if chance <= 0.50 {
-        "scout_returned_nervous"
-    } else if chance <= 0.75 {
-        "scout_returned_confident"
-    } else {
-        "scout_returned_cocky"
-    };
-
-    let mut out = chud_msg!(scout_key, player_name);
-    out.push_str(&format!("\n\n**{}** checked \"{}\".", player_name, quest_title));
+    let mut out = chud_msg!("scout_scouted", player_name, quest_title);
 
     if let Some(name) = active_player_name {
         out.push_str(&format!("\nOh, and they also saw {} on the job there.", name));
@@ -407,6 +456,16 @@ pub fn format_dm_scouting_report(
 
     if quest_days > 0 {
         out.push_str(&format!("\n{}", chud_msg!("scout_days", quest_days)));
+    }
+
+    let chance_key = scout_chance_message_key(chance);
+    if scout_mood_from_chance(chance) == "impossible" {
+        out.push_str(&format!("\n{}", chud_msg!(chance_key)));
+    } else {
+        out.push_str(&format!(
+            "\n{}",
+            chud_msg!(chance_key, format_chance_fraction(chance))
+        ));
     }
 
     out
