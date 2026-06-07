@@ -172,6 +172,18 @@ pub fn spawn_generation_worker(
 ) {
     tokio::spawn(async move {
         while let Some(job) = rx.recv().await {
+            if matches!(&job, GenerationJob::QuestCreation { story_index: None, .. }) {
+                let skip = {
+                    let b = board.lock().await;
+                    b.story_series_complete()
+                };
+                if skip {
+                    pending_quests.fetch_sub(1, Ordering::SeqCst);
+                    tracing::info!("skipping auto quest generation: story series complete");
+                    continue;
+                }
+            }
+
             let outcome =
                 run_generation(job, &generator, &item_generator, &item_registry).await;
             let effects = {

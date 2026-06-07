@@ -16,6 +16,10 @@ pub fn create_jobs_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> an
         return Ok(());
     };
 
+    if ctx.board.story_series_complete() {
+        return Ok(());
+    }
+
     // Need enough prior postings in memory before we can imitate their style.
     if ctx.description_history_msgs < ctx.job_gen_min_history_msgs {
         return Ok(());

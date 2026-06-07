@@ -68,6 +68,12 @@ impl Board {
         self.quests.iter().any(|q| q.is_story())
     }
 
+    /// True once every catalog story mission has been completed.
+    pub fn story_series_complete(&self) -> bool {
+        let catalog = crate::story_jobs::catalog();
+        !catalog.stories.is_empty() && self.story_next_index >= catalog.stories.len()
+    }
+
     /// Add a fully-generated quest to the board and return its assigned id.
     pub fn add_quest(
         &mut self,
