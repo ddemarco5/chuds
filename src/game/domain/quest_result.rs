@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::game::domain::item::{format_roll_breakdown, Item};
 use crate::game::generation::quest_generator::GeneratedQuest;
 use crate::game::mechanics::quest_builder::{PlayedQuest, StatChoice, TrialOutcome};
+use crate::game::tuneable_rolls::FailureConsequences;
 
 fn is_optimal(outcome: &TrialOutcome, effective: (u8, u8, u8)) -> bool {
     let (eff_str, eff_smt, eff_sth) = effective;
@@ -50,6 +51,8 @@ pub struct QuestResult {
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_item: Option<Item>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_consequences: Option<FailureConsequences>,
 }
 
 impl QuestResult {
@@ -91,6 +94,7 @@ impl QuestResult {
             passed,
             summary,
             pending_item: None,
+            failure_consequences: None,
         }
     }
 

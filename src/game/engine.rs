@@ -12,8 +12,8 @@ use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator, QuestResults, TrialResult};
 use crate::game::tuneable_rolls::{
-    item_drop_chance, roll_auto_job_difficulty, roll_item, roll_item_drop, roll_item_value,
-    roll_trials,
+    death_chance, injury_chance, item_drop_chance, roll_auto_job_difficulty,
+    roll_failure_consequences, roll_item, roll_item_drop, roll_item_value, roll_trials,
 };
 use crate::story_jobs;
 use crate::game::mechanics::simulation::{effective_stats, play_quest};
@@ -590,6 +590,43 @@ pub async fn generate_result(
         })
         .collect();
 
+    let passed = played.outcomes.iter().all(|o| o.passed);
+    let failure_consequences = if !passed {
+        let margin = played
+            .outcomes
+            .last()
+            .map(|o| o.player_roll as i16 - o.trial_roll as i16)
+            .unwrap_or(0);
+        let mut rng = rand::thread_rng();
+        let consequences = roll_failure_consequences(margin, &mut rng);
+        if consequences.died {
+            tracing::info!(
+                margin,
+                death_chance = death_chance(margin),
+                "chud died on quest failure (pre-LLM roll)"
+            );
+        } else if let Some(ticks) = consequences.hospital_ticks {
+            tracing::info!(
+                margin,
+                injury_chance = injury_chance(margin),
+                ticks,
+                "chud injured on quest failure (pre-LLM roll)"
+            );
+        }
+        Some(consequences)
+    } else {
+        None
+    };
+    let failure_outcome = failure_consequences.as_ref().map(|c| {
+        if c.died {
+            "died"
+        } else if c.hospital_ticks.is_some() {
+            "injured"
+        } else {
+            "failed"
+        }
+    });
+
     let equipped: Vec<_> = player
         .chud_ref()
         .equipment
@@ -605,6 +642,7 @@ pub async fn generate_result(
             &trial_results,
             &player.chud_ref().name,
             &adventurer_description,
+            failure_outcome,
         )
         .await?;
 
@@ -615,6 +653,7 @@ pub async fn generate_result(
         trials,
         summary,
     );
+    result.failure_consequences = failure_consequences;
 
     let difficulty = board_quest.quest_data.quest_difficulty;
     let trial_count = board_quest.quest_data.trials.len();

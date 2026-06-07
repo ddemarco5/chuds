@@ -1,5 +1,6 @@
 use rand::Rng;
 use rand_distr::{Distribution, Normal};
+use serde::{Deserialize, Serialize};
 
 use crate::game::domain::item::{stat_contribution, ItemSeed, ItemStats, ItemType};
 use crate::game::domain::quest::TrialStats;
@@ -400,6 +401,32 @@ pub fn death_chance(margin: i16) -> f64 {
 pub fn roll_death(margin: i16, rng: &mut impl Rng) -> bool {
     let chance = death_chance(margin);
     chance > 0.0 && rng.gen_bool(chance)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FailureConsequences {
+    pub died: bool,
+    pub hospital_ticks: Option<u32>,
+}
+
+/// Roll death then injury for a failed quest's last-trial margin. Death takes priority.
+pub fn roll_failure_consequences(margin: i16, rng: &mut impl Rng) -> FailureConsequences {
+    if margin >= 0 {
+        return FailureConsequences {
+            died: false,
+            hospital_ticks: None,
+        };
+    }
+    if roll_death(margin, rng) {
+        return FailureConsequences {
+            died: true,
+            hospital_ticks: None,
+        };
+    }
+    FailureConsequences {
+        died: false,
+        hospital_ticks: roll_injury_outcome(margin, rng),
+    }
 }
 
 // ── Chud creation rolls ───────────────────────────────────────────────────────

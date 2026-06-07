@@ -106,8 +106,12 @@ Your task is TWO things:
      margin <= -2  : clear or disastrous failure
 
 2. Write a short final summary (1-3 sentences) about the overall outcome of the job and the adventurer's return
-   If ANY trial has passed: false, the entire job is FAILED; if not, the job has resulted in success.
+   If ANY trial has "passed: false", the entire job is FAILED; if not, the job has resulted in success.
    Ensure the summary generally follows (a passed or failed version) of the goal provided in 'quest goal:'
+   When 'failure_outcome' is present, shape the summary accordingly:
+     - "failed": the job failed but the adventurer returned unharmed
+     - "injured": the job failed and the adventurer returned seriously wounded, needing medical care
+     - "died": the adventurer did not survive; the summary must state they died. The last trial narrative must show fatal consequences.
 
 RULES:
 - Write in THIRD PERSON
@@ -141,6 +145,8 @@ struct ResultsPrompt<'a> {
     quest_giver: &'a str,
     quest_giver_description: &'a str,
     quest_goal: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure_outcome: Option<&'a str>,
     trials: Vec<TrialResultPrompt<'a>>,
 }
 
@@ -354,6 +360,7 @@ impl QuestGenerator {
         outcomes: &[TrialResult],
         chud_name: &str,
         chud_description: &str,
+        failure_outcome: Option<&str>,
     ) -> anyhow::Result<QuestResults> {
         let scaffold = {
             let slots = outcomes
@@ -373,6 +380,7 @@ impl QuestGenerator {
             quest_giver: &generated.quest_giver,
             quest_giver_description: &generated.description,
             quest_goal: &generated.quest_goal,
+            failure_outcome,
             trials: outcomes
                 .iter()
                 .map(|o| TrialResultPrompt {
