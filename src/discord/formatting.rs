@@ -121,7 +121,7 @@ fn format_dm_header(player: &Player) -> String {
 
 fn format_dm_quest(result: &QuestResult) -> String {
     format!(
-        "**{}** - {}\n{}\n",
+        "**{}** - _{}_\n{}\n",
         result.quest_title, result.quest_giver, result.quest_description
     )
 }
