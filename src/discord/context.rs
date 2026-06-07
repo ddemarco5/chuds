@@ -84,7 +84,7 @@ pub async fn admin_guard(ctx: Context<'_>) -> bool {
             channel = ctx.channel_id().get(),
             "unauthorized or off-channel command ignored"
         );
-        ctx.say("you don't have permission for this command (sorry bud)")
+        say_ephemeral(ctx, "you don't have permission for this command (sorry bud)")
             .await
             .ok();
     }

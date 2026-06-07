@@ -133,6 +133,14 @@ async fn main() -> anyhow::Result<()> {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
+            // After defer_ephemeral(), poise sends follow-ups via ctx.say — they need the
+            // ephemeral flag set explicitly or they become public channel messages.
+            reply_callback: Some(|ctx, mut builder| {
+                if matches!(ctx, poise::Context::Application(_)) {
+                    builder = builder.ephemeral(true);
+                }
+                builder
+            }),
             commands: vec![
                 discord::commands::tick(),
                 discord::commands::generate_job(),
