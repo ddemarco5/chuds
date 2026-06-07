@@ -243,6 +243,22 @@ graveyard_empty:
   - "No gravestones yet. Lucky you."
   - "Nothing here but weeds and potential."
 
+# Attract-phase screen — roster section header (join prompt is fixed in code)
+attract_chudlist:
+  - "Current vict... uh... chuds:"
+  - "Chuds on the roster:"
+  - "Who's signed up:"
+  - "Current lineup:"
+  - "Enlisted chuds:"
+  - "Chuds in the hall:"
+  - "These chuds made it in:"
+  - "Chuds without bone spurs:"
+  - "The roster so far:"
+  - "Chuds waiting in the wings:"
+  - "Who's already in:"
+  - "Current chuds:"
+  - "Victors-in-waiting:"
+
 merchant_names:
   - "Old Toothless Pete"
   - "Maggie the Miser"

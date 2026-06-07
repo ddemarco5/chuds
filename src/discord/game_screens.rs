@@ -1,5 +1,6 @@
 use poise::serenity_prelude::{self as serenity, MessageId};
 
+use crate::chud_msg;
 use crate::discord::components_v2::{Component, ComponentsV2Message, TextDisplay};
 use crate::discord::context::GameRuntime;
 use crate::discord::guild_hall::{edit_cv2, format_chudlerboard, reset_channel_cache, send_cv2};
@@ -40,12 +41,13 @@ async fn build_attract_message(runtime: &GameRuntime) -> ComponentsV2Message {
     };
     let names = living_chud_names();
     let roster = if names.is_empty() {
-        "*nobody yet*".to_string()
+        "-# *nobody yet*".to_string()
     } else {
-        names.join(", ")
+        format!("-# {}", names.join(", "))
     };
+    let list_header = chud_msg!("attract_chudlist");
     let body = format!(
-        "# {title}\n{when}\ntype `/chud` to join\nCurrent vict... uh... chuds:\n{roster}"
+        "# {title}\n{when}\nType `/chud` to make your chud and join\n{list_header}\n{roster}"
     );
     ComponentsV2Message::channel(vec![Component::Text(TextDisplay::new(body))])
 }
