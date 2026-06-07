@@ -5,7 +5,7 @@ stories:
       The guild master found a sealed letter in the basement with strict instructions
       not to open it. The lighthouse keeper is expecting a delivery before the next storm.
     goal: Deliver the sealed letter to the lighthouse keeper without opening it
-    difficulty: 4
+    difficulty: 1
     reward:
       rarity: uncommon
       stats: ["-", "7", "-"]

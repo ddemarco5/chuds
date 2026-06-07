@@ -125,10 +125,8 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
         ctx.author().name,
         data.description
     );
-    let mut queue = ctx.data().runtime.job_queue.lock().await;
-    engine::write_job(
+    let (quest_data, generated) = engine::generate_written_job(
         &ctx.data().runtime.generator,
-        &mut *queue,
         data.title,
         data.giver,
         data.description,
@@ -136,6 +134,8 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
         difficulty,
     )
     .await?;
+    let mut queue = ctx.data().runtime.job_queue.lock().await;
+    engine::enqueue_quest(&mut *queue, quest_data, generated)?;
     drop(queue);
 
     let max_jobs = ctx.data().runtime.max_jobs;

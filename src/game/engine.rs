@@ -16,7 +16,9 @@ use crate::game::tuneable_rolls::{
     roll_failure_consequences, roll_item, roll_item_drop, roll_item_value, roll_trials,
 };
 use crate::story_jobs;
+use crate::game::mechanics::quest_builder::PlayedQuest;
 use crate::game::mechanics::simulation::{effective_stats, play_quest};
+use crate::game::tuneable_rolls::FailureConsequences;
 use crate::game::persistence::storage;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -279,15 +281,14 @@ pub fn make_quest_creation_job(
 }
 
 /// Generate trial flavor via LLM and enqueue the quest (does not add directly to board).
-pub async fn write_job(
+pub async fn generate_written_job(
     generator: &QuestGenerator,
-    queue: &mut JobQueue,
     title: String,
     giver: String,
     description: String,
     goal: String,
     difficulty: u8,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(QuestData, GeneratedQuest)> {
     let quest_data = QuestData {
         quest_description: description,
         quest_goal: Some(goal),
@@ -297,7 +298,25 @@ pub async fn write_job(
     let generated = generator
         .generate_from_explicit(&quest_data, title, giver)
         .await?;
-    tracing::info!(title = %generated.quest_title, giver = %generated.quest_giver, "quest written");
+    tracing::info!(
+        title = %generated.quest_title,
+        giver = %generated.quest_giver,
+        "quest written"
+    );
+    Ok((quest_data, generated))
+}
+
+pub async fn write_job(
+    generator: &QuestGenerator,
+    queue: &mut JobQueue,
+    title: String,
+    giver: String,
+    description: String,
+    goal: String,
+    difficulty: u8,
+) -> anyhow::Result<()> {
+    let (quest_data, generated) =
+        generate_written_job(generator, title, giver, description, goal, difficulty).await?;
     enqueue_quest(queue, quest_data, generated)?;
     tracing::info!(queued = queue.entries.len(), "quest added to queue");
     Ok(())
@@ -560,15 +579,22 @@ pub fn sell_item(
     Ok(gold)
 }
 
-/// Run the full LLM pipeline for a single quest and return the result.
-pub async fn generate_result(
-    generator: &QuestGenerator,
-    item_generator: &ItemGenerator,
+/// Sync rolls and stat lookups for quest-result generation. Callers should release any
+/// shared locks before the async `finish_quest_result` step.
+pub struct QuestResultPrep {
+    pub played: PlayedQuest,
+    pub effective: (u8, u8, u8),
+    pub trial_results: Vec<TrialResult>,
+    pub failure_consequences: Option<FailureConsequences>,
+    pub failure_outcome: Option<String>,
+    pub adventurer_description: String,
+}
+
+pub fn prepare_quest_result(
     item_registry: &ItemRegistry,
     board_quest: &BoardQuest,
     player: &Player,
-    force_item_drop: bool,
-) -> anyhow::Result<QuestResult> {
+) -> anyhow::Result<QuestResultPrep> {
     let played = play_quest(
         &board_quest.quest_data,
         &board_quest.generated,
@@ -619,11 +645,11 @@ pub async fn generate_result(
     };
     let failure_outcome = failure_consequences.as_ref().map(|c| {
         if c.died {
-            "died"
+            "died".to_string()
         } else if c.hospital_ticks.is_some() {
-            "injured"
+            "injured".to_string()
         } else {
-            "failed"
+            "failed".to_string()
         }
     });
 
@@ -635,6 +661,35 @@ pub async fn generate_result(
         .collect();
     let adventurer_description = player.generate_description(equipped.iter().copied());
 
+    Ok(QuestResultPrep {
+        played,
+        effective,
+        trial_results,
+        failure_consequences,
+        failure_outcome,
+        adventurer_description,
+    })
+}
+
+/// LLM narrative and optional item generation for a prepared quest result.
+pub async fn finish_quest_result(
+    generator: &QuestGenerator,
+    item_generator: &ItemGenerator,
+    board_quest: &BoardQuest,
+    player: &Player,
+    force_item_drop: bool,
+    prep: QuestResultPrep,
+) -> anyhow::Result<QuestResult> {
+    let QuestResultPrep {
+        played,
+        effective,
+        trial_results,
+        failure_consequences,
+        failure_outcome,
+        adventurer_description,
+    } = prep;
+
+    let failure_outcome = failure_outcome.as_deref();
     let QuestResults { trials, summary } = generator
         .generate_results(
             &board_quest.quest_data,
@@ -710,6 +765,27 @@ pub async fn generate_result(
 
     result.log();
     Ok(result)
+}
+
+/// Run the full LLM pipeline for a single quest and return the result.
+pub async fn generate_result(
+    generator: &QuestGenerator,
+    item_generator: &ItemGenerator,
+    item_registry: &ItemRegistry,
+    board_quest: &BoardQuest,
+    player: &Player,
+    force_item_drop: bool,
+) -> anyhow::Result<QuestResult> {
+    let prep = prepare_quest_result(item_registry, board_quest, player)?;
+    finish_quest_result(
+        generator,
+        item_generator,
+        board_quest,
+        player,
+        force_item_drop,
+        prep,
+    )
+    .await
 }
 
 fn collect_owned_item_ids(player: &Player) -> Vec<u32> {
