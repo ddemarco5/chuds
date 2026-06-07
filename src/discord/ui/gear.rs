@@ -3,6 +3,7 @@ use poise::serenity_prelude::{self as serenity, ComponentInteraction};
 use crate::discord::formatting::format_item_block;
 use crate::game::busy::BusyReason;
 use crate::game::domain::item::EquipmentSlot;
+use crate::game::domain::session::GamePhase;
 use crate::game::domain::player::Player;
 use crate::game::domain::stash::STASH_CAPACITY;
 use crate::game::engine;
@@ -56,6 +57,7 @@ pub fn build_gear_message(
     registry: &ItemRegistry,
     notice: Option<&str>,
     sell_confirm_item_id: Option<u32>,
+    read_only: bool,
 ) -> ComponentsV2Message {
     let mut components = Vec::new();
 
@@ -72,17 +74,22 @@ pub fn build_gear_message(
             .equipment
             .item_id_in_slot(slot)
             .and_then(|id| registry.get(id));
-        let buttons = item.map(|item| {
-            item_action_buttons(
-                item.id,
-                item.value,
-                sell_confirm_item_id,
-                Button::secondary(
-                    format!("g_unequip:{}", slot.custom_id_suffix()),
-                    "Unequip",
-                ),
-            )
-        }).unwrap_or_default();
+        let buttons = if read_only {
+            Vec::new()
+        } else {
+            item.map(|item| {
+                item_action_buttons(
+                    item.id,
+                    item.value,
+                    sell_confirm_item_id,
+                    Button::secondary(
+                        format!("g_unequip:{}", slot.custom_id_suffix()),
+                        "Unequip",
+                    ),
+                )
+            })
+            .unwrap_or_default()
+        };
         push_entry(
             &mut components,
             format_equipped_block(slot, item),
@@ -103,16 +110,17 @@ pub fn build_gear_message(
         for &item_id in player.stash.items() {
             match registry.get(item_id) {
                 Some(item) => {
-                    push_entry(
-                        &mut components,
-                        format_item_block(item),
+                    let buttons = if read_only {
+                        Vec::new()
+                    } else {
                         item_action_buttons(
                             item_id,
                             item.value,
                             sell_confirm_item_id,
                             Button::secondary(format!("g_equip:{item_id}"), "Equip"),
-                        ),
-                    );
+                        )
+                    };
+                    push_entry(&mut components, format_item_block(item), buttons);
                 }
                 None => {
                     tracing::warn!(item_id, "stash item missing from registry");
@@ -251,23 +259,29 @@ async fn prepare_gear_update(
     custom_id: &str,
 ) -> anyhow::Result<ComponentsV2Message> {
     let hospital = storage::load_hospital()?;
+    let read_only = data.runtime.session.lock().await.phase == GamePhase::Complete;
     // Match lock order used elsewhere (board before item_registry) to avoid deadlocks.
     let board = data.runtime.board.lock().await;
     let mut registry = data.runtime.item_registry.lock().await;
 
     let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
-    let (notice, sell_confirm) =
-        if let Some(reason) = status.busy_reason(player.discord_user_id) {
-            (Some(busy_notice(reason, player)), None)
-        } else {
-            apply_gear_action(player, custom_id, &mut registry)
-        };
+    let (notice, sell_confirm) = if read_only {
+        (
+            Some("_The game is over — your loadout is locked._".into()),
+            None,
+        )
+    } else if let Some(reason) = status.busy_reason(player.discord_user_id) {
+        (Some(busy_notice(reason, player)), None)
+    } else {
+        apply_gear_action(player, custom_id, &mut registry)
+    };
 
     Ok(build_gear_message(
         player,
         &registry,
         notice.as_deref(),
         sell_confirm,
+        read_only,
     ))
 }
 

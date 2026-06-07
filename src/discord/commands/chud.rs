@@ -219,8 +219,9 @@ pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     };
 
+    let read_only = ctx.data().runtime.session.lock().await.phase == GamePhase::Complete;
     let registry = ctx.data().runtime.item_registry.lock().await;
-    let message = crate::discord::build_gear_message(&player, &registry, None, None);
+    let message = crate::discord::build_gear_message(&player, &registry, None, None, read_only);
     drop(registry);
 
     if let Err(e) = crate::discord::edit_ephemeral_message(&http, &token, &message).await {

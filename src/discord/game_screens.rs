@@ -43,7 +43,7 @@ async fn build_attract_message(runtime: &GameRuntime) -> ComponentsV2Message {
     let roster = if names.is_empty() {
         "-# *nobody yet*".to_string()
     } else {
-        format!("-# {}", names.join(", "))
+        format!("-# \u{2043} {}", names.join(", "))
     };
     let list_header = chud_msg!("attract_chudlist");
     let body = format!(
