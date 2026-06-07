@@ -716,7 +716,7 @@ pub async fn finish_quest_result(
         let story_reward = board_quest
             .story_index
             .and_then(|i| story_jobs::catalog().stories.get(i))
-            .map(|entry| &entry.reward);
+            .and_then(|entry| entry.reward.as_ref());
 
         let seed = if let Some(reward) = story_reward {
             Some(roll_item(
@@ -725,6 +725,8 @@ pub async fn finish_quest_result(
                 Some(&reward.rarity),
                 reward.stats.as_ref(),
             ))
+        } else if board_quest.story_index.is_some() {
+            None
         } else if force_item_drop || roll_item_drop(difficulty, trial_count, &mut rand::thread_rng()) {
             Some(roll_item(
                 difficulty,

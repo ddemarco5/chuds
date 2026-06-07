@@ -17,7 +17,8 @@ struct StoryEntryRaw {
     description: String,
     goal: String,
     difficulty: u8,
-    reward: StoryRewardRaw,
+    #[serde(default)]
+    reward: Option<StoryRewardRaw>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,7 +38,8 @@ pub struct StoryEntry {
     pub description: String,
     pub goal: String,
     pub difficulty: u8,
-    pub reward: StoryReward,
+    /// Omitted for the final story mission (game ends on completion).
+    pub reward: Option<StoryReward>,
 }
 
 #[derive(Debug, Clone)]
@@ -84,10 +86,10 @@ static CATALOG: LazyLock<StoryCatalog> = LazyLock::new(|| {
                     description: entry.description,
                     goal: entry.goal,
                     difficulty: entry.difficulty,
-                    reward: StoryReward {
-                        rarity: validate_rarity(&entry.reward.rarity),
-                        stats: entry.reward.stats.as_deref().map(parse_stats),
-                    },
+                    reward: entry.reward.map(|reward| StoryReward {
+                        rarity: validate_rarity(&reward.rarity),
+                        stats: reward.stats.as_deref().map(parse_stats),
+                    }),
                 }
             })
             .collect(),
