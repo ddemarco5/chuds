@@ -236,6 +236,12 @@ all_busy:
   - "Not a single chud loafing. Impressive. Terrifying."
   - "The chud guild is working overtime."
 
+no_chuds:
+  - "The guild hall is empty. No chuds yet."
+  - "Dead silent in here. Where are all the chuds?"
+  - "Not a chud in sight. Use /chud to get started."
+  - "Nobody's shown up yet. The guild hall waits."
+
 hospital_waiting:
   - "Man these guys are messed up"
   - "The infirmary is working overtime"

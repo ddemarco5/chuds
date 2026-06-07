@@ -87,6 +87,9 @@ pub struct MessageCache {
     /// Cached random header for the all-busy section (cleared when the section is empty).
     #[serde(default)]
     pub status_all_busy_header: Option<String>,
+    /// Cached random header for the no-chuds section (cleared when chuds exist again).
+    #[serde(default)]
+    pub status_no_chuds_header: Option<String>,
     /// Cached random header for the hospital roster section (cleared when the section is empty).
     #[serde(default)]
     pub status_hospital_header: Option<String>,

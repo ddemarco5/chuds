@@ -30,3 +30,13 @@ stories:
     difficulty: 6
     reward:
       rarity: rare
+
+  - description: |
+      With all the clues you've found, it's clear that Father Flumbo has been the were-chud all alone. A local group of monster hunters
+      are gathering to take him down, and since the chud guild was instrumental in this discovery, they want someone there to help.
+      Bring a box of dominoes pizza and a couple melon vape pens to trigger the chud's transormation.
+      Do not mention this in the description of the job, but the priest will turn into a chud that smells like garlic and is covered in olive oil.
+    goal: |
+      With the greased up stinky chud successfully defeated, and father flumbo rid of the curse of the were-chud, the town can return to a peaceful existence.
+      All thanks to the chud guild and their stupid chuds.
+    difficulty: 8

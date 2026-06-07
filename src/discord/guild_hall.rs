@@ -99,6 +99,7 @@ fn status_section(header: &str, names: &[String]) -> String {
 struct StatusSectionHeaders {
     idle: Option<String>,
     all_busy: Option<String>,
+    no_chuds: Option<String>,
     hospital: Option<String>,
 }
 
@@ -138,6 +139,20 @@ fn resolve_status_headers(
         None
     };
 
+    let no_chuds = if status.show_no_chuds {
+        if cache.status_no_chuds_header.is_none() {
+            cache.status_no_chuds_header = Some(chud_msg!("no_chuds"));
+            dirty = true;
+        }
+        cache.status_no_chuds_header.clone()
+    } else if cache.status_no_chuds_header.is_some() {
+        cache.status_no_chuds_header = None;
+        dirty = true;
+        None
+    } else {
+        None
+    };
+
     let hospital = if !status.hospital_names.is_empty() {
         if cache.status_hospital_header.is_none() {
             cache.status_hospital_header = Some(chud_msg!("hospital_waiting"));
@@ -156,6 +171,7 @@ fn resolve_status_headers(
         StatusSectionHeaders {
             idle,
             all_busy,
+            no_chuds,
             hospital,
         },
         dirty,
@@ -177,6 +193,14 @@ fn build_status_message(status: &GuildHallStatus, headers: &StatusSectionHeaders
                 .all_busy
                 .as_deref()
                 .expect("all_busy header when show_all_busy")
+        ))));
+    } else if status.show_no_chuds {
+        inner.push(ContainerChild::Text(TextDisplay::new(format!(
+            "*{}*",
+            headers
+                .no_chuds
+                .as_deref()
+                .expect("no_chuds header when show_no_chuds")
         ))));
     } else {
         inner.push(ContainerChild::Text(TextDisplay::new("\u{200B}\n\u{200B}")));

@@ -14,6 +14,7 @@ pub struct GuildHallStatus {
     pub idle_names: Vec<String>,
     pub hospital_names: Vec<String>,
     pub show_all_busy: bool,
+    pub show_no_chuds: bool,
 }
 
 impl GuildHallStatus {
@@ -41,7 +42,7 @@ impl GuildHallStatus {
 ///
 /// Walks every quest on the board once to collect players on active jobs or scouting,
 /// merges in hospital admissions, then treats every other saved chud as idle. The result
-/// powers the persistent status box under the job board (idle / all-busy / hospital lists)
+/// powers the persistent status box under the job board (idle / all-busy / no-chuds / hospital lists)
 /// and cheap per-user checks via [`GuildHallStatus::busy_reason`] without rescanning quests.
 ///
 /// Called whenever assignments might change, including: every game tick
@@ -83,20 +84,24 @@ pub fn compute_guild_hall_status(
 
     let player_ids = storage::list_player_ids()?;
     let mut idle_names = Vec::new();
+    let mut has_any_chud = false;
 
     for &id in &player_ids {
-        if active.contains_key(&id) || scouting.contains(&id) || hospitalized.contains(&id) {
-            continue;
-        }
         if let Some(player) = storage::load_player(id)? {
-            if player.has_chud() {
-                idle_names.push(player.chud_ref().name.clone());
+            if !player.has_chud() {
+                continue;
             }
+            has_any_chud = true;
+            if active.contains_key(&id) || scouting.contains(&id) || hospitalized.contains(&id) {
+                continue;
+            }
+            idle_names.push(player.chud_ref().name.clone());
         }
     }
     idle_names.sort();
 
-    let show_all_busy = idle_names.is_empty() && !player_ids.is_empty();
+    let show_no_chuds = !has_any_chud;
+    let show_all_busy = has_any_chud && idle_names.is_empty();
 
     Ok(GuildHallStatus {
         active,
@@ -105,5 +110,6 @@ pub fn compute_guild_hall_status(
         idle_names,
         hospital_names,
         show_all_busy,
+        show_no_chuds,
     })
 }
