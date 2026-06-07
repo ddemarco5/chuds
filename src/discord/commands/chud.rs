@@ -30,10 +30,7 @@ pub async fn handle_chud_join(
     } else {
         let content = {
             let chud = result.player.chud_ref();
-            format!(
-                "A chudly **{}** saunters through the door.\n{}",
-                chud.name, chud.description
-            )
+            chud_msg!("chud_joins", chud.name, chud.description)
         };
         append_activity_log(&runtime.activity_log, &content).await;
         let mut board = runtime.board.lock().await;

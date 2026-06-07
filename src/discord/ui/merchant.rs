@@ -2,6 +2,8 @@ use poise::serenity_prelude::{
     self as serenity, ComponentInteraction, ComponentInteractionDataKind, Http, MessageId,
 };
 
+use crate::chud_msg;
+use crate::discord::channel::append_activity_log;
 use crate::discord::formatting::format_item_block;
 use crate::game::domain::player::Player;
 use crate::game::merchant::{BuyError, MerchantState, MerchantVisit};
@@ -192,6 +194,14 @@ async fn prepare_shop_response(
                 notice = Some(format!("_Bought **{}** for ${}._", item.name, item.value));
                 bought = true;
                 bought_slot = Some(slot);
+                let chud_name = player.chud_ref().name.clone();
+                let first_name = chud_name
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or(&chud_name)
+                    .to_string();
+                let log_msg = chud_msg!("chud_buys_item", first_name, item.name, item.value);
+                append_activity_log(&data.runtime.activity_log, &log_msg).await;
             }
             Err(e) => {
                 notice = Some(buy_notice(e));

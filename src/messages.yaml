@@ -7,6 +7,34 @@ new_day:
   - "Wake up and smell the chuds"
   - "Another day, another chud"
 
+chud_joins:
+  - "A chudly **{}** saunters through the door.\n{}"
+  - "A new chud **{}** wanders in off the street.\n{}"
+  - "**{}** shuffles through the door like they own the place.\n{}"
+  - "Another chud arrives: **{}**.\n{}"
+  - "**{}** kicks the door open and struts in.\n{}"
+
+chud_scouts_out:
+  - "**{}** stumbled out the door"
+  - "**{}** shuffled off to scout a job"
+  - "**{}** slipped out to check a gig"
+  - "**{}** wandered out, squinting at the job board from afar"
+  - "**{}** crept out to size up a quest"
+
+chud_buys_item:
+  - "**{}** bought **{}** for ${}."
+  - "**{}** snagged **{}** off the merchant for ${}."
+  - "**{}** handed over ${} for **{}**."
+  - "**{}** traded ${} for **{}** like it was a steal."
+  - "**{}** walked away with **{}** lighter by ${}."
+
+chud_sells_item:
+  - "**{}** sold **{}**."
+  - "**{}** pawned **{}**."
+  - "**{}** dumped **{}**."
+  - "**{}** traded **{}** in."
+  - "**{}** cashed out **{}**."
+
 chud_takes_job:
   - "**{}** ripped **{}** off the board"
   - "**{}** snagged **{}** and skipped out the door"

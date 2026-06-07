@@ -1,5 +1,7 @@
 use poise::serenity_prelude::{self as serenity, ComponentInteraction};
 
+use crate::chud_msg;
+use crate::discord::channel::append_activity_log;
 use crate::discord::formatting::format_item_block;
 use crate::game::busy::BusyReason;
 use crate::game::domain::item::EquipmentSlot;
@@ -145,16 +147,16 @@ fn busy_notice(reason: BusyReason, player: &Player) -> String {
     }
 }
 
-/// `(notice, item_id awaiting sell confirmation)`
+/// `(notice, item_id awaiting sell confirmation, activity log line)`
 fn apply_gear_action(
     player: &mut Player,
     custom_id: &str,
     registry: &mut ItemRegistry,
-) -> (Option<String>, Option<u32>) {
+) -> (Option<String>, Option<u32>, Option<String>) {
     if let Some(suffix) = custom_id.strip_prefix("g_unequip:") {
         let slot = match EquipmentSlot::parse_suffix(suffix) {
             Some(slot) => slot,
-            None => return (Some("_Unknown action._".into()), None),
+            None => return (Some("_Unknown action._".into()), None, None),
         };
         let item_name = player
             .chud_ref()
@@ -176,13 +178,13 @@ fn apply_gear_action(
                 Some("_Could not unequip that item._".into())
             }
         };
-        return (notice, None);
+        return (notice, None, None);
     }
 
     if let Some(id_str) = custom_id.strip_prefix("g_equip:") {
         let item_id: u32 = match id_str.parse() {
             Ok(id) => id,
-            Err(_) => return (Some("_Unknown action._".into()), None),
+            Err(_) => return (Some("_Unknown action._".into()), None, None),
         };
         let item_name = registry
             .get(item_id)
@@ -201,16 +203,16 @@ fn apply_gear_action(
                 Some("_Could not equip that item._".into())
             }
         };
-        return (notice, None);
+        return (notice, None, None);
     }
 
     if let Some(id_str) = custom_id.strip_prefix("g_sell:") {
         let item_id: u32 = match id_str.parse() {
             Ok(id) => id,
-            Err(_) => return (Some("_Unknown action._".into()), None),
+            Err(_) => return (Some("_Unknown action._".into()), None, None),
         };
         if registry.get(item_id).is_none() {
-            return (Some("_That item no longer exists._".into()), None);
+            return (Some("_That item no longer exists._".into()), None, None);
         }
         if !player.stash.contains(item_id)
             && !player
@@ -219,37 +221,46 @@ fn apply_gear_action(
                 .all_ids()
                 .any(|id| id == item_id)
         {
-            return (Some("_You don't have that item._".into()), None);
+            return (Some("_You don't have that item._".into()), None, None);
         }
-        return (None, Some(item_id));
+        return (None, Some(item_id), None);
     }
 
     if let Some(id_str) = custom_id.strip_prefix("g_sell_confirm:") {
         let item_id: u32 = match id_str.parse() {
             Ok(id) => id,
-            Err(_) => return (Some("_Unknown action._".into()), None),
+            Err(_) => return (Some("_Unknown action._".into()), None, None),
         };
         let item_name = registry
             .get(item_id)
             .map(|i| i.name.clone())
             .unwrap_or_else(|| "item".into());
-        let notice = match engine::sell_item(player, registry, item_id) {
-            Ok(gold) => Some(format!("_Sold **{item_name}** for ${gold}._")),
+        let chud_name = player.chud_ref().name.clone();
+        let first_name = chud_name
+            .split_whitespace()
+            .next()
+            .unwrap_or(&chud_name)
+            .to_string();
+        let (notice, activity_log) = match engine::sell_item(player, registry, item_id) {
+            Ok(gold) => (
+                Some(format!("_Sold **{item_name}** for ${gold}._")),
+                Some(chud_msg!("chud_sells_item", first_name, item_name)),
+            ),
             Err(e) if e.to_string().contains("not owned") => {
-                Some("_You don't have that item._".into())
+                (Some("_You don't have that item._".into()), None)
             }
             Err(e) if e.to_string().contains("not found") => {
-                Some("_That item no longer exists._".into())
+                (Some("_That item no longer exists._".into()), None)
             }
             Err(e) => {
                 tracing::warn!(err = %e, "sell failed");
-                Some("_Could not sell that item._".into())
+                (Some("_Could not sell that item._".into()), None)
             }
         };
-        return (notice, None);
+        return (notice, None, activity_log);
     }
 
-    (None, None)
+    (None, None, None)
 }
 
 /// Build the updated gear UI under board/registry locks, then drop them before any HTTP I/O.
@@ -257,7 +268,7 @@ async fn prepare_gear_update(
     data: &Data,
     player: &mut Player,
     custom_id: &str,
-) -> anyhow::Result<ComponentsV2Message> {
+) -> anyhow::Result<(ComponentsV2Message, Option<String>)> {
     let hospital = storage::load_hospital()?;
     let read_only = data.runtime.session.lock().await.phase == GamePhase::Complete;
     // Match lock order used elsewhere (board before item_registry) to avoid deadlocks.
@@ -265,23 +276,27 @@ async fn prepare_gear_update(
     let mut registry = data.runtime.item_registry.lock().await;
 
     let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
-    let (notice, sell_confirm) = if read_only {
+    let (notice, sell_confirm, activity_log) = if read_only {
         (
             Some("_The game is over — your loadout is locked._".into()),
             None,
+            None,
         )
     } else if let Some(reason) = status.busy_reason(player.discord_user_id) {
-        (Some(busy_notice(reason, player)), None)
+        (Some(busy_notice(reason, player)), None, None)
     } else {
         apply_gear_action(player, custom_id, &mut registry)
     };
 
-    Ok(build_gear_message(
-        player,
-        &registry,
-        notice.as_deref(),
-        sell_confirm,
-        read_only,
+    Ok((
+        build_gear_message(
+            player,
+            &registry,
+            notice.as_deref(),
+            sell_confirm,
+            read_only,
+        ),
+        activity_log,
     ))
 }
 
@@ -302,7 +317,10 @@ pub async fn handle_gear_button(
         }
     };
 
-    let message = prepare_gear_update(data, &mut player, &custom_id).await?;
+    let (message, activity_log) = prepare_gear_update(data, &mut player, &custom_id).await?;
+    if let Some(log_msg) = activity_log {
+        append_activity_log(&data.runtime.activity_log, &log_msg).await;
+    }
     respond_ephemeral_update(http, interaction, &message).await;
 
     Ok(())

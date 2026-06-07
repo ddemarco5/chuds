@@ -257,7 +257,7 @@ pub async fn handle_scout_button(
         .next()
         .unwrap_or(&chud_name)
         .to_string();
-    let content = format!("**{}** stumbled out the door", first_name);
+    let content = chud_msg!("chud_scouts_out", first_name);
     append_activity_log(&data.runtime.activity_log, &content).await;
     guild_hall::update_board_message(
         &ctx.http,
