@@ -1,101 +1,97 @@
-use std::collections::HashSet;
-use std::sync::RwLock;
-
-use poise::serenity_prelude::{
-    self as serenity, Cache, CreateAttachment, CreateMessage, GuildId, Http, UserId,
-};
+use poise::serenity_prelude::{CreateMessage, Http};
 
 use crate::discord::formatting;
 use crate::game::engine::KillResult;
+use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::tick::QuestResolved;
 
 pub const DM_CHAR_LIMIT: usize = 2000;
 
-/// Users last seen on a mobile client this session (survives going offline).
-pub type LastMobileUsers = RwLock<HashSet<UserId>>;
+fn pack_dm_segments(segments: &[String], limit: usize) -> Vec<String> {
+    let mut messages: Vec<String> = Vec::new();
+    let mut current = String::new();
 
-fn has_active_mobile(cs: &serenity::ClientStatus) -> bool {
-    cs.mobile.is_some()
+    for segment in segments.iter() {
+        if segment.is_empty() {
+            continue;
+        }
+        if current.is_empty() {
+            if segment.len() <= limit {
+                current = segment.clone();
+            } else {
+                messages.push(segment.clone());
+            }
+            continue;
+        }
+
+        let combined = format!("{current}{segment}");
+        if combined.len() <= limit {
+            current = combined;
+        } else {
+            messages.push(current);
+            if segment.len() <= limit {
+                current = segment.clone();
+            } else {
+                messages.push(segment.clone());
+                current = String::new();
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        messages.push(current);
+    }
+
+    messages
 }
 
-fn has_active_desktop_or_web(cs: &serenity::ClientStatus) -> bool {
-    cs.desktop.is_some() || cs.web.is_some()
+async fn open_dm_channel(http: &Http, discord_user_id: u64) -> Option<poise::serenity_prelude::ChannelId> {
+    let dm_map = serde_json::json!({ "recipient_id": discord_user_id.to_string() });
+    match http.create_private_channel(&dm_map).await {
+        Ok(dm) => Some(dm.id),
+        Err(e) => {
+            tracing::warn!(
+                discord_user_id,
+                err = %e,
+                "failed to open DM channel"
+            );
+            None
+        }
+    }
 }
 
 /// DM a finished job report; logs warnings and never fails the tick.
 pub async fn send_job_completion_dm(
     http: &Http,
-    cache: &Cache,
-    guild_id: GuildId,
-    last_mobile: Option<&LastMobileUsers>,
+    registry: &ItemRegistry,
     qr: &QuestResolved,
 ) {
     let content = formatting::build_dm_completion_content(
         &qr.player_name,
         &qr.result,
         &qr.player,
+        registry,
         &qr.level_up,
         qr.reward,
         qr.item_awarded.as_ref(),
         qr.item_award_disposition,
         qr.hospitalized,
     );
-    let dm_plain = content.plain();
+    let plain_len = content.plain().len();
 
-    let user_id = UserId::new(qr.discord_user_id);
-    let (mobile_from_cache, on_desktop_or_web) = cache
-        .guild(guild_id)
-        .map(|guild| {
-            let cs = guild
-                .presences
-                .get(&user_id)
-                .and_then(|p| p.client_status.as_ref());
-            (
-                cs.is_some_and(has_active_mobile),
-                cs.is_some_and(has_active_desktop_or_web),
-            )
-        })
-        .unwrap_or((false, false));
-    // Sticky only when presence does not show an active desktop/web session (e.g. offline).
-    let mobile_sticky = !on_desktop_or_web
-        && last_mobile
-            .and_then(|set| set.read().ok())
-            .is_some_and(|set| set.contains(&user_id));
-    let mobile = mobile_from_cache || mobile_sticky;
-    let client = if mobile { "mobile" } else { "desktop" };
-
-    let dm_map = serde_json::json!({ "recipient_id": qr.discord_user_id.to_string() });
-    let dm_channel = match http.create_private_channel(&dm_map).await {
-        Ok(dm) => dm.id,
-        Err(e) => {
-            tracing::warn!(
-                discord_user_id = qr.discord_user_id,
-                err = %e,
-                "failed to open DM channel"
-            );
-            return;
-        }
+    let Some(dm_channel) = open_dm_channel(http, qr.discord_user_id).await else {
+        return;
     };
 
-    let delivery = if dm_plain.len() <= DM_CHAR_LIMIT {
-        "components_v2"
-    } else if mobile {
-        "segmented"
-    } else {
-        "attachment"
-    };
     tracing::info!(
         discord_user_id = qr.discord_user_id,
         player = %qr.player_name,
-        client,
-        delivery,
-        plain_len = dm_plain.len(),
-        mobile_from_cache,
-        mobile_sticky,
+        segmented = plain_len > DM_CHAR_LIMIT,
+        plain_len,
         "sending job completion DM"
     );
 
-    if dm_plain.len() <= DM_CHAR_LIMIT {
+    if plain_len <= DM_CHAR_LIMIT {
         let dm_report = formatting::build_dm_completion_components(&content);
         if let Err(e) = http.send_message(dm_channel, vec![], &dm_report).await {
             tracing::warn!(
@@ -107,90 +103,40 @@ pub async fn send_job_completion_dm(
         return;
     }
 
-    if mobile {
-        for part in formatting::build_dm_mobile_plain_parts(&content, DM_CHAR_LIMIT) {
-            if let Err(e) = http
-                .send_message(dm_channel, vec![], &CreateMessage::new().content(&part))
-                .await
-            {
-                tracing::warn!(
-                    discord_user_id = qr.discord_user_id,
-                    err = %e,
-                    "failed to DM quest report segment"
-                );
-                return;
-            }
-        }
-        let outcome = formatting::build_dm_summary_components(&content);
-        if let Err(e) = http.send_message(dm_channel, vec![], &outcome).await {
+    for part in pack_dm_segments(content.segments(), DM_CHAR_LIMIT) {
+        if let Err(e) = http
+            .send_message(dm_channel, vec![], &CreateMessage::new().content(&part))
+            .await
+        {
             tracing::warn!(
                 discord_user_id = qr.discord_user_id,
                 err = %e,
-                "failed to DM quest report outcome"
+                "failed to DM quest report segment"
             );
+            return;
         }
-    } else {
-        let attachment = CreateAttachment::bytes(dm_plain.into_bytes(), "job_report.txt");
-        let msg = CreateMessage::new().content(format!(
-            "{}'s attempt at {} was too epic for discords character limit",
-            qr.player_name, qr.quest_title
-        ));
-        if let Err(e) = http.send_message(dm_channel, vec![attachment], &msg).await {
-            tracing::warn!(
-                discord_user_id = qr.discord_user_id,
-                err = %e,
-                "failed to DM quest report"
-            );
-        }
+    }
+
+    let outcome = formatting::build_dm_summary_components(&content);
+    if let Err(e) = http.send_message(dm_channel, vec![], &outcome).await {
+        tracing::warn!(
+            discord_user_id = qr.discord_user_id,
+            err = %e,
+            "failed to DM quest report outcome"
+        );
     }
 }
 
 /// DM a death notice; logs warnings and never fails the caller.
-pub async fn send_death_dm(
-    http: &Http,
-    cache: &Cache,
-    guild_id: GuildId,
-    last_mobile: Option<&LastMobileUsers>,
-    kill: &KillResult,
-    summary: Option<&str>,
-) {
+pub async fn send_death_dm(http: &Http, kill: &KillResult, summary: Option<&str>) {
     let content = formatting::build_dm_death_content(kill, summary);
-    let dm_plain = content.plain();
+    let plain_len = content.plain().len();
 
-    let user_id = UserId::new(kill.discord_user_id);
-    let (mobile_from_cache, on_desktop_or_web) = cache
-        .guild(guild_id)
-        .map(|guild| {
-            let cs = guild
-                .presences
-                .get(&user_id)
-                .and_then(|p| p.client_status.as_ref());
-            (
-                cs.is_some_and(has_active_mobile),
-                cs.is_some_and(has_active_desktop_or_web),
-            )
-        })
-        .unwrap_or((false, false));
-    let mobile_sticky = !on_desktop_or_web
-        && last_mobile
-            .and_then(|set| set.read().ok())
-            .is_some_and(|set| set.contains(&user_id));
-    let mobile = mobile_from_cache || mobile_sticky;
-
-    let dm_map = serde_json::json!({ "recipient_id": kill.discord_user_id.to_string() });
-    let dm_channel = match http.create_private_channel(&dm_map).await {
-        Ok(dm) => dm.id,
-        Err(e) => {
-            tracing::warn!(
-                discord_user_id = kill.discord_user_id,
-                err = %e,
-                "failed to open DM channel for death notice"
-            );
-            return;
-        }
+    let Some(dm_channel) = open_dm_channel(http, kill.discord_user_id).await else {
+        return;
     };
 
-    if dm_plain.len() <= DM_CHAR_LIMIT {
+    if plain_len <= DM_CHAR_LIMIT {
         let dm_report = formatting::build_dm_death_components(&content);
         if let Err(e) = http.send_message(dm_channel, vec![], &dm_report).await {
             tracing::warn!(
@@ -202,46 +148,17 @@ pub async fn send_death_dm(
         return;
     }
 
-    if mobile {
-        for part in formatting::pack_dm_segments(&[content.body.clone()], DM_CHAR_LIMIT) {
-            if let Err(e) = http
-                .send_message(dm_channel, vec![], &CreateMessage::new().content(&part))
-                .await
-            {
-                tracing::warn!(
-                    discord_user_id = kill.discord_user_id,
-                    err = %e,
-                    "failed to DM death notice segment"
-                );
-                return;
-            }
-        }
-    } else {
-        let attachment = CreateAttachment::bytes(dm_plain.into_bytes(), "death_notice.txt");
-        let msg = CreateMessage::new().content(format!(
-            "{} has passed on.",
-            kill.chud_name
-        ));
-        if let Err(e) = http.send_message(dm_channel, vec![attachment], &msg).await {
+    for part in pack_dm_segments(&[content.body.clone()], DM_CHAR_LIMIT) {
+        if let Err(e) = http
+            .send_message(dm_channel, vec![], &CreateMessage::new().content(&part))
+            .await
+        {
             tracing::warn!(
                 discord_user_id = kill.discord_user_id,
                 err = %e,
-                "failed to DM death notice"
+                "failed to DM death notice segment"
             );
+            return;
         }
-    }
-}
-
-pub fn record_mobile_presence(last_mobile: &LastMobileUsers, presence: &serenity::Presence) {
-    let Some(cs) = presence.client_status.as_ref() else {
-        return;
-    };
-    let Ok(mut set) = last_mobile.write() else {
-        return;
-    };
-    if has_active_mobile(cs) {
-        set.insert(presence.user.id);
-    } else if has_active_desktop_or_web(cs) {
-        set.remove(&presence.user.id);
     }
 }

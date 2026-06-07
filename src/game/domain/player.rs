@@ -116,20 +116,6 @@ impl Player {
         self.chud.as_mut().expect("player has no chud")
     }
 
-    pub fn format_stats(&self) -> String {
-        let chud = self.chud_ref();
-        format!(
-            "{} -- *Strength {}, Smarts {}, Stealth {}, Experience {}*\n{} job completed, {} failed",
-            chud.name,
-            chud.strength,
-            chud.smarts,
-            chud.stealth,
-            chud.experience,
-            chud.total_job_successes,
-            chud.total_job_failures
-        )
-    }
-
     pub fn format_job_record(&self) -> String {
         let chud = self.chud_ref();
         format!(
@@ -155,17 +141,21 @@ impl Player {
         out
     }
 
-    /// Discord stats line with strikethrough on raw values when equipment modifies them.
-    pub fn format_effective_stats_line(&self, effective: (u8, u8, u8)) -> String {
+    /// Equipment-adjusted stat values; strikethrough on raw values when gear modifies them.
+    pub fn format_effective_stats(&self, effective: (u8, u8, u8)) -> String {
         let chud = self.chud_ref();
         let (eff_str, eff_smt, eff_sth) = effective;
         format!(
-            "Stats: {}, {}, {}, Experience {}",
+            "{}, {}, {}, Experience {}",
             format_stat_value("Strength", chud.strength, eff_str),
             format_stat_value("Smarts", chud.smarts, eff_smt),
             format_stat_value("Stealth", chud.stealth, eff_sth),
             chud.experience,
         )
+    }
+
+    pub fn format_effective_stats_line(&self, effective: (u8, u8, u8)) -> String {
+        format!("Stats: {}", self.format_effective_stats(effective))
     }
 
     pub fn record_quest(&mut self, result: &QuestResult) -> LevelUp {

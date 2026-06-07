@@ -1,7 +1,6 @@
-use std::sync::{atomic::AtomicUsize, Arc, RwLock};
-use std::collections::HashSet;
+use std::sync::{atomic::AtomicUsize, Arc};
 
-use poise::serenity_prelude::{self as serenity, UserId};
+use poise::serenity_prelude::{self as serenity};
 
 use crate::discord::channel::ActivityLogSync;
 use crate::discord::simulation::SimulationController;
@@ -30,7 +29,6 @@ pub struct GameRuntime {
     pub gravestone_generator: Arc<GravestoneGenerator>,
     pub activity_log: Arc<ActivityLogSync>,
     pub pending_quests: Arc<AtomicUsize>,
-    pub last_mobile: Arc<RwLock<HashSet<UserId>>>,
     pub session: Arc<tokio::sync::Mutex<GameSession>>,
     pub generation_queue: tokio::sync::mpsc::UnboundedSender<GenerationJob>,
     /// Signals the completion supervisor to transition the game into the Complete phase.

@@ -8,6 +8,8 @@ use crate::game::domain::item::{Item, ItemType};
 use crate::game::domain::player::Player;
 use crate::game::domain::quest_result::{CompletedTrial, QuestResult};
 use crate::game::engine::KillResult;
+use crate::game::mechanics::simulation::effective_stats;
+use crate::game::persistence::item_registry::ItemRegistry;
 
 /// Collapse whitespace so Discord `*italic*` markers stay on one line.
 fn markdown_italic_line(text: &str) -> String {
@@ -19,7 +21,7 @@ const ACCENT_PASSED: u32 = 0x57F287;
 const ACCENT_FAILED: u32 = 0xED4245;
 const ACCENT_DEATH: u32 = 0x2F3136;
 
-/// Preamble, outcome, and ordered mobile segments — built once for every DM delivery path.
+/// Preamble, outcome, and ordered text segments for long DM delivery.
 pub struct DmCompletionContent {
     pub preamble: String,
     pub summary: String,
@@ -31,19 +33,24 @@ impl DmCompletionContent {
     pub fn plain(&self) -> String {
         format!("{}\n\n{}", self.preamble, self.summary)
     }
+
+    pub fn segments(&self) -> &[String] {
+        &self.segments
+    }
 }
 
 pub fn build_dm_completion_content(
     player_name: &str,
     result: &QuestResult,
     player: &Player,
+    registry: &ItemRegistry,
     level_up: &crate::game::domain::player::LevelUp,
     reward: u32,
     item_awarded: Option<&Item>,
     item_award_disposition: Option<crate::game::engine::ItemAwardDisposition>,
     hospitalized: bool,
 ) -> DmCompletionContent {
-    let segments = build_dm_preamble_segments(player_name, result, player);
+    let segments = build_dm_preamble_segments(player_name, result, player, registry);
     let preamble = segments.join("");
     let outcome = if result.passed { "PASSED" } else { "FAILED" };
     let footer = format_completion_footer(
@@ -93,11 +100,6 @@ pub fn build_dm_summary_components(content: &DmCompletionContent) -> ComponentsV
     )])
 }
 
-/// Header → quest → trials as plain text chunks, packed under `limit` (outcome sent separately).
-pub fn build_dm_mobile_plain_parts(content: &DmCompletionContent, limit: usize) -> Vec<String> {
-    pack_dm_segments(&content.segments, limit)
-}
-
 /// Header, summary, rewards, and optional hospital note — one multiline block inside the container.
 fn format_completion_outcome_box(
     outcome: &str,
@@ -115,8 +117,13 @@ fn format_completion_outcome_box(
     sections.join("\n\n")
 }
 
-fn format_dm_header(player: &Player) -> String {
-    format!("{}\n\n", player.format_stats())
+fn format_dm_header(player: &Player, registry: &ItemRegistry) -> String {
+    let effective = effective_stats(player, registry);
+    format!(
+        "{} -- *{}*\n\n",
+        player.chud_ref().name,
+        player.format_effective_stats(effective),
+    )
 }
 
 fn format_dm_quest(result: &QuestResult) -> String {
@@ -147,50 +154,13 @@ fn build_dm_preamble_segments(
     player_name: &str,
     result: &QuestResult,
     player: &Player,
+    registry: &ItemRegistry,
 ) -> Vec<String> {
-    let mut segments = vec![format_dm_header(player), format_dm_quest(result)];
+    let mut segments = vec![format_dm_header(player, registry), format_dm_quest(result)];
     for (i, trial) in result.trials.iter().enumerate() {
         segments.push(format_dm_trial(player_name, trial, i));
     }
     segments
-}
-
-pub fn pack_dm_segments(segments: &[String], limit: usize) -> Vec<String> {
-    let mut messages: Vec<String> = Vec::new();
-    let mut current = String::new();
-
-    for segment in segments.iter() {
-        if segment.is_empty() {
-            continue;
-        }
-        if current.is_empty() {
-            if segment.len() <= limit {
-                current = segment.clone();
-            } else {
-                messages.push(segment.clone());
-            }
-            continue;
-        }
-
-        let combined = format!("{current}{segment}");
-        if combined.len() <= limit {
-            current = combined;
-        } else {
-            messages.push(current);
-            if segment.len() <= limit {
-                current = segment.clone();
-            } else {
-                messages.push(segment.clone());
-                current = String::new();
-            }
-        }
-    }
-
-    if !current.is_empty() {
-        messages.push(current);
-    }
-
-    messages
 }
 
 fn format_completion_footer(

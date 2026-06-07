@@ -1,4 +1,4 @@
-use poise::serenity_prelude::{self as serenity, CreateMessage};
+use poise::serenity_prelude::CreateMessage;
 
 use crate::chud_msg;
 use crate::discord::channel::{append_activity_log_deferred, sync_activity_log_now};
@@ -25,9 +25,6 @@ pub async fn render_tick_outcome(
     registry: &mut ItemRegistry,
 ) -> anyhow::Result<()> {
     let http = &runtime.http;
-    let cache = &runtime.cache;
-    let guild_id = runtime.guild_id;
-    let last_mobile = Some(runtime.last_mobile.as_ref());
     let activity_log = &runtime.activity_log;
     let channel_id = runtime.channel_id;
     let max_jobs = runtime.max_jobs;
@@ -97,27 +94,12 @@ pub async fn render_tick_outcome(
                     &runtime.gravestone_generator,
                 )
                 .await?;
-                report_dm::send_death_dm(
-                    http,
-                    cache,
-                    serenity::GuildId::new(guild_id),
-                    last_mobile,
-                    &kill,
-                    Some(&qr.summary),
-                )
-                .await;
+                report_dm::send_death_dm(http, &kill, Some(&qr.summary)).await;
                 continue;
             }
         }
 
-        report_dm::send_job_completion_dm(
-            http,
-            cache,
-            serenity::GuildId::new(guild_id),
-            last_mobile,
-            qr,
-        )
-        .await;
+        report_dm::send_job_completion_dm(http, registry, qr).await;
     }
 
     for sr in &outcome.scout_results {

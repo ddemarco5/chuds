@@ -1,8 +1,4 @@
-use std::{
-    collections::HashSet,
-    sync::{Arc, RwLock},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use chuds::discord::{
     self, game_screens, handle_gear_button, handle_heal_button, handle_merchant_shop_button,
@@ -136,7 +132,6 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(tick_time_s, "chuds bot starting");
 
-    let last_mobile = Arc::new(RwLock::new(HashSet::new()));
     let (complete_tx, complete_rx) = tokio::sync::mpsc::unbounded_channel::<GameCompletion>();
     let setup_complete_tx = complete_tx.clone();
 
@@ -182,14 +177,6 @@ async fn main() -> anyhow::Result<()> {
             ],
             event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
-                    if let serenity::FullEvent::PresenceUpdate { new_data } = &event {
-                        if new_data.guild_id == Some(serenity::GuildId::new(data.runtime.guild_id)) {
-                            discord::report_dm::record_mobile_presence(
-                                &data.runtime.last_mobile,
-                                new_data,
-                            );
-                        }
-                    }
                     if let serenity::FullEvent::InteractionCreate { interaction } = event {
                         if let serenity::Interaction::Component(component) = interaction {
                             let id = &component.data.custom_id;
@@ -262,7 +249,6 @@ async fn main() -> anyhow::Result<()> {
                     gravestone_generator,
                     activity_log,
                     pending_quests,
-                    last_mobile,
                     session,
                     generation_queue: generation_tx,
                     complete_tx: setup_complete_tx,

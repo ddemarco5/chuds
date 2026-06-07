@@ -440,15 +440,7 @@ pub async fn admin_kill_chud(
     )
     .await;
 
-    report_dm::send_death_dm(
-        &ctx.serenity_context().http,
-        &ctx.serenity_context().cache,
-        poise::serenity_prelude::GuildId::new(ctx.data().runtime.guild_id),
-        Some(ctx.data().runtime.last_mobile.as_ref()),
-        &kill,
-        None,
-    )
-    .await;
+    report_dm::send_death_dm(&ctx.serenity_context().http, &kill, None).await;
 
     let mut board = ctx.data().runtime.board.lock().await;
     crate::discord::guild_hall::refresh_board_status(
