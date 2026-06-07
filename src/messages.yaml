@@ -317,6 +317,15 @@ attract_chudlist:
   - "Current chuds:"
   - "Victors-in-waiting:"
 
+merchant_visiting:
+  - "**{}** has set up shop."
+  - "**{}** unpacked a cart of goods."
+  - "**{}** is hawking wares from a stall."
+  - "**{}** rolled in and opened for busines."
+  - "**{}** has laid out their stock in the  corner."
+  - "**{}** is doing business out of the again."
+  - "**{}** is hoping to make a quick buck."
+
 merchant_names:
   - "Old Toothless Pete"
   - "Maggie the Miser"

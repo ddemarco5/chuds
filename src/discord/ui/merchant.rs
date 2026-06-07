@@ -22,9 +22,9 @@ fn build_merchant_channel_message(merchant: &MerchantState) -> ComponentsV2Messa
             "\u{200B}\n\u{200B}",
         ))]),
         Some(visit) => {
-            let mut inner = vec![ContainerChild::Text(TextDisplay::new(format!(
-                "**{}** is visiting the guild hall.",
-                visit.merchant_name
+            let mut inner = vec![ContainerChild::Text(TextDisplay::new(chud_msg!(
+                "merchant_visiting",
+                &visit.merchant_name
             )))];
             inner.push(ContainerChild::ActionRow(ActionRow::one_button(
                 Button::primary("merchant:shop", "Shop"),
