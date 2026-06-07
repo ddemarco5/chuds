@@ -21,3 +21,15 @@ pub fn is_player_busy(
         .ok()
         .and_then(|s| s.busy_reason(discord_user_id))
 }
+
+/// Returns why the chud's loadout is locked (active job or scouting). Hospitalized chuds may still change gear.
+pub fn is_equipment_locked(
+    board: &Board,
+    hospital: &Hospital,
+    discord_user_id: u64,
+) -> Option<BusyReason> {
+    match is_player_busy(board, hospital, discord_user_id)? {
+        BusyReason::Hospitalized => None,
+        reason => Some(reason),
+    }
+}

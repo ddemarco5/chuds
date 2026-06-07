@@ -500,7 +500,7 @@ pub fn equip_from_stash(
     item_id: u32,
     registry: &ItemRegistry,
 ) -> anyhow::Result<()> {
-    if crate::game::busy::is_player_busy(board, hospital, player.discord_user_id).is_some() {
+    if crate::game::busy::is_equipment_locked(board, hospital, player.discord_user_id).is_some() {
         anyhow::bail!("equipment locked");
     }
     if !player.stash.contains(item_id) {
@@ -525,7 +525,7 @@ pub fn unequip_slot(
     player: &mut Player,
     slot: EquipmentSlot,
 ) -> anyhow::Result<()> {
-    if crate::game::busy::is_player_busy(board, hospital, player.discord_user_id).is_some() {
+    if crate::game::busy::is_equipment_locked(board, hospital, player.discord_user_id).is_some() {
         anyhow::bail!("equipment locked");
     }
     let item_id = player
@@ -585,7 +585,7 @@ pub fn sell_item(
         anyhow::bail!("item not owned");
     }
     if is_item_equipped(player, item_id)
-        && crate::game::busy::is_player_busy(board, hospital, player.discord_user_id).is_some()
+        && crate::game::busy::is_equipment_locked(board, hospital, player.discord_user_id).is_some()
     {
         anyhow::bail!("equipment locked");
     }

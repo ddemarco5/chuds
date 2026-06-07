@@ -28,10 +28,13 @@ pub enum GearInteractionMode {
     ReadOnly,
 }
 
-pub fn derive_gear_mode(read_only: bool, busy_reason: Option<BusyReason>) -> GearInteractionMode {
+pub fn derive_gear_mode(
+    read_only: bool,
+    equipment_lock_reason: Option<BusyReason>,
+) -> GearInteractionMode {
     if read_only {
         GearInteractionMode::ReadOnly
-    } else if busy_reason.is_some() {
+    } else if equipment_lock_reason.is_some() {
         GearInteractionMode::EquipmentLocked
     } else {
         GearInteractionMode::Full
@@ -43,19 +46,19 @@ pub fn gear_equipment_locked_notice(reason: BusyReason, player: &Player) -> Stri
     let status = match reason {
         BusyReason::ActiveQuest { quest_title } => format!("on the job \"{quest_title}\""),
         BusyReason::Scouting => "out scouting".into(),
-        BusyReason::Hospitalized => "in the hospital".into(),
+        BusyReason::Hospitalized => unreachable!("hospitalized chuds are not equipment-locked"),
     };
     chud_msg!("gear_equipment_locked", name, status)
 }
 
 fn gear_persistent_notice(
     read_only: bool,
-    busy_reason: Option<BusyReason>,
+    equipment_lock_reason: Option<BusyReason>,
     player: &Player,
 ) -> Option<String> {
     if read_only {
         Some("The game is over — your loadout is locked.".into())
-    } else if let Some(reason) = busy_reason {
+    } else if let Some(reason) = equipment_lock_reason {
         Some(gear_equipment_locked_notice(reason, player))
     } else {
         None
@@ -70,9 +73,10 @@ pub async fn build_gear_open_message(
     let hospital = storage::load_hospital()?;
     let read_only = data.runtime.session.lock().await.phase == GamePhase::Complete;
     let board = data.runtime.board.lock().await;
-    let busy_reason = busy::is_player_busy(&*board, &hospital, player.discord_user_id);
-    let mode = derive_gear_mode(read_only, busy_reason.clone());
-    let notice = gear_persistent_notice(read_only, busy_reason, player);
+    let equipment_lock_reason =
+        busy::is_equipment_locked(&*board, &hospital, player.discord_user_id);
+    let mode = derive_gear_mode(read_only, equipment_lock_reason.clone());
+    let notice = gear_persistent_notice(read_only, equipment_lock_reason, player);
     let registry = data.runtime.item_registry.lock().await;
     Ok(build_gear_message(
         player,
@@ -216,12 +220,12 @@ fn apply_gear_action(
     mode: GearInteractionMode,
     board: &Board,
     hospital: &Hospital,
-    busy_reason: Option<BusyReason>,
+    equipment_lock_reason: Option<BusyReason>,
 ) -> (Option<String>, Option<u32>, Option<String>) {
     if let Some(suffix) = custom_id.strip_prefix("g_unequip:") {
         if mode == GearInteractionMode::EquipmentLocked {
             return (
-                busy_reason
+                equipment_lock_reason
                     .clone()
                     .map(|reason| equipment_locked_action_notice(reason, player)),
                 None,
@@ -241,7 +245,7 @@ fn apply_gear_action(
             .unwrap_or_else(|| "item".into());
         let notice = match engine::unequip_slot(board, hospital, player, slot) {
             Ok(()) => Some(format!("Unequipped {item_name}.")),
-            Err(e) if e.to_string().contains("equipment locked") => busy_reason
+            Err(e) if e.to_string().contains("equipment locked") => equipment_lock_reason
                 .clone()
                 .map(|reason| equipment_locked_action_notice(reason, player)),
             Err(e) if e.to_string().contains("stash is full") => {
@@ -261,7 +265,7 @@ fn apply_gear_action(
     if let Some(id_str) = custom_id.strip_prefix("g_equip:") {
         if mode == GearInteractionMode::EquipmentLocked {
             return (
-                busy_reason
+                equipment_lock_reason
                     .clone()
                     .map(|reason| equipment_locked_action_notice(reason, player)),
                 None,
@@ -278,7 +282,7 @@ fn apply_gear_action(
             .unwrap_or_else(|| "item".into());
         let notice = match engine::equip_from_stash(board, hospital, player, item_id, registry) {
             Ok(()) => Some(format!("Equipped {item_name}.")),
-            Err(e) if e.to_string().contains("equipment locked") => busy_reason
+            Err(e) if e.to_string().contains("equipment locked") => equipment_lock_reason
                 .clone()
                 .map(|reason| equipment_locked_action_notice(reason, player)),
             Err(e) if e.to_string().contains("not in stash") => {
@@ -314,7 +318,7 @@ fn apply_gear_action(
         }
         if mode == GearInteractionMode::EquipmentLocked && engine::is_item_equipped(player, item_id) {
             return (
-                busy_reason
+                equipment_lock_reason
                     .clone()
                     .map(|reason| equipment_locked_action_notice(reason, player)),
                 None,
@@ -331,7 +335,7 @@ fn apply_gear_action(
         };
         if mode == GearInteractionMode::EquipmentLocked && engine::is_item_equipped(player, item_id) {
             return (
-                busy_reason
+                equipment_lock_reason
                     .clone()
                     .map(|reason| equipment_locked_action_notice(reason, player)),
                 None,
@@ -355,7 +359,7 @@ fn apply_gear_action(
                 Some(chud_msg!("chud_sells_item", first_name, item_name)),
             ),
             Err(e) if e.to_string().contains("equipment locked") => (
-                busy_reason
+                equipment_lock_reason
                     .clone()
                     .map(|reason| equipment_locked_action_notice(reason, player)),
                 None,
@@ -389,10 +393,11 @@ async fn prepare_gear_update(
     let board = data.runtime.board.lock().await;
     let mut registry = data.runtime.item_registry.lock().await;
 
-    let busy_reason = busy::is_player_busy(&*board, &hospital, player.discord_user_id);
-    let mode = derive_gear_mode(read_only, busy_reason.clone());
+    let equipment_lock_reason =
+        busy::is_equipment_locked(&*board, &hospital, player.discord_user_id);
+    let mode = derive_gear_mode(read_only, equipment_lock_reason.clone());
 
-    let persistent_notice = gear_persistent_notice(read_only, busy_reason.clone(), player);
+    let persistent_notice = gear_persistent_notice(read_only, equipment_lock_reason.clone(), player);
 
     let (action_notice, sell_confirm, activity_log) = if read_only {
         (None, None, None)
@@ -404,7 +409,7 @@ async fn prepare_gear_update(
             mode,
             &*board,
             &hospital,
-            busy_reason,
+            equipment_lock_reason,
         )
     };
 
