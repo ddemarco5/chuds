@@ -356,7 +356,7 @@ fn apply_gear_action(
         {
             Ok(gold) => (
                 Some(format!("Sold {item_name} for ${gold}.")),
-                Some(chud_msg!("chud_sells_item", first_name, item_name)),
+                Some(chud_msg!("chud_sells_item", first_name, item_name, gold)),
             ),
             Err(e) if e.to_string().contains("equipment locked") => (
                 equipment_lock_reason

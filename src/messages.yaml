@@ -24,16 +24,16 @@ chud_scouts_out:
 chud_buys_item:
   - "**{}** bought **{}** for ${}."
   - "**{}** snagged **{}** off the merchant for ${}."
-  - "**{}** handed over ${} for **{}**."
-  - "**{}** traded ${} for **{}** like it was a steal."
+  - "**{}** handed over **{}** for ${}."
+  - "**{}** traded **{}** for ${} like it was a steal."
   - "**{}** walked away with **{}** lighter by ${}."
 
 chud_sells_item:
-  - "**{}** sold **{}**."
-  - "**{}** pawned **{}**."
-  - "**{}** dumped **{}**."
-  - "**{}** traded **{}** in."
-  - "**{}** cashed out **{}**."
+  - "**{}** sold **{}** for ${}."
+  - "**{}** pawned **{}** for ${}."
+  - "**{}** dumped **{}** for ${}."
+  - "**{}** traded **{}** in for ${}."
+  - "**{}** cashed out **{}** for ${}."
 
 chud_takes_job:
   - "**{}** ripped **{}** off the board"
