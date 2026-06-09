@@ -100,6 +100,11 @@ pub fn build_dm_summary_components(content: &DmCompletionContent) -> ComponentsV
     )])
 }
 
+/// Single-notice DM — same accent container as the job pass/fail summary.
+pub fn build_dm_notice_components(message: &str, passed: bool) -> ComponentsV2Message {
+    ComponentsV2Message::channel(vec![summary_container(message, passed)])
+}
+
 /// Header, summary, rewards, and optional hospital note — one multiline block inside the container.
 fn format_completion_outcome_box(
     outcome: &str,

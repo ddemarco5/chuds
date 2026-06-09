@@ -45,8 +45,8 @@ impl Hospital {
         Some(crate::chud_msg!("chud_hospital_release", entry.chud_name))
     }
 
-    /// Process one tick: decrement all entries, return messages for those released.
-    pub fn tick(&mut self) -> Vec<String> {
+    /// Process one tick: decrement all entries, return releases for those recovered.
+    pub fn tick(&mut self) -> Vec<(u64, String)> {
         for entry in &mut self.entries {
             entry.ticks_remaining = entry.ticks_remaining.saturating_sub(1);
         }
@@ -60,7 +60,7 @@ impl Hospital {
 
         to_release
             .into_iter()
-            .filter_map(|id| self.release(id))
+            .filter_map(|id| self.release(id).map(|message| (id, message)))
             .collect()
     }
 

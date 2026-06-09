@@ -29,8 +29,9 @@ pub async fn render_tick_outcome(
     let channel_id = runtime.channel_id;
     let max_jobs = runtime.max_jobs;
 
-    for msg in &outcome.hospital_releases {
-        append_activity_log_deferred(activity_log, ActivityLogKind::Standard, msg).await;
+    for (discord_user_id, message) in &outcome.hospital_releases {
+        append_activity_log_deferred(activity_log, ActivityLogKind::Standard, message).await;
+        report_dm::send_hospital_release_dm(http, *discord_user_id, message).await;
     }
 
     for qr in &outcome.quest_resolved {

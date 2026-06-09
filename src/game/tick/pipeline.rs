@@ -60,7 +60,7 @@ pub struct TickContext<'a> {
 
 #[derive(Default)]
 pub struct TickOutcome {
-    pub hospital_releases: Vec<String>,
+    pub hospital_releases: Vec<(u64, String)>,
     pub scout_results: Vec<ScoutResult>,
     pub quest_resolved: Vec<QuestResolved>,
     pub slots_filled: usize,

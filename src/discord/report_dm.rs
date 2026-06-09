@@ -60,6 +60,22 @@ async fn open_dm_channel(http: &Http, discord_user_id: u64) -> Option<poise::ser
     }
 }
 
+/// DM a hospital release notice; logs warnings and never fails the caller.
+pub async fn send_hospital_release_dm(http: &Http, discord_user_id: u64, message: &str) {
+    let Some(dm_channel) = open_dm_channel(http, discord_user_id).await else {
+        return;
+    };
+
+    let dm = formatting::build_dm_notice_components(message, true);
+    if let Err(e) = http.send_message(dm_channel, vec![], &dm).await {
+        tracing::warn!(
+            discord_user_id,
+            err = %e,
+            "failed to DM hospital release"
+        );
+    }
+}
+
 /// DM a finished job report; logs warnings and never fails the tick.
 pub async fn send_job_completion_dm(
     http: &Http,
