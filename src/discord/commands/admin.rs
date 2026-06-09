@@ -212,7 +212,10 @@ pub async fn admin_reset(ctx: Context<'_>) -> Result<(), Error> {
     *rt.merchant.lock().await = MerchantState::default();
     *rt.item_registry.lock().await = ItemRegistry::default();
     rt.pending_quests.store(0, Ordering::SeqCst);
-    *rt.session.lock().await = GameSession::default();
+    let default_session = GameSession::default();
+    *rt.session.lock().await = default_session.clone();
+    // Persist after in-memory reset so a finishing tick cannot leave stale session.yaml values.
+    storage::save_session(&default_session)?;
 
     game_screens::post_attract_screen(rt).await?;
     ctx.say("ok, reset to a fresh game (attract)").await?;
