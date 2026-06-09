@@ -281,10 +281,10 @@ inspect_busy_scouting:
   - "**{}** is off scouting a job right now."
   - "No sign of **{}**; they're out checking a gig."
 
-inspect_busy_hospital:
-  - "**{}** isn't here — they're in the hospital all messed up."
-  - "**{}** is laid up in the infirmary."
-  - "You won't find **{}**; they're in the hospital getting patched up."
+inspect_hospital_prefix:
+  - "This chud is unconscious in the hospital."
+  - "This one's out cold in the infirmary."
+  - "They're laid up unconscious in the hospital."
 
 return_died:
   - "{} won't be coming back."
