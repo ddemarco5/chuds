@@ -88,7 +88,7 @@ pub fn format_stat_display(s: &str) -> String {
     }
 }
 
-/// Bare positive integer = roll floor; signed prefix = post-roll modifier.
+/// Bare positive integer = roll floor; signed prefix = effective-stat modifier (added to base before rolling).
 pub fn parse_stat_floor(s: &str) -> u8 {
     if is_neutral_stat(s) {
         return 0;
@@ -118,7 +118,7 @@ pub fn stat_contribution(s: &str) -> i16 {
     parse_stat_floor(s) as i16 + parse_stat_modifier(s)
 }
 
-/// Format a player roll for display: ↑/↓ with final when modified, ⌊⌋ when floor-only.
+/// Format a player roll for display: ↑/↓ when gear modified effective stat, ⌊⌋ when floor-only.
 pub fn format_roll_breakdown(modifier: i16, floor_applied: bool, final_roll: u8) -> String {
     if modifier > 0 {
         format!("\u{2191}{final_roll}")

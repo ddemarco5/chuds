@@ -139,11 +139,9 @@ pub fn try_quest(
         let effective = effective_stat(player, registry, stat_used);
         let required = stat_used.trial_required(stats);
         let (floor, modifier) = roll_aids(player, registry, stat_used);
-        let base = stat_used.player_stat(player);
-        let raw_roll = rng.gen_range(1..=base);
-        let after_modifier = (raw_roll as i16 + modifier).max(1) as u8;
-        let player_roll = after_modifier.max(floor);
-        let floor_applied = modifier == 0 && player_roll > after_modifier;
+        let raw_roll = rng.gen_range(1..=effective);
+        let player_roll = raw_roll.max(floor);
+        let floor_applied = player_roll > raw_roll;
         let trial_roll: u8 = rng.gen_range(1..=required);
         let passed = player_roll >= trial_roll;
 
