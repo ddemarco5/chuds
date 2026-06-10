@@ -37,7 +37,7 @@ pub fn create_jobs_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> an
         return Ok(());
     }
 
-    let mean_stat = engine::mean_chud_stat();
+    let mean_stat = engine::mean_chud_stat(ctx.item_registry).floor();
     let mut rng = rand::thread_rng();
     for _ in 0..to_generate {
         let difficulty = roll_auto_job_difficulty(mean_stat, &mut rng);

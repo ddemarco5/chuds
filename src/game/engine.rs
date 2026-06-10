@@ -280,9 +280,9 @@ pub fn enqueue_quest(
 /// Mean stat level assumed when no chuds exist yet (matches flat starting stats).
 pub const DEFAULT_MEAN_CHUD_STAT: f64 = 1.0;
 
-/// Average of every chud's strength/smarts/stealth across all saved players. Falls back to
-/// [`DEFAULT_MEAN_CHUD_STAT`] when there are no chuds yet.
-pub fn mean_chud_stat() -> f64 {
+/// Average of every chud's effective strength/smarts/stealth (base + item modifiers) across
+/// all saved players. Falls back to [`DEFAULT_MEAN_CHUD_STAT`] when there are no chuds yet.
+pub fn mean_chud_stat(registry: &ItemRegistry) -> f64 {
     let ids = match storage::list_player_ids() {
         Ok(ids) => ids,
         Err(e) => {
@@ -296,8 +296,9 @@ pub fn mean_chud_stat() -> f64 {
     for id in ids {
         match storage::load_player(id) {
             Ok(Some(player)) => {
-                if let Some(chud) = player.chud {
-                    total += chud.strength as u64 + chud.smarts as u64 + chud.stealth as u64;
+                if player.chud.is_some() {
+                    let (str, smt, sth) = effective_stats(&player, registry);
+                    total += str as u64 + smt as u64 + sth as u64;
                     count += 3;
                 }
             }
@@ -313,11 +314,23 @@ pub fn mean_chud_stat() -> f64 {
     }
 }
 
+/// Floored mean of effective chud stats; used as the center for auto job difficulty rolls.
+fn auto_job_difficulty_center(registry: &ItemRegistry) -> f64 {
+    mean_chud_stat(registry).floor()
+}
+
 /// Difficulty for a new job when the chudmaster leaves the field blank: a broad normal roll
-/// centered on the mean stat level of all chuds.
+/// centered on the floored mean effective stat level of all chuds.
 pub fn roll_job_difficulty() -> u8 {
+    let registry = match storage::load_item_registry() {
+        Ok(registry) => registry,
+        Err(e) => {
+            tracing::warn!(err = %e, "failed to load item registry for difficulty roll; using empty");
+            ItemRegistry::default()
+        }
+    };
     let mut rng = rand::thread_rng();
-    roll_auto_job_difficulty(mean_chud_stat(), &mut rng)
+    roll_auto_job_difficulty(auto_job_difficulty_center(&registry), &mut rng)
 }
 
 /// Build a [`GenerationJob::QuestCreation`] from a raw description and difficulty.
