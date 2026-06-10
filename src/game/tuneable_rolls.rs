@@ -225,7 +225,7 @@ pub fn roll_trials(difficulty: u8) -> Vec<TrialStats> {
 pub fn roll_auto_job_difficulty(mean_stat: f64, rng: &mut impl Rng) -> u8 {
     let normal = Normal::new(mean_stat, AUTO_JOB_DIFFICULTY_STDDEV)
         .expect("valid normal distribution");
-    let sample = normal.sample(rng).round();
+    let sample = normal.sample(rng).floor();
     sample.clamp(1.0, 10.0) as u8
 }
 
