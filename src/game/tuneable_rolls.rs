@@ -42,7 +42,7 @@ const ITEM_DROP_PER_TRIAL: f64 = 0.04;
 /// Base item drop chance at difficulty 1, before the per-trial bonus is added.
 /// Raise to increase drops on easy jobs; lower to tighten loot across the board.
 /// Harder jobs scale down linearly to 0% base at ITEM_DROP_BASE_DIFF_HIGH.
-const ITEM_DROP_BASE_AT_DIFF_1: f64 = 0.24;
+const ITEM_DROP_BASE_AT_DIFF_1: f64 = 0.30;
 /// Endpoints for linear base scaling: difficulty 1 uses full base, difficulty 9 uses zero base.
 /// Extending DIFF_HIGH lowers drops on mid-tier jobs; lowering DIFF_LOW shifts where the curve starts.
 const ITEM_DROP_BASE_DIFF_LOW: u8 = 1;
