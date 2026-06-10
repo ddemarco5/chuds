@@ -22,6 +22,16 @@ fn merchant_visit_identity(visit: &MerchantVisit) -> String {
     format!("{}:{}", visit.merchant_index, visit.merchant_name)
 }
 
+/// Shop title with merchant theme as Discord subtext (`-#`).
+fn format_shop_header(name: &str, theme: &str) -> String {
+    let theme_line = theme.split_whitespace().collect::<Vec<_>>().join(" ");
+    if theme_line.is_empty() {
+        format!("**{name}**")
+    } else {
+        format!("**{name}**\n-# {theme_line}")
+    }
+}
+
 /// Pick or reuse a random visiting announcement. A new line is chosen only when a visit
 /// starts or a different merchant replaces the current one.
 fn resolve_merchant_visit_text(
@@ -115,6 +125,7 @@ pub async fn update_merchant_message(
 
 pub fn build_shop_message(
     visit: &MerchantVisit,
+    merchant_theme: &str,
     registry: &ItemRegistry,
     player: &Player,
     selected_slot: usize,
@@ -122,6 +133,10 @@ pub fn build_shop_message(
 ) -> ComponentsV2Message {
     let mut components = Vec::new();
 
+    components.push(Component::Text(TextDisplay::new(format_shop_header(
+        &visit.merchant_name,
+        merchant_theme,
+    ))));
     components.push(Component::Text(TextDisplay::new(format!(
         "You have ${} on hand",
         player.cash
@@ -270,8 +285,16 @@ async fn prepare_shop_response(
         .cloned()
         .unwrap_or(visit);
 
+    let merchant_theme = merchant
+        .catalog
+        .as_ref()
+        .and_then(|c| c.merchants.get(visit.merchant_index))
+        .map(|m| m.theme.as_str())
+        .unwrap_or("");
+
     Ok(build_shop_message(
         &visit,
+        merchant_theme,
         &registry,
         &player,
         selected,

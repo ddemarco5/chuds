@@ -12,6 +12,7 @@ use crate::game::generation::merchant_generator::MerchantGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator};
 use crate::game::merchant::{roll_merchant_stock_seeds, MerchantCatalog, MerchantState};
 use crate::game::persistence::item_registry::ItemRegistry;
+use crate::game::persistence::merchants;
 use crate::game::persistence::storage;
 
 /// Side effect from processing a generation job that the Discord layer may need to react to.
@@ -177,7 +178,9 @@ fn commit_generation(
             Ok(vec![WorkerEffect::GenerateResultFailed { quest_id }])
         }
         GenerationOutcome::MerchantCatalogReady(catalog) => {
-            merchant.catalog = Some(catalog);
+            let merged =
+                merchants::merge_generated_catalog(merchant.catalog.as_ref(), catalog);
+            merchant.catalog = Some(merged);
             storage::save_item_registry(item_registry)?;
             storage::save_merchant_state(merchant)?;
             pending_merchant_catalog.fetch_sub(1, Ordering::SeqCst);

@@ -11,7 +11,7 @@ use crate::game::domain::quest_result::QuestResult;
 use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator, QuestResults, TrialResult};
-use crate::game::merchant::MerchantState;
+use crate::game::merchant::{catalog_needs_generated_roster, MerchantState};
 use crate::game::tuneable_rolls::{
     death_chance, injury_chance, item_drop_chance, roll_auto_job_difficulty,
     roll_failure_consequences, roll_item, roll_item_drop, roll_item_value, roll_trials,
@@ -157,13 +157,17 @@ pub fn ensure_story_generation(
     true
 }
 
-/// Enqueue merchant catalog generation when the roster is missing and none is in flight.
+/// Enqueue merchant catalog generation when the generated roster is missing and none is in flight.
 pub fn ensure_merchant_catalog_generation(
     merchant: &MerchantState,
     generation_queue: Option<&tokio::sync::mpsc::UnboundedSender<GenerationJob>>,
     pending: Option<&AtomicUsize>,
 ) -> bool {
-    if merchant.catalog.is_some() {
+    if merchant
+        .catalog
+        .as_ref()
+        .is_some_and(|c| !catalog_needs_generated_roster(c))
+    {
         return false;
     }
 
@@ -485,6 +489,7 @@ pub enum ItemAwardDisposition {
 /// Register a quest item: stash when there is room, else equip if the slot is empty, else sell.
 pub fn award_pending_item(
     registry: &mut ItemRegistry,
+    merchant: &mut MerchantState,
     player: &mut Player,
     item: crate::game::domain::item::Item,
 ) -> anyhow::Result<(crate::game::domain::item::Item, ItemAwardDisposition)> {
@@ -519,12 +524,9 @@ pub fn award_pending_item(
     }
 
     let gold = awarded.value;
-    registry
-        .remove(id)
-        .ok_or_else(|| anyhow::anyhow!("item {} missing from registry", id))?;
+    merchant.recycle_item(id)?;
     player.cash = player.cash.saturating_add(gold);
     storage::save_player(player)?;
-    storage::save_item_registry(registry)?;
     tracing::info!(
         player = %player.chud_ref().name,
         item = %awarded.name,
@@ -621,6 +623,11 @@ fn clear_equipped_item(player: &mut Player, item_id: u32) {
     }
 }
 
+fn transfer_item_from_player(player: &mut Player, item_id: u32) {
+    player.stash.remove(item_id);
+    clear_equipped_item(player, item_id);
+}
+
 /// Buy an item from the visiting merchant into the player's stash.
 pub fn buy_merchant_item(
     merchant: &mut crate::game::merchant::MerchantState,
@@ -631,12 +638,13 @@ pub fn buy_merchant_item(
     merchant.buy(slot, player, registry)
 }
 
-/// Sell an item the player owns: credit `cash`, remove from stash/equipment and registry.
+/// Sell an item the player owns: credit `cash`, remove from stash/equipment, recycle into Dumpster Dave.
 pub fn sell_item(
     board: &Board,
     hospital: &Hospital,
     player: &mut Player,
-    registry: &mut ItemRegistry,
+    registry: &ItemRegistry,
+    merchant: &mut MerchantState,
     item_id: u32,
 ) -> anyhow::Result<u32> {
     if !player_owns_item(player, item_id) {
@@ -654,14 +662,10 @@ pub fn sell_item(
     let gold = item.value;
 
     // TODO: vendor/transfer logic (market fees, soulbound checks, etc.) before payout/removal.
-    player.stash.remove(item_id);
-    clear_equipped_item(player, item_id);
-    registry
-        .remove(item_id)
-        .ok_or_else(|| anyhow::anyhow!("item {} missing from registry", item_id))?;
+    transfer_item_from_player(player, item_id);
+    merchant.recycle_item(item_id)?;
     player.cash = player.cash.saturating_add(gold);
     storage::save_player(player)?;
-    storage::save_item_registry(registry)?;
     Ok(gold)
 }
 
@@ -886,19 +890,22 @@ fn collect_owned_item_ids(player: &Player) -> Vec<u32> {
     ids
 }
 
-/// Sell all items on a chud and return the total value before halving.
-pub fn liquidate_chud_items(player: &mut Player, registry: &mut ItemRegistry) -> u32 {
+/// Liquidate all items on a chud, recycling them into Dumpster Dave; returns total value before halving.
+pub fn liquidate_chud_items(
+    player: &mut Player,
+    registry: &ItemRegistry,
+    merchant: &mut MerchantState,
+) -> anyhow::Result<u32> {
     let item_ids = collect_owned_item_ids(player);
     let mut total = 0u32;
     for item_id in item_ids {
         if let Some(item) = registry.get(item_id) {
             total = total.saturating_add(item.value);
         }
-        player.stash.remove(item_id);
-        clear_equipped_item(player, item_id);
-        registry.remove(item_id);
+        transfer_item_from_player(player, item_id);
+        merchant.recycle_item(item_id)?;
     }
-    total
+    Ok(total)
 }
 
 /// Kill a chud: liquidate items, award starting benefits, bury in graveyard, remove chud.
@@ -907,7 +914,8 @@ pub async fn kill_chud(
     ctx: &DeathContext,
     graveyard: &mut Graveyard,
     starting_benefits: &mut StartingBenefits,
-    registry: &mut ItemRegistry,
+    registry: &ItemRegistry,
+    merchant: &mut MerchantState,
     gravestone_generator: &GravestoneGenerator,
 ) -> anyhow::Result<KillResult> {
     let mut player = storage::load_player(discord_user_id)?
@@ -921,7 +929,7 @@ pub async fn kill_chud(
         .generate(&chud, &ctx.trial, &ctx.outcome)
         .await?;
 
-    let total = liquidate_chud_items(&mut player, registry);
+    let total = liquidate_chud_items(&mut player, registry, merchant)?;
     let benefits_awarded = total / 2;
     starting_benefits.add(discord_user_id, benefits_awarded);
 
@@ -937,7 +945,6 @@ pub async fn kill_chud(
     storage::save_player(&player)?;
     storage::save_graveyard(graveyard)?;
     storage::save_starting_benefits(starting_benefits)?;
-    storage::save_item_registry(registry)?;
 
     tracing::info!(
         discord_user_id,

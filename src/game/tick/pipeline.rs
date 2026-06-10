@@ -1,6 +1,7 @@
 use crate::game::domain::board::Board;
 use crate::game::domain::hospital::Hospital;
 use crate::game::domain::item::Item;
+use crate::game::merchant::MerchantState;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{LevelUp, Player};
@@ -43,6 +44,7 @@ pub struct TickContext<'a> {
     pub hospital: &'a mut Hospital,
     pub queue: &'a mut JobQueue,
     pub item_registry: &'a mut ItemRegistry,
+    pub merchant: &'a mut MerchantState,
     pub max_jobs: usize,
     pub generation_queue: Option<&'a tokio::sync::mpsc::UnboundedSender<crate::game::engine::GenerationJob>>,
     pub pending_quests: Option<&'a std::sync::atomic::AtomicUsize>,

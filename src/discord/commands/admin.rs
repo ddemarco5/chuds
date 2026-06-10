@@ -15,7 +15,7 @@ use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::session::{GamePhase, GameSession};
 use crate::game::engine::{self, DeathContext};
 use crate::game::guild_status;
-use crate::game::merchant::MerchantState;
+use crate::game::merchant::{ForcedSpawnError, MerchantState};
 use crate::game::generation::memory::LlmMemorySlot;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::llm_memory;
@@ -93,7 +93,10 @@ pub async fn delete_cm(ctx: Context<'_>, discord_user_id: String) -> Result<(), 
 }
 
 #[poise::command(slash_command)]
-pub async fn admin_spawn_merchant(ctx: Context<'_>) -> Result<(), Error> {
+pub async fn admin_spawn_merchant(
+    ctx: Context<'_>,
+    #[description = "Merchant name to spawn (random if omitted)"] merchant_name: Option<String>,
+) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     if !admin_guard(ctx).await {
         return Ok(());
@@ -102,10 +105,28 @@ pub async fn admin_spawn_merchant(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     }
     let mut merchant = ctx.data().runtime.merchant.lock().await;
-    if merchant.set_spawn_flag().is_ok() {
-        ctx.say("ok, merchant will appear next tick").await?;
-    } else {
-        ctx.say("a merchant is already visiting").await?;
+    match merchant.set_spawn_flag(merchant_name.clone()) {
+        Ok(()) => {
+            let msg = match merchant_name {
+                Some(name) => format!("ok, {name} will appear next tick"),
+                None => "ok, a merchant will appear next tick".into(),
+            };
+            ctx.say(msg).await?;
+        }
+        Err(ForcedSpawnError::AlreadyVisiting) => {
+            ctx.say("a merchant is already visiting").await?;
+        }
+        Err(ForcedSpawnError::NoCatalog) => {
+            ctx.say("no merchant catalog loaded yet").await?;
+        }
+        Err(ForcedSpawnError::MerchantNotFound) => {
+            let name = merchant_name.unwrap_or_default();
+            ctx.say(format!("no merchant named \"{name}\"")).await?;
+        }
+        Err(ForcedSpawnError::MerchantEmpty) => {
+            let name = merchant_name.unwrap_or_default();
+            ctx.say(format!("{name} has no stock")).await?;
+        }
     }
     Ok(())
 }
@@ -447,14 +468,16 @@ pub async fn admin_kill_chud(
 
     let mut graveyard = storage::load_graveyard()?;
     let mut starting_benefits = storage::load_starting_benefits()?;
-    let mut registry = ctx.data().runtime.item_registry.lock().await;
+    let registry = ctx.data().runtime.item_registry.lock().await;
+    let mut merchant = ctx.data().runtime.merchant.lock().await;
 
     let kill = engine::kill_chud(
         target_user_id,
         &death_ctx,
         &mut graveyard,
         &mut starting_benefits,
-        &mut *registry,
+        &registry,
+        &mut merchant,
         &ctx.data().runtime.gravestone_generator,
     )
     .await?;

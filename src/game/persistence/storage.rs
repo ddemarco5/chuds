@@ -240,7 +240,9 @@ pub fn load_merchant_state(registry: &ItemRegistry) -> anyhow::Result<MerchantSt
     let mut repaired = false;
 
     merchant.catalog = match merchants::load_merchants()? {
-        Some(catalog) if merchants::catalog_matches_registry(&catalog, registry) => Some(catalog),
+        Some(catalog) if merchants::catalog_matches_registry(&catalog, registry) => {
+            Some(merchants::normalize_catalog(catalog))
+        }
         Some(_) => {
             tracing::warn!("stale merchant roster (registry IDs missing); clearing");
             merchants::clear_merchants()?;
@@ -250,13 +252,33 @@ pub fn load_merchant_state(registry: &ItemRegistry) -> anyhow::Result<MerchantSt
         None => None,
     };
 
-    if let Some(visit) = &merchant.visit {
-        let visit_ok = merchant.catalog.is_some()
-            && merchants::visit_matches_registry(visit, registry);
-        if !visit_ok {
-            tracing::warn!("stale merchant visit; clearing");
-            merchant.visit = None;
-            repaired = true;
+    if let Some(catalog) = &merchant.catalog {
+        if let Some(visit) = &mut merchant.visit {
+            let visit_name = visit.merchant_name.clone();
+            match catalog.merchants.iter().position(|m| m.name == visit_name) {
+                Some(new_index) if visit.merchant_index != new_index => {
+                    visit.merchant_index = new_index;
+                    repaired = true;
+                }
+                None => {
+                    tracing::warn!(merchant = %visit_name, "merchant visit target missing after normalize; clearing");
+                    merchant.visit = None;
+                    repaired = true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(visit) = &merchant.visit {
+            if !merchants::visit_matches_registry(visit, registry) {
+                tracing::warn!("stale merchant visit; clearing");
+                merchant.visit = None;
+                repaired = true;
+            }
+        }
+
+        if let Err(e) = merchants::save_merchants(catalog) {
+            tracing::warn!(err = %e, "failed to persist normalized merchant catalog");
         }
     }
 

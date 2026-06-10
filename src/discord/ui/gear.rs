@@ -216,7 +216,8 @@ fn equipment_locked_action_notice(reason: BusyReason, player: &Player) -> String
 fn apply_gear_action(
     player: &mut Player,
     custom_id: &str,
-    registry: &mut ItemRegistry,
+    registry: &ItemRegistry,
+    merchant: &mut crate::game::merchant::MerchantState,
     mode: GearInteractionMode,
     board: &Board,
     hospital: &Hospital,
@@ -352,7 +353,9 @@ fn apply_gear_action(
             .next()
             .unwrap_or(&chud_name)
             .to_string();
-        let (notice, activity_log) = match engine::sell_item(board, hospital, player, registry, item_id)
+        let (notice, activity_log) = match engine::sell_item(
+            board, hospital, player, registry, merchant, item_id,
+        )
         {
             Ok(gold) => (
                 Some(format!("Sold {item_name} for ${gold}.")),
@@ -391,7 +394,8 @@ async fn prepare_gear_update(
     let read_only = data.runtime.session.lock().await.phase == GamePhase::Complete;
     // Match lock order used elsewhere (board before item_registry) to avoid deadlocks.
     let board = data.runtime.board.lock().await;
-    let mut registry = data.runtime.item_registry.lock().await;
+    let registry = data.runtime.item_registry.lock().await;
+    let mut merchant = data.runtime.merchant.lock().await;
 
     let equipment_lock_reason =
         busy::is_equipment_locked(&*board, &hospital, player.discord_user_id);
@@ -405,7 +409,8 @@ async fn prepare_gear_update(
         apply_gear_action(
             player,
             custom_id,
-            &mut registry,
+            &registry,
+            &mut merchant,
             mode,
             &*board,
             &hospital,

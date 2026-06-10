@@ -14,6 +14,7 @@ pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::
             ctx.board,
             &mut ctx.hospital,
             ctx.item_registry,
+            ctx.merchant,
             board_quest,
             ctx.job_timeout_tick,
             outcome,
@@ -37,6 +38,7 @@ fn resolve_quest(
     board: &mut Board,
     hospital: &mut crate::game::domain::hospital::Hospital,
     item_registry: &mut crate::game::persistence::item_registry::ItemRegistry,
+    merchant: &mut crate::game::merchant::MerchantState,
     board_quest: BoardQuest,
     job_timeout_tick: u32,
     outcome: &mut TickOutcome,
@@ -100,7 +102,7 @@ fn resolve_quest(
     let mut item_award_disposition = None;
     if passed {
         if let Some(item) = result.pending_item.take() {
-            match engine::award_pending_item(item_registry, &mut player, item) {
+            match engine::award_pending_item(item_registry, merchant, &mut player, item) {
                 Ok((item, disposition)) => {
                     item_awarded = Some(item);
                     item_award_disposition = Some(disposition);

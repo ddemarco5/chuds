@@ -2,7 +2,10 @@ use std::path::Path;
 
 use anyhow::Context;
 
-use crate::game::merchant::{MerchantCatalog, MerchantVisit};
+use crate::game::merchant::{
+    dumpster_dave_template, MerchantCatalog, MerchantDefinition, MerchantVisit, DUMPSTER_DAVE_INDEX,
+    DUMPSTER_DAVE_NAME,
+};
 use crate::game::persistence::item_registry::ItemRegistry;
 
 const MERCHANTS_PATH: &str = "data/merchants.yaml";
@@ -46,6 +49,61 @@ pub fn save_merchants(catalog: &MerchantCatalog) -> anyhow::Result<()> {
     std::fs::create_dir_all("data").context("creating data directory")?;
     let yaml = serde_yaml::to_string(catalog).context("serializing merchants")?;
     std::fs::write(MERCHANTS_PATH, yaml).context("writing merchants")
+}
+
+/// Ensure Dumpster Dave is at index 0, preserving his stock pool from any existing entry.
+pub fn normalize_catalog(catalog: MerchantCatalog) -> MerchantCatalog {
+    let pool = catalog
+        .merchants
+        .iter()
+        .find(|m| m.name == DUMPSTER_DAVE_NAME)
+        .map(|m| m.stock_pool.clone())
+        .unwrap_or_default();
+
+    let mut others: Vec<MerchantDefinition> = catalog
+        .merchants
+        .into_iter()
+        .filter(|m| m.name != DUMPSTER_DAVE_NAME)
+        .collect();
+
+    let mut dave = dumpster_dave_template();
+    dave.stock_pool = pool;
+    others.insert(DUMPSTER_DAVE_INDEX, dave);
+
+    MerchantCatalog { merchants: others }
+}
+
+/// Merge freshly generated merchants with Dumpster Dave's existing stock pool.
+pub fn merge_generated_catalog(
+    existing: Option<&MerchantCatalog>,
+    generated: MerchantCatalog,
+) -> MerchantCatalog {
+    let pool = existing
+        .and_then(|c| c.merchants.first())
+        .filter(|m| m.name == DUMPSTER_DAVE_NAME)
+        .map(|m| m.stock_pool.clone())
+        .or_else(|| {
+            existing.and_then(|c| {
+                c.merchants
+                    .iter()
+                    .find(|m| m.name == DUMPSTER_DAVE_NAME)
+                    .map(|m| m.stock_pool.clone())
+            })
+        })
+        .unwrap_or_default();
+
+    let mut dave = dumpster_dave_template();
+    dave.stock_pool = pool;
+
+    let mut merchants = vec![dave];
+    merchants.extend(
+        generated
+            .merchants
+            .into_iter()
+            .filter(|m| m.name != DUMPSTER_DAVE_NAME),
+    );
+
+    normalize_catalog(MerchantCatalog { merchants })
 }
 
 /// True when every stock-pool ID in the roster exists in the item registry.

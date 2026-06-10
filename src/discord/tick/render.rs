@@ -9,6 +9,7 @@ use crate::discord::report_dm;
 use crate::discord::ui::update_merchant_message;
 use crate::game::domain::board::Board;
 use crate::game::engine;
+use crate::game::merchant::MerchantState;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::message_cache::ActivityLogKind;
 use crate::game::persistence::storage;
@@ -16,13 +17,13 @@ use crate::game::tick::TickOutcome;
 
 /// Render a completed [`TickOutcome`] to Discord: activity log, DMs, board, merchant.
 ///
-/// `board` and `item_registry` are the already-locked tick guards; the merchant lock is
-/// taken internally.
+/// `board`, `item_registry`, and `merchant` are the already-locked tick guards.
 pub async fn render_tick_outcome(
     runtime: &GameRuntime,
     outcome: &TickOutcome,
     board: &mut Board,
     registry: &mut ItemRegistry,
+    merchant: &mut MerchantState,
 ) -> anyhow::Result<()> {
     let http = &runtime.http;
     let activity_log = &runtime.activity_log;
@@ -92,6 +93,7 @@ pub async fn render_tick_outcome(
                     &mut graveyard,
                     &mut starting_benefits,
                     registry,
+                    merchant,
                     &runtime.gravestone_generator,
                 )
                 .await?;
@@ -158,22 +160,16 @@ pub async fn render_tick_outcome(
     }
     guild_hall::update_board_message(http, channel_id, board, max_jobs, None).await?;
 
-    {
-        {
-            let merchant_guard = runtime.merchant.lock().await;
-            crate::game::engine::ensure_merchant_catalog_generation(
-                &merchant_guard,
-                Some(&runtime.generation_queue),
-                Some(&runtime.pending_merchant_catalog),
-            );
-        }
-        let mut merchant_guard = runtime.merchant.lock().await;
-        let force = merchant_guard.spawn_next_tick;
-        merchant_guard.spawn_next_tick = false;
-        merchant_guard.advance_tick(force);
-        storage::save_guild_hall(&merchant_guard)?;
-        update_merchant_message(http, channel_id, &merchant_guard).await?;
-    }
+    crate::game::engine::ensure_merchant_catalog_generation(
+        merchant,
+        Some(&runtime.generation_queue),
+        Some(&runtime.pending_merchant_catalog),
+    );
+    let force = merchant.spawn_next_tick;
+    merchant.spawn_next_tick = false;
+    merchant.advance_tick(force);
+    storage::save_guild_hall(merchant)?;
+    update_merchant_message(http, channel_id, merchant).await?;
 
     if outcome.story_series_complete {
         tracing::info!(

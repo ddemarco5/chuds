@@ -47,6 +47,7 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
     let mut board = runtime.board.lock().await;
     let mut queue = runtime.job_queue.lock().await;
     let mut registry = runtime.item_registry.lock().await;
+    let mut merchant = runtime.merchant.lock().await;
 
     let description_history_msgs = runtime.generator.description_history_len();
 
@@ -55,6 +56,7 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
         hospital: &mut hospital,
         queue: &mut *queue,
         item_registry: &mut *registry,
+        merchant: &mut *merchant,
         max_jobs: runtime.max_jobs,
         generation_queue: Some(&runtime.generation_queue),
         pending_quests: Some(&runtime.pending_quests),
@@ -68,5 +70,5 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
     storage::save_hospital(&hospital)?;
     drop(queue);
 
-    render_tick_outcome(runtime, &outcome, &mut board, &mut registry).await
+    render_tick_outcome(runtime, &outcome, &mut board, &mut registry, &mut merchant).await
 }
