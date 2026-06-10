@@ -1,10 +1,11 @@
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use poise::serenity_prelude as serenity;
 
 use crate::discord::buttons::post_quest_taken_announcement;
 use crate::discord::channel::{append_activity_log, append_activity_log_deferred};
-use crate::discord::context::{admin_guard, require_playing, Context, Error};
+use crate::discord::context::{admin_guard, require_playing, Context, Error, GameRuntime};
 use crate::discord::game_screens;
 use crate::discord::guild_hall::recover_persistent_board_messages;
 use crate::discord::report_dm;
@@ -15,7 +16,9 @@ use crate::game::domain::session::{GamePhase, GameSession};
 use crate::game::engine::{self, DeathContext};
 use crate::game::guild_status;
 use crate::game::merchant::MerchantState;
+use crate::game::generation::memory::LlmMemorySlot;
 use crate::game::persistence::item_registry::ItemRegistry;
+use crate::game::persistence::llm_memory;
 use crate::game::persistence::message_cache::ActivityLogKind;
 use crate::game::persistence::storage;
 
@@ -193,7 +196,24 @@ pub async fn admin_complete(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Reset to a brand-new game: wipe all chuds and game state, then drop into the attract lobby.
+/// Wait for in-flight LLM generation to finish so reset does not race the worker.
+async fn wait_for_generation_idle(rt: &GameRuntime) {
+    const MAX_WAIT_MS: u64 = 120_000;
+    const POLL_MS: u64 = 100;
+    let mut waited = 0;
+    while waited < MAX_WAIT_MS {
+        if rt.pending_quests.load(Ordering::SeqCst) == 0
+            && rt.pending_merchant_catalog.load(Ordering::SeqCst) == 0
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(POLL_MS)).await;
+        waited += POLL_MS;
+    }
+    tracing::warn!("timed out waiting for generation worker before admin reset");
+}
+
+/// Reset to a brand-new game: wipe chuds, game state, and LLM memory, then enter attract.
 #[poise::command(slash_command)]
 pub async fn admin_reset(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
@@ -203,6 +223,7 @@ pub async fn admin_reset(ctx: Context<'_>) -> Result<(), Error> {
     let data = ctx.data();
     data.simulation.cancel_scheduled_start().await;
     data.simulation.stop().await;
+    wait_for_generation_idle(&data.runtime).await;
 
     storage::reset_game_data()?;
 
@@ -212,8 +233,16 @@ pub async fn admin_reset(ctx: Context<'_>) -> Result<(), Error> {
     *rt.merchant.lock().await = MerchantState::default();
     *rt.item_registry.lock().await = ItemRegistry::default();
     rt.pending_quests.store(0, Ordering::SeqCst);
+    rt.pending_merchant_catalog.store(0, Ordering::SeqCst);
     let default_session = GameSession::default();
     *rt.session.lock().await = default_session.clone();
+    llm_memory::clear_llm_memory(
+        &rt.generator,
+        &rt.item_generator,
+        &rt.gravestone_generator,
+        &rt.merchant_generator,
+        LlmMemorySlot::All,
+    )?;
     // Persist after in-memory reset so a finishing tick cannot leave stale session.yaml values.
     storage::save_session(&default_session)?;
 
@@ -365,7 +394,7 @@ pub async fn save(ctx: Context<'_>) -> Result<(), Error> {
     let registry = rt.item_registry.lock().await;
     engine::save_all(&*board, &*registry)?;
     let merchant = rt.merchant.lock().await;
-    storage::save_guild_hall(&merchant)?;
+    storage::save_merchant_state(&merchant)?;
     {
         let session = rt.session.lock().await;
         storage::save_session(&session)?;
@@ -374,6 +403,7 @@ pub async fn save(ctx: Context<'_>) -> Result<(), Error> {
         &rt.generator,
         &rt.item_generator,
         &rt.gravestone_generator,
+        &rt.merchant_generator,
     )?;
     ctx.say("ok").await?;
     Ok(())
@@ -465,12 +495,12 @@ pub async fn load(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     }
     let (new_board, new_registry) = engine::load_all()?;
-    let guild_hall = storage::load_guild_hall()?;
+    let new_merchant = storage::load_merchant_state(&new_registry)?;
     let new_session = storage::load_session()?;
     let rt = &ctx.data().runtime;
     *rt.board.lock().await = new_board;
     *rt.item_registry.lock().await = new_registry;
-    *rt.merchant.lock().await = guild_hall.merchant;
+    *rt.merchant.lock().await = new_merchant;
     *rt.session.lock().await = new_session;
     tracing::info!("board, item registry, guild hall, and session reloaded from disk");
     ctx.say("ok").await?;

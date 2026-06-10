@@ -22,14 +22,16 @@ pub struct GameState {
 
 impl GameState {
     pub fn load() -> anyhow::Result<Self> {
+        let item_registry = storage::load_item_registry()?;
+        let merchant = storage::load_merchant_state(&item_registry)?;
         Ok(Self {
             board: storage::load_board()?,
             hospital: storage::load_hospital()?,
             graveyard: storage::load_graveyard()?,
             starting_benefits: storage::load_starting_benefits()?,
             job_queue: storage::load_job_queue()?,
-            item_registry: storage::load_item_registry()?,
-            guild_hall: storage::load_guild_hall()?,
+            item_registry,
+            guild_hall: crate::game::domain::guild_hall::GuildHall { merchant },
             session: storage::load_session()?,
         })
     }
@@ -42,6 +44,9 @@ impl GameState {
         storage::save_job_queue(&self.job_queue)?;
         storage::save_item_registry(&self.item_registry)?;
         storage::save_guild_hall_full(&self.guild_hall)?;
+        if let Some(catalog) = &self.guild_hall.merchant.catalog {
+            crate::game::persistence::merchants::save_merchants(catalog)?;
+        }
         storage::save_session(&self.session)?;
         Ok(())
     }

@@ -15,6 +15,7 @@ pub enum LlmMemorySlot {
     Results,
     Item,
     Gravestone,
+    Merchant,
     All,
 }
 

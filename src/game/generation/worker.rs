@@ -8,7 +8,9 @@ use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::quest_result::QuestResult;
 use crate::game::engine::{self, GenerationJob};
 use crate::game::generation::item_generator::ItemGenerator;
+use crate::game::generation::merchant_generator::MerchantGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator};
+use crate::game::merchant::{roll_merchant_stock_seeds, MerchantCatalog, MerchantState};
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::storage;
 
@@ -18,6 +20,8 @@ pub enum WorkerEffect {
     BoardRefilled { added: usize },
     QuestCreationFailed,
     GenerateResultFailed { quest_id: u32 },
+    MerchantCatalogReady,
+    MerchantCatalogFailed,
 }
 
 enum GenerationOutcome {
@@ -32,6 +36,8 @@ enum GenerationOutcome {
     },
     QuestCreationFailed,
     GenerateResultFailed { quest_id: u32 },
+    MerchantCatalogReady(MerchantCatalog),
+    MerchantCatalogFailed,
 }
 
 /// Run the slow LLM work for a generation job without holding shared runtime locks.
@@ -39,6 +45,7 @@ async fn run_generation(
     job: GenerationJob,
     generator: &QuestGenerator,
     item_generator: &ItemGenerator,
+    merchant_generator: &MerchantGenerator,
     item_registry: &Arc<tokio::sync::Mutex<ItemRegistry>>,
 ) -> GenerationOutcome {
     match job {
@@ -97,6 +104,19 @@ async fn run_generation(
                 GenerationOutcome::QuestCreationFailed
             }
         },
+        GenerationJob::MerchantCatalog => {
+            let mut registry = item_registry.lock().await;
+            match merchant_generator
+                .build_catalog(&mut *registry, roll_merchant_stock_seeds)
+                .await
+            {
+                Ok(catalog) => GenerationOutcome::MerchantCatalogReady(catalog),
+                Err(e) => {
+                    tracing::error!(err = %e, "merchant catalog generation failed");
+                    GenerationOutcome::MerchantCatalogFailed
+                }
+            }
+        }
     }
 }
 
@@ -105,9 +125,12 @@ fn commit_generation(
     outcome: GenerationOutcome,
     board: &mut Board,
     queue: &mut JobQueue,
+    merchant: &mut MerchantState,
+    item_registry: &mut ItemRegistry,
     max_jobs: usize,
     job_timeout_tick: u32,
     pending_quests: &AtomicUsize,
+    pending_merchant_catalog: &AtomicUsize,
 ) -> anyhow::Result<Vec<WorkerEffect>> {
     match outcome {
         GenerationOutcome::QuestResult { quest_id, result } => {
@@ -153,6 +176,21 @@ fn commit_generation(
         GenerationOutcome::GenerateResultFailed { quest_id } => {
             Ok(vec![WorkerEffect::GenerateResultFailed { quest_id }])
         }
+        GenerationOutcome::MerchantCatalogReady(catalog) => {
+            merchant.catalog = Some(catalog);
+            storage::save_item_registry(item_registry)?;
+            storage::save_merchant_state(merchant)?;
+            pending_merchant_catalog.fetch_sub(1, Ordering::SeqCst);
+            tracing::info!(
+                merchants = merchant.catalog.as_ref().map(|c| c.merchants.len()).unwrap_or(0),
+                "merchant catalog generation complete"
+            );
+            Ok(vec![WorkerEffect::MerchantCatalogReady])
+        }
+        GenerationOutcome::MerchantCatalogFailed => {
+            pending_merchant_catalog.fetch_sub(1, Ordering::SeqCst);
+            Ok(vec![WorkerEffect::MerchantCatalogFailed])
+        }
     }
 }
 
@@ -162,11 +200,14 @@ pub fn spawn_generation_worker(
     board: Arc<tokio::sync::Mutex<Board>>,
     job_queue: Arc<tokio::sync::Mutex<JobQueue>>,
     item_registry: Arc<tokio::sync::Mutex<ItemRegistry>>,
+    merchant: Arc<tokio::sync::Mutex<MerchantState>>,
     generator: Arc<QuestGenerator>,
     item_generator: Arc<ItemGenerator>,
+    merchant_generator: Arc<MerchantGenerator>,
     max_jobs: usize,
     job_timeout_tick: u32,
     pending_quests: Arc<AtomicUsize>,
+    pending_merchant_catalog: Arc<AtomicUsize>,
     on_effects: impl Fn(Vec<WorkerEffect>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
         + Send
         + Sync
@@ -186,18 +227,30 @@ pub fn spawn_generation_worker(
                 }
             }
 
-            let outcome =
-                run_generation(job, &generator, &item_generator, &item_registry).await;
+            let outcome = run_generation(
+                job,
+                &generator,
+                &item_generator,
+                &merchant_generator,
+                &item_registry,
+            )
+            .await;
+
             let effects = {
                 let mut b = board.lock().await;
                 let mut q = job_queue.lock().await;
+                let mut m = merchant.lock().await;
+                let mut registry = item_registry.lock().await;
                 match commit_generation(
                     outcome,
                     &mut *b,
                     &mut *q,
+                    &mut *m,
+                    &mut *registry,
                     max_jobs,
                     job_timeout_tick,
                     &pending_quests,
+                    &pending_merchant_catalog,
                 ) {
                     Ok(effects) => effects,
                     Err(e) => {

@@ -2,16 +2,24 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::chud_msg;
 use crate::game::domain::item::Item;
+use crate::game::domain::item::ItemSeed;
 use crate::game::domain::player::Player;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::storage;
-use crate::starting_items;
+use crate::game::tuneable_rolls::roll_item;
 
 pub const MERCHANT_VISIT_CHANCE: f64 = 0.20;
-pub const MERCHANT_STOCK_SIZE: usize = 5;
+pub const MERCHANT_VISIT_STOCK_SIZE: usize = 5;
 pub const MERCHANT_STAY_TICKS: (u8, u8) = (2, 5);
+
+pub const MERCHANT_ROSTER_SIZE: usize = 5;
+pub const MERCHANT_LOW_TIER_COUNT: usize = 3;
+pub const MERCHANT_STOCK_POOL_SIZE: usize = 15;
+pub const MERCHANT_LOW_DIFF_MIN: u8 = 1;
+pub const MERCHANT_LOW_DIFF_MAX: u8 = 5;
+pub const MERCHANT_HIGH_DIFF_MIN: u8 = 6;
+pub const MERCHANT_HIGH_DIFF_MAX: u8 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MerchantTickEvent {
@@ -30,20 +38,30 @@ pub enum BuyError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MerchantStockSlot {
-    pub item: Item,
-    pub sold: bool,
+pub struct MerchantDefinition {
+    pub name: String,
+    pub theme: String,
+    pub stock_pool: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MerchantCatalog {
+    pub merchants: Vec<MerchantDefinition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MerchantVisit {
+    pub merchant_index: usize,
     pub merchant_name: String,
     pub ticks_remaining: u8,
-    pub stock: Vec<MerchantStockSlot>,
+    pub stock: Vec<u32>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct MerchantState {
+    /// Loaded from `data/merchants.yaml`; not stored in `guild_hall.yaml`.
+    #[serde(skip, default)]
+    pub catalog: Option<MerchantCatalog>,
     pub visit: Option<MerchantVisit>,
     /// Runtime-only admin flag; not persisted across restarts.
     #[serde(skip, default)]
@@ -61,15 +79,20 @@ impl MerchantState {
 
     pub fn advance_tick(&mut self, force: bool) -> MerchantTickEvent {
         if force && self.visit.is_none() {
-            self.visit = Some(spawn_visit());
-            return MerchantTickEvent::Spawned;
+            if let Some(visit) = self.try_spawn_visit() {
+                self.visit = Some(visit);
+                return MerchantTickEvent::Spawned;
+            }
+            return MerchantTickEvent::None;
         }
 
         if self.visit.is_none() {
             let mut rng = rand::thread_rng();
             if rng.gen_bool(MERCHANT_VISIT_CHANCE) {
-                self.visit = Some(spawn_visit());
-                return MerchantTickEvent::Spawned;
+                if let Some(visit) = self.try_spawn_visit() {
+                    self.visit = Some(visit);
+                    return MerchantTickEvent::Spawned;
+                }
             }
             return MerchantTickEvent::None;
         }
@@ -87,18 +110,13 @@ impl MerchantState {
         &mut self,
         slot: usize,
         player: &mut Player,
-        registry: &mut ItemRegistry,
+        registry: &ItemRegistry,
     ) -> Result<Item, BuyError> {
         let visit = self.visit.as_mut().ok_or(BuyError::SoldOut)?;
-        let stock = visit
-            .stock
-            .get_mut(slot)
-            .ok_or(BuyError::InvalidSlot)?;
-        if stock.sold {
-            return Err(BuyError::SoldOut);
-        }
+        let id = *visit.stock.get(slot).ok_or(BuyError::InvalidSlot)?;
 
-        let price = stock.item.value;
+        let item = registry.get(id).ok_or(BuyError::SoldOut)?;
+        let price = item.value;
         if player.cash < price {
             return Err(BuyError::InsufficientFunds);
         }
@@ -106,58 +124,74 @@ impl MerchantState {
             return Err(BuyError::StashFull);
         }
 
-        let id = registry.add_item(stock.item.clone());
-        let awarded = registry
-            .get(id)
-            .expect("item missing after add")
-            .clone();
-
         player.cash = player.cash.saturating_sub(price);
         player.stash.push(id).map_err(|_| BuyError::StashFull)?;
-        stock.sold = true;
+        visit.stock.remove(slot);
+
+        if let Some(catalog) = self.catalog.as_mut() {
+            if let Some(merchant) = catalog.merchants.get_mut(visit.merchant_index) {
+                merchant.stock_pool.retain(|pool_id| *pool_id != id);
+            }
+        }
+
+        let awarded = registry.get(id).expect("item missing after buy").clone();
 
         storage::save_player(player).expect("save player after merchant buy");
-        storage::save_item_registry(registry).expect("save registry after merchant buy");
-        storage::save_guild_hall(self).expect("save guild hall after merchant buy");
+        storage::save_merchant_state(self).expect("save merchant state after buy");
 
         Ok(awarded)
     }
 
-    pub fn first_unsold_slot(&self) -> Option<usize> {
+    pub fn first_stock_slot(&self) -> Option<usize> {
         let visit = self.visit.as_ref()?;
-        visit.stock.iter().position(|s| !s.sold)
+        (!visit.stock.is_empty()).then_some(0)
     }
 
-    pub fn unsold_slots(&self) -> Vec<usize> {
-        self.visit
-            .as_ref()
-            .map(|v| {
-                v.stock
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, s)| !s.sold)
-                    .map(|(i, _)| i)
-                    .collect()
-            })
-            .unwrap_or_default()
+    fn try_spawn_visit(&self) -> Option<MerchantVisit> {
+        let catalog = self.catalog.as_ref()?;
+        let available: Vec<usize> = catalog
+            .merchants
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| !m.stock_pool.is_empty())
+            .map(|(i, _)| i)
+            .collect();
+        if available.is_empty() {
+            return None;
+        }
+
+        let mut rng = rand::thread_rng();
+        let merchant_index = *available.choose(&mut rng)?;
+        let merchant = &catalog.merchants[merchant_index];
+        let sample_count = MERCHANT_VISIT_STOCK_SIZE.min(merchant.stock_pool.len());
+        let stock: Vec<u32> = merchant
+            .stock_pool
+            .choose_multiple(&mut rng, sample_count)
+            .copied()
+            .collect();
+        let (min, max) = MERCHANT_STAY_TICKS;
+        Some(MerchantVisit {
+            merchant_index,
+            merchant_name: merchant.name.clone(),
+            ticks_remaining: rng.gen_range(min..=max),
+            stock,
+        })
     }
 }
 
-fn spawn_visit() -> MerchantVisit {
-    let catalog = starting_items::catalog();
+/// Roll item seeds for a merchant at the given roster index.
+pub fn roll_merchant_stock_seeds(merchant_index: usize) -> Vec<ItemSeed> {
     let mut rng = rand::thread_rng();
-    let picks: Vec<Item> = catalog
-        .choose_multiple(&mut rng, MERCHANT_STOCK_SIZE.min(catalog.len()))
-        .cloned()
-        .collect();
-    let stock = picks
-        .into_iter()
-        .map(|item| MerchantStockSlot { item, sold: false })
-        .collect();
-    let (min, max) = MERCHANT_STAY_TICKS;
-    MerchantVisit {
-        merchant_name: chud_msg!("merchant_names"),
-        ticks_remaining: rng.gen_range(min..=max),
-        stock,
-    }
+    let (min, max) = if merchant_index < MERCHANT_LOW_TIER_COUNT {
+        (MERCHANT_LOW_DIFF_MIN, MERCHANT_LOW_DIFF_MAX)
+    } else {
+        (MERCHANT_HIGH_DIFF_MIN, MERCHANT_HIGH_DIFF_MAX)
+    };
+
+    (0..MERCHANT_STOCK_POOL_SIZE)
+        .map(|_| {
+            let difficulty = rng.gen_range(min..=max);
+            roll_item(difficulty, &mut rng, None, None)
+        })
+        .collect()
 }

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::memory::LlmMemorySlot;
+use crate::game::generation::merchant_generator::MerchantGenerator;
 use crate::game::generation::quest_generator::QuestGenerator;
 
 const LLM_MEMORY_PATH: &str = "data/llm_memory.zst";
@@ -22,6 +23,8 @@ pub struct LlmMemoryBundle {
     pub item: HashMap<String, Vec<Message>>,
     #[serde(default)]
     pub gravestone: HashMap<String, Vec<Message>>,
+    #[serde(default)]
+    pub merchant: HashMap<String, Vec<Message>>,
 }
 
 impl Default for LlmMemoryBundle {
@@ -33,6 +36,7 @@ impl Default for LlmMemoryBundle {
             results: HashMap::new(),
             item: HashMap::new(),
             gravestone: HashMap::new(),
+            merchant: HashMap::new(),
         }
     }
 }
@@ -77,6 +81,7 @@ fn try_load_llm_memory_bundle() -> anyhow::Result<LlmMemoryBundle> {
         results_msgs = bundle.results.values().map(|v| v.len()).sum::<usize>(),
         item_msgs = bundle.item.values().map(|v| v.len()).sum::<usize>(),
         gravestone_msgs = bundle.gravestone.values().map(|v| v.len()).sum::<usize>(),
+        merchant_msgs = bundle.merchant.values().map(|v| v.len()).sum::<usize>(),
         "LLM memory loaded from disk"
     );
     Ok(bundle)
@@ -99,6 +104,7 @@ pub fn save_llm_memory_bundle(bundle: &LlmMemoryBundle) -> anyhow::Result<()> {
         results_msgs = bundle.results.values().map(|v| v.len()).sum::<usize>(),
         item_msgs = bundle.item.values().map(|v| v.len()).sum::<usize>(),
         gravestone_msgs = bundle.gravestone.values().map(|v| v.len()).sum::<usize>(),
+        merchant_msgs = bundle.merchant.values().map(|v| v.len()).sum::<usize>(),
         "LLM memory saved to disk"
     );
     Ok(())
@@ -108,6 +114,7 @@ fn bundle_from_generators(
     quest: &QuestGenerator,
     item: &ItemGenerator,
     gravestone: &GravestoneGenerator,
+    merchant: &MerchantGenerator,
 ) -> LlmMemoryBundle {
     LlmMemoryBundle {
         version: BUNDLE_VERSION,
@@ -122,6 +129,7 @@ fn bundle_from_generators(
             .export_filtered_store(),
         item: item.memory().export_filtered_store(),
         gravestone: gravestone.memory().export_filtered_store(),
+        merchant: merchant.memory().export_filtered_store(),
     }
 }
 
@@ -130,8 +138,9 @@ pub fn save_all_llm_memory(
     quest: &QuestGenerator,
     item: &ItemGenerator,
     gravestone: &GravestoneGenerator,
+    merchant: &MerchantGenerator,
 ) -> anyhow::Result<()> {
-    let bundle = bundle_from_generators(quest, item, gravestone);
+    let bundle = bundle_from_generators(quest, item, gravestone, merchant);
     save_llm_memory_bundle(&bundle)
 }
 
@@ -140,6 +149,7 @@ pub fn clear_llm_memory(
     quest: &QuestGenerator,
     item: &ItemGenerator,
     gravestone: &GravestoneGenerator,
+    merchant: &MerchantGenerator,
     slot: LlmMemorySlot,
 ) -> anyhow::Result<()> {
     match slot {
@@ -152,6 +162,7 @@ pub fn clear_llm_memory(
         LlmMemorySlot::Results => quest.memory_for_slot(LlmMemorySlot::Results).clear_all(),
         LlmMemorySlot::Item => item.memory().clear_all(),
         LlmMemorySlot::Gravestone => gravestone.memory().clear_all(),
+        LlmMemorySlot::Merchant => merchant.memory().clear_all(),
         LlmMemorySlot::All => {
             quest
                 .memory_for_slot(LlmMemorySlot::Description)
@@ -160,8 +171,9 @@ pub fn clear_llm_memory(
             quest.memory_for_slot(LlmMemorySlot::Results).clear_all();
             item.memory().clear_all();
             gravestone.memory().clear_all();
+            merchant.memory().clear_all();
         }
     }
     tracing::info!(?slot, "LLM memory cleared");
-    save_all_llm_memory(quest, item, gravestone)
+    save_all_llm_memory(quest, item, gravestone, merchant)
 }

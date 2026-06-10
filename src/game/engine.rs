@@ -11,6 +11,7 @@ use crate::game::domain::quest_result::QuestResult;
 use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator, QuestResults, TrialResult};
+use crate::game::merchant::MerchantState;
 use crate::game::tuneable_rolls::{
     death_chance, injury_chance, item_drop_chance, roll_auto_job_difficulty,
     roll_failure_consequences, roll_item, roll_item_drop, roll_item_value, roll_trials,
@@ -63,6 +64,8 @@ pub enum GenerationJob {
         /// Some(catalog index) for story jobs; None for regular jobs.
         story_index: Option<usize>,
     },
+    /// Generate the merchant roster and stock pools for a fresh game.
+    MerchantCatalog,
 }
 
 /// Enqueue background quest result generation after assignment.
@@ -148,6 +151,31 @@ pub fn ensure_story_generation(
         })
         .is_err()
     {
+        pending.fetch_sub(1, Ordering::SeqCst);
+        return false;
+    }
+    true
+}
+
+/// Enqueue merchant catalog generation when the roster is missing and none is in flight.
+pub fn ensure_merchant_catalog_generation(
+    merchant: &MerchantState,
+    generation_queue: Option<&tokio::sync::mpsc::UnboundedSender<GenerationJob>>,
+    pending: Option<&AtomicUsize>,
+) -> bool {
+    if merchant.catalog.is_some() {
+        return false;
+    }
+
+    let (Some(gen_q), Some(pending)) = (generation_queue, pending) else {
+        return false;
+    };
+    if pending.load(Ordering::SeqCst) != 0 {
+        return false;
+    }
+
+    pending.fetch_add(1, Ordering::SeqCst);
+    if gen_q.send(GenerationJob::MerchantCatalog).is_err() {
         pending.fetch_sub(1, Ordering::SeqCst);
         return false;
     }

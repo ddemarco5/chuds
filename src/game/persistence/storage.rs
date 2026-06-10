@@ -11,6 +11,7 @@ use crate::game::domain::graveyard::Graveyard;
 use crate::game::domain::hospital::Hospital;
 use crate::game::domain::starting_benefits::StartingBenefits;
 use crate::game::persistence::item_registry::ItemRegistry;
+use crate::game::persistence::merchants;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::Player;
 use crate::game::domain::session::GameSession;
@@ -232,7 +233,50 @@ pub fn load_item_registry() -> anyhow::Result<ItemRegistry> {
     Ok(registry)
 }
 
-/// Persist guild-hall state to `data/guild_hall.yaml`.
+/// Load merchant visit state and attach the roster from `data/merchants.yaml`.
+/// Discards a stale roster or visit when registry IDs are missing (e.g. after reset).
+pub fn load_merchant_state(registry: &ItemRegistry) -> anyhow::Result<MerchantState> {
+    let mut merchant = load_guild_hall()?.merchant;
+    let mut repaired = false;
+
+    merchant.catalog = match merchants::load_merchants()? {
+        Some(catalog) if merchants::catalog_matches_registry(&catalog, registry) => Some(catalog),
+        Some(_) => {
+            tracing::warn!("stale merchant roster (registry IDs missing); clearing");
+            merchants::clear_merchants()?;
+            repaired = true;
+            None
+        }
+        None => None,
+    };
+
+    if let Some(visit) = &merchant.visit {
+        let visit_ok = merchant.catalog.is_some()
+            && merchants::visit_matches_registry(visit, registry);
+        if !visit_ok {
+            tracing::warn!("stale merchant visit; clearing");
+            merchant.visit = None;
+            repaired = true;
+        }
+    }
+
+    if repaired {
+        save_guild_hall(&merchant)?;
+    }
+
+    Ok(merchant)
+}
+
+/// Persist merchant visit state and roster (guild hall + merchants file).
+pub fn save_merchant_state(merchant: &MerchantState) -> anyhow::Result<()> {
+    save_guild_hall(merchant)?;
+    if let Some(catalog) = &merchant.catalog {
+        merchants::save_merchants(catalog)?;
+    }
+    Ok(())
+}
+
+/// Persist guild-hall visit state to `data/guild_hall.yaml` (roster excluded).
 pub fn save_guild_hall(merchant: &MerchantState) -> anyhow::Result<()> {
     save_guild_hall_full(&GuildHall {
         merchant: merchant.clone(),
@@ -280,6 +324,7 @@ pub fn reset_game_data() -> anyhow::Result<()> {
     save_graveyard(&Graveyard::default())?;
     save_starting_benefits(&StartingBenefits::default())?;
     save_guild_hall_full(&GuildHall::default())?;
+    merchants::clear_merchants()?;
     save_item_registry(&ItemRegistry::default())?;
     save_session(&GameSession::default())?;
     tracing::info!("game data reset to a fresh game");

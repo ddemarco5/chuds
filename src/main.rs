@@ -114,9 +114,16 @@ async fn main() -> anyhow::Result<()> {
             &llm_memory,
         )?,
     );
+    let merchant_generator = Arc::new(
+        chuds::game::generation::merchant_generator::MerchantGenerator::new(
+            &api_key,
+            &llm_memory,
+        )?,
+    );
     let shutdown_quest = Arc::clone(&generator);
     let shutdown_item = Arc::clone(&item_generator);
     let shutdown_gravestone = Arc::clone(&gravestone_generator);
+    let shutdown_merchant = Arc::clone(&merchant_generator);
     let game_state = GameState::load()?;
     let mut board = game_state.board;
     board.backfill_job_timeouts(job_timeout_tick);
@@ -129,6 +136,7 @@ async fn main() -> anyhow::Result<()> {
     let merchant = Arc::new(tokio::sync::Mutex::new(game_state.guild_hall.merchant));
     let session = Arc::new(tokio::sync::Mutex::new(game_state.session));
     let pending_quests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let pending_merchant_catalog = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     tracing::info!(tick_time_s, "chuds bot starting");
 
@@ -247,8 +255,10 @@ async fn main() -> anyhow::Result<()> {
                     generator,
                     item_generator,
                     gravestone_generator,
+                    merchant_generator,
                     activity_log,
                     pending_quests,
+                    pending_merchant_catalog,
                     session,
                     generation_queue: generation_tx,
                     complete_tx: setup_complete_tx,
@@ -275,19 +285,25 @@ async fn main() -> anyhow::Result<()> {
                     let worker_registry = Arc::clone(&runtime.item_registry);
                     let worker_generator = Arc::clone(&runtime.generator);
                     let worker_item_generator = Arc::clone(&runtime.item_generator);
+                    let worker_merchant_generator = Arc::clone(&runtime.merchant_generator);
+                    let worker_merchant = Arc::clone(&runtime.merchant);
                     let worker_http = Arc::clone(&runtime.http);
                     let worker_pending = Arc::clone(&runtime.pending_quests);
+                    let worker_pending_merchant = Arc::clone(&runtime.pending_merchant_catalog);
                     let worker_session = Arc::clone(&runtime.session);
                     spawn_generation_worker(
                         generation_rx,
                         Arc::clone(&worker_board),
                         worker_queue,
                         worker_registry,
+                        worker_merchant,
                         worker_generator,
                         worker_item_generator,
+                        worker_merchant_generator,
                         max_jobs,
                         job_timeout_tick,
                         worker_pending,
+                        worker_pending_merchant,
                         move |effects| {
                             let worker_http = Arc::clone(&worker_http);
                             let worker_board = Arc::clone(&worker_board);
@@ -358,7 +374,17 @@ async fn main() -> anyhow::Result<()> {
                     (session.phase, session.game_start_at)
                 };
                 match phase {
-                    GamePhase::Playing => simulation.start().await?,
+                    GamePhase::Playing => {
+                        {
+                            let merchant_guard = runtime.merchant.lock().await;
+                            chuds::game::engine::ensure_merchant_catalog_generation(
+                                &merchant_guard,
+                                Some(&runtime.generation_queue),
+                                Some(&runtime.pending_merchant_catalog),
+                            );
+                        }
+                        simulation.start().await?;
+                    }
                     GamePhase::Attract => {
                         game_screens::post_attract_screen(&runtime).await?;
                         // Re-arm a previously scheduled start across restarts.
@@ -391,6 +417,7 @@ async fn main() -> anyhow::Result<()> {
                 &shutdown_quest,
                 &shutdown_item,
                 &shutdown_gravestone,
+                &shutdown_merchant,
             )?;
             res.map_err(|e| anyhow::anyhow!("Discord client error: {e}"))
         }
@@ -400,6 +427,7 @@ async fn main() -> anyhow::Result<()> {
                 &shutdown_quest,
                 &shutdown_item,
                 &shutdown_gravestone,
+                &shutdown_merchant,
             )?;
             Ok(())
         }

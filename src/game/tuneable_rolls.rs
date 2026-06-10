@@ -2,7 +2,7 @@ use rand::Rng;
 use rand_distr::{Distribution, Normal};
 use serde::{Deserialize, Serialize};
 
-use crate::game::domain::item::{stat_contribution, ItemSeed, ItemStats, ItemType};
+use crate::game::domain::item::{ItemSeed, ItemStats, ItemType};
 use crate::game::domain::quest::TrialStats;
 
 // ── Quest reward ──────────────────────────────────────────────────────────────
@@ -47,19 +47,19 @@ const ITEM_DROP_BASE_AT_DIFF_1: f64 = 0.30;
 /// Extending DIFF_HIGH lowers drops on mid-tier jobs; lowering DIFF_LOW shifts where the curve starts.
 const ITEM_DROP_BASE_DIFF_LOW: u8 = 1;
 const ITEM_DROP_BASE_DIFF_HIGH: u8 = 9;
-/// Probability a rolled item stat is neutral ("-").
-const ITEM_STAT_NEUTRAL_CHANCE: f64 = 0.50;
-/// Upper bound of the modifier band (neutral + modifier spans [NEUTRAL, MODIFIER)).
-const ITEM_STAT_MODIFIER_CHANCE: f64 = 0.85;
-/// When forcing a positive stat, probability it is a signed modifier (+N) vs a floor (N).
-const ITEM_STAT_POSITIVE_MODIFIER_CHANCE: f64 = 0.70;
-/// Within the modifier band, probability the modifier is positive (+N) vs negative (-N).
-const ITEM_STAT_SIGN_CHANCE: f64 = 0.50;
 /// Stddev for the item stat-cap normal distribution. Mean is difficulty / 2.
 pub const ITEM_STAT_CAP_STDDEV: f64 = 1.0;
-const ITEM_RARITY_COMMON_PERCENTILE: f64 = 50.0;
-const ITEM_RARITY_UNCOMMON_PERCENTILE: f64 = 80.0;
-const ITEM_RARITY_RARE_PERCENTILE: f64 = 90.0;
+/// Stddev for target net stat budget jitter around difficulty / 2.
+const ITEM_TARGET_NET_JITTER_STDDEV: f64 = 0.5;
+/// Minimum net stat total for each rarity tier (used to derive rarity and story-reward floors).
+const ITEM_RARITY_MIN_NET_COMMON: u8 = 1;
+const ITEM_RARITY_MIN_NET_UNCOMMON: u8 = 2;
+const ITEM_RARITY_MIN_NET_RARE: u8 = 4;
+const ITEM_RARITY_MIN_NET_EXCEPTIONAL: u8 = 6;
+/// Probability a positive allocation is a roll floor (N) vs a signed modifier (+N).
+const ITEM_STAT_FLOOR_CHANCE: f64 = 0.30;
+/// When two positive stats strictly exceed the target net, probability of adding a curse (-N).
+const ITEM_CURSE_CHANCE: f64 = 0.40;
 
 const GEAR_SUBTYPES: &[&str] = &["helmet", "chest", "legs", "feet", "hands"];
 const MISC_SUBTYPES: &[&str] = &["trinket"]; // we want to add consumables and others in the future
@@ -121,48 +121,6 @@ fn sample_normal_rounded(rng: &mut impl Rng, mean: f64, stddev: f64, min: i64) -
     let normal = Normal::new(mean, stddev).expect("valid normal distribution");
     let sample = normal.sample(rng).round() as i64;
     sample.max(min) as usize
-}
-
-/// Approximate Φ(z) for the standard normal distribution.
-fn standard_normal_cdf(z: f64) -> f64 {
-    0.5 * (1.0 + erf(z / std::f64::consts::SQRT_2))
-}
-
-/// Approximates the error function via Abramowitz & Stegun 7.1.26.
-/// Used to convert a z-score into a normal-distribution percentile for rarity tiers.
-fn erf(x: f64) -> f64 {
-    let sign = if x < 0.0 { -1.0 } else { 1.0 };
-    let x = x.abs();
-    let t = 1.0 / (1.0 + 0.3275911 * x);
-    let y = 1.0
-        - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t
-            + 0.254829592)
-            * t
-            * (-x * x).exp();
-    sign * y
-}
-
-fn rarity_from_percentile(percentile: f64) -> String {
-    if percentile <= ITEM_RARITY_COMMON_PERCENTILE {
-        "common".to_string()
-    } else if percentile <= ITEM_RARITY_UNCOMMON_PERCENTILE {
-        "uncommon".to_string()
-    } else if percentile <= ITEM_RARITY_RARE_PERCENTILE {
-        "rare".to_string()
-    } else {
-        "exceptional".to_string()
-    }
-}
-
-fn roll_item_stat_cap(difficulty: u8, rng: &mut impl Rng) -> (u8, String) {
-    let mean = difficulty as f64 / 2.0;
-    let normal = Normal::new(mean, ITEM_STAT_CAP_STDDEV).expect("valid normal distribution");
-    let sample = normal.sample(rng);
-    let cap = sample.round().max(1.0) as u8;
-    let z = (sample - mean) / ITEM_STAT_CAP_STDDEV;
-    let percentile = standard_normal_cdf(z) * 100.0;
-    let rarity = rarity_from_percentile(percentile);
-    (cap, rarity)
 }
 
 // ── Quest reward rolls ────────────────────────────────────────────────────────
@@ -257,11 +215,7 @@ pub fn roll_item(
     let (stats, rarity) = if let Some(stats) = stats_override {
         (stats.clone(), rarity_override.unwrap_or("common").to_string())
     } else {
-        let (stats, rolled_rarity) = roll_item_stats(difficulty, rng);
-        let rarity = rarity_override
-            .map(str::to_string)
-            .unwrap_or(rolled_rarity);
-        (stats, rarity)
+        roll_item_stats(difficulty, rarity_override, rng)
     };
     ItemSeed {
         item_type,
@@ -289,52 +243,156 @@ fn roll_subtype(item_type: ItemType, rng: &mut impl Rng) -> String {
     }
 }
 
-fn roll_item_stats(difficulty: u8, rng: &mut impl Rng) -> (ItemStats, String) {
-    let (cap, rarity) = roll_item_stat_cap(difficulty, rng);
-    let mut stats = ItemStats {
-        strength: roll_single_stat(cap, rng),
-        smarts: roll_single_stat(cap, rng),
-        stealth: roll_single_stat(cap, rng),
+fn roll_item_cap(difficulty: u8, rng: &mut impl Rng) -> u8 {
+    let mean = difficulty as f64 / 2.0;
+    let normal = Normal::new(mean, ITEM_STAT_CAP_STDDEV).expect("valid normal distribution");
+    normal.sample(rng).round().max(1.0) as u8
+}
+
+fn rarity_min_net(rarity: &str) -> u8 {
+    let r = rarity.to_ascii_lowercase();
+    match r.as_str() {
+        "exceptional" => ITEM_RARITY_MIN_NET_EXCEPTIONAL,
+        "rare" => ITEM_RARITY_MIN_NET_RARE,
+        "uncommon" => ITEM_RARITY_MIN_NET_UNCOMMON,
+        _ => ITEM_RARITY_MIN_NET_COMMON,
+    }
+}
+
+fn rarity_from_net(net: u8) -> String {
+    if net >= ITEM_RARITY_MIN_NET_EXCEPTIONAL {
+        "exceptional".to_string()
+    } else if net >= ITEM_RARITY_MIN_NET_RARE {
+        "rare".to_string()
+    } else if net >= ITEM_RARITY_MIN_NET_UNCOMMON {
+        "uncommon".to_string()
+    } else {
+        "common".to_string()
+    }
+}
+
+fn roll_target_net(difficulty: u8, cap: u8, min_net: u8, rng: &mut impl Rng) -> u8 {
+    let mean = difficulty as f64 / 2.0;
+    let normal =
+        Normal::new(mean, ITEM_TARGET_NET_JITTER_STDDEV).expect("valid normal distribution");
+    let sample = normal.sample(rng).round() as i64;
+    let max_net = ((3 * cap as u32).min(15) as i64).max(min_net as i64);
+    sample.clamp(min_net as i64, max_net) as u8
+}
+
+fn format_positive_stat(magnitude: u8, rng: &mut impl Rng) -> String {
+    if rng.gen_bool(ITEM_STAT_FLOOR_CHANCE) {
+        magnitude.to_string()
+    } else {
+        format!("+{magnitude}")
+    }
+}
+
+fn try_allocate_with_curse(target_net: u8, cap: u8, rng: &mut impl Rng) -> Option<ItemStats> {
+    let lo = target_net as u32 + 1;
+    let hi = 2 * cap as u32;
+    if lo > hi {
+        return None;
+    }
+    let sum_ab = rng.gen_range(lo..=hi);
+    let a_min = sum_ab.saturating_sub(cap as u32).max(1);
+    let a_max = (sum_ab - 1).min(cap as u32);
+    if a_min > a_max {
+        return None;
+    }
+    let a = rng.gen_range(a_min..=a_max) as u8;
+    let b = (sum_ab - a as u32) as u8;
+    let curse = (sum_ab - target_net as u32) as u8;
+    if curse == 0 || curse > cap {
+        return None;
+    }
+
+    let (pos_a, pos_b, curse_idx) = match rng.gen_range(0..6) {
+        0 => (0, 1, 2),
+        1 => (0, 2, 1),
+        2 => (1, 0, 2),
+        3 => (1, 2, 0),
+        4 => (2, 0, 1),
+        _ => (2, 1, 0),
     };
-    if !has_positive_stat(&stats) {
-        let positive = roll_positive_stat(cap, rng);
-        match rng.gen_range(0..3) {
-            0 => stats.strength = positive,
-            1 => stats.smarts = positive,
-            _ => stats.stealth = positive,
+    let mut values = ["-".to_string(), "-".to_string(), "-".to_string()];
+    values[pos_a] = format_positive_stat(a, rng);
+    values[pos_b] = format_positive_stat(b, rng);
+    values[curse_idx] = format!("-{curse}");
+
+    Some(ItemStats {
+        strength: values[0].clone(),
+        smarts: values[1].clone(),
+        stealth: values[2].clone(),
+    })
+}
+
+fn allocate_item_stats(target_net: u8, cap: u8, rng: &mut impl Rng) -> ItemStats {
+    let curse_possible = (target_net as u32 + 1) <= 2 * cap as u32;
+    if curse_possible && rng.gen_bool(ITEM_CURSE_CHANCE) {
+        if let Some(stats) = try_allocate_with_curse(target_net, cap, rng) {
+            return stats;
         }
     }
-    (stats, rarity)
-}
 
-fn has_positive_stat(stats: &ItemStats) -> bool {
-    stat_contribution(&stats.strength) > 0
-        || stat_contribution(&stats.smarts) > 0
-        || stat_contribution(&stats.stealth) > 0
-}
-
-fn roll_positive_stat(cap: u8, rng: &mut impl Rng) -> String {
-    if rng.gen_bool(ITEM_STAT_POSITIVE_MODIFIER_CHANCE) {
-        format!("+{}", rng.gen_range(1..=cap))
-    } else {
-        rng.gen_range(1..=cap).to_string()
-    }
-}
-
-fn roll_single_stat(cap: u8, rng: &mut impl Rng) -> String {
-    let roll = rng.gen_range(0.0..1.0);
-    if roll < ITEM_STAT_NEUTRAL_CHANCE {
-        "-".to_string()
-    } else if roll < ITEM_STAT_MODIFIER_CHANCE {
-        let magnitude = rng.gen_range(1..=cap);
-        if rng.gen_bool(ITEM_STAT_SIGN_CHANCE) {
-            format!("+{magnitude}")
+    let mut slots = [0u8; 3];
+    let mut remaining = target_net;
+    while remaining > 0 {
+        let available: Vec<usize> = (0..3).filter(|&i| slots[i] < cap).collect();
+        if available.is_empty() {
+            break;
+        }
+        let unused: Vec<usize> = available
+            .iter()
+            .copied()
+            .filter(|&i| slots[i] == 0)
+            .collect();
+        let idx = if !unused.is_empty() {
+            unused[rng.gen_range(0..unused.len())]
         } else {
-            format!("-{magnitude}")
-        }
-    } else {
-        rng.gen_range(1..=cap).to_string()
+            available[rng.gen_range(0..available.len())]
+        };
+        let room = (cap - slots[idx]).min(remaining);
+        let chunk = if room == 1 {
+            1
+        } else {
+            rng.gen_range(1..=room)
+        };
+        slots[idx] += chunk;
+        remaining -= chunk;
     }
+
+    let mut values = ["-".to_string(), "-".to_string(), "-".to_string()];
+    for (i, &mag) in slots.iter().enumerate() {
+        if mag > 0 {
+            values[i] = format_positive_stat(mag, rng);
+        }
+    }
+
+    ItemStats {
+        strength: values[0].clone(),
+        smarts: values[1].clone(),
+        stealth: values[2].clone(),
+    }
+}
+
+fn roll_item_stats(
+    difficulty: u8,
+    rarity_floor: Option<&str>,
+    rng: &mut impl Rng,
+) -> (ItemStats, String) {
+    let mut cap = roll_item_cap(difficulty, rng);
+    let min_net = rarity_floor
+        .map(rarity_min_net)
+        .unwrap_or(ITEM_RARITY_MIN_NET_COMMON);
+    // Ensure cap can fit the minimum net budget across three stat slots.
+    cap = cap.max(min_net.div_ceil(3));
+    let target_net = roll_target_net(difficulty, cap, min_net, rng);
+    let stats = allocate_item_stats(target_net, cap, rng);
+    let rarity = rarity_floor
+        .map(str::to_string)
+        .unwrap_or_else(|| rarity_from_net(target_net));
+    (stats, rarity)
 }
 
 /// Roll gold value from stats: exponential base from net stat value × normal jitter.

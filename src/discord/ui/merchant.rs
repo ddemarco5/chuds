@@ -7,6 +7,8 @@ use crate::discord::channel::append_activity_log;
 use crate::discord::formatting::format_item_block;
 use crate::game::domain::player::Player;
 use crate::game::merchant::{BuyError, MerchantState, MerchantVisit};
+use crate::game::persistence::item_registry::ItemRegistry;
+use crate::game::persistence::message_cache::MessageCache;
 use crate::game::persistence::storage;
 
 use super::super::components_v2::{
@@ -16,16 +18,46 @@ use super::super::components_v2::{
 use super::super::context::Data;
 use super::{no_chud_message, push_status_notice, respond_ephemeral_create, respond_ephemeral_update};
 
-fn build_merchant_channel_message(merchant: &MerchantState) -> ComponentsV2Message {
+fn merchant_visit_identity(visit: &MerchantVisit) -> String {
+    format!("{}:{}", visit.merchant_index, visit.merchant_name)
+}
+
+/// Pick or reuse a random visiting announcement. A new line is chosen only when a visit
+/// starts or a different merchant replaces the current one.
+fn resolve_merchant_visit_text(
+    merchant: &MerchantState,
+    cache: &mut MessageCache,
+) -> (Option<String>, bool) {
+    let mut dirty = false;
     match &merchant.visit {
+        None => {
+            if cache.merchant_visit_text.is_some() || cache.merchant_visit_identity.is_some() {
+                cache.merchant_visit_text = None;
+                cache.merchant_visit_identity = None;
+                dirty = true;
+            }
+            (None, dirty)
+        }
+        Some(visit) => {
+            let identity = merchant_visit_identity(visit);
+            if cache.merchant_visit_identity.as_deref() != Some(identity.as_str()) {
+                cache.merchant_visit_text =
+                    Some(chud_msg!("merchant_visiting", &visit.merchant_name));
+                cache.merchant_visit_identity = Some(identity);
+                dirty = true;
+            }
+            (cache.merchant_visit_text.clone(), dirty)
+        }
+    }
+}
+
+fn build_merchant_channel_message(visit_text: Option<&str>) -> ComponentsV2Message {
+    match visit_text {
         None => ComponentsV2Message::channel(vec![Component::Text(TextDisplay::new(
             "\u{200B}\n\u{200B}",
         ))]),
-        Some(visit) => {
-            let mut inner = vec![ContainerChild::Text(TextDisplay::new(chud_msg!(
-                "merchant_visiting",
-                &visit.merchant_name
-            )))];
+        Some(text) => {
+            let mut inner = vec![ContainerChild::Text(TextDisplay::new(text))];
             inner.push(ContainerChild::ActionRow(ActionRow::one_button(
                 Button::primary("merchant:shop", "Shop"),
             )));
@@ -44,7 +76,8 @@ pub async fn update_merchant_message(
     let mut cache = storage::load_message_cache().unwrap_or_default();
     let mut cache_dirty = false;
 
-    let message = build_merchant_channel_message(merchant);
+    let (visit_text, header_dirty) = resolve_merchant_visit_text(merchant, &mut cache);
+    let message = build_merchant_channel_message(visit_text.as_deref());
     let key = message.cache_key();
 
     if cache.merchant_message_id.is_none() {
@@ -72,7 +105,7 @@ pub async fn update_merchant_message(
         }
     }
 
-    if cache_dirty {
+    if cache_dirty || header_dirty {
         if let Err(e) = storage::save_message_cache(&cache) {
             tracing::warn!(err = %e, "failed to save message cache");
         }
@@ -82,6 +115,7 @@ pub async fn update_merchant_message(
 
 pub fn build_shop_message(
     visit: &MerchantVisit,
+    registry: &ItemRegistry,
     player: &Player,
     selected_slot: usize,
     notice: Option<&str>,
@@ -93,15 +127,11 @@ pub fn build_shop_message(
         player.cash
     ))));
 
-    let unsold: Vec<usize> = visit
-        .stock
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| !s.sold)
-        .map(|(i, _)| i)
+    let available: Vec<usize> = (0..visit.stock.len())
+        .filter(|&slot| registry.get(visit.stock[slot]).is_some())
         .collect();
 
-    if unsold.is_empty() {
+    if available.is_empty() {
         components.push(Component::Text(TextDisplay::new("_The merchant is sold out._")));
         push_status_notice(&mut components, notice);
         return ComponentsV2Message {
@@ -110,23 +140,26 @@ pub fn build_shop_message(
         };
     }
 
-    let selected = if unsold.contains(&selected_slot) {
+    let selected = if available.contains(&selected_slot) {
         selected_slot
     } else {
-        unsold[0]
+        available[0]
     };
 
-    for &slot in &unsold {
-        components.push(Component::Text(TextDisplay::new(format_item_block(
-            &visit.stock[slot].item,
-        ))));
+    for &slot in &available {
+        if let Some(item) = registry.get(visit.stock[slot]) {
+            components.push(Component::Text(TextDisplay::new(format_item_block(item))));
+        }
     }
 
-    let select_options: Vec<SelectOption> = unsold
+    let select_options: Vec<SelectOption> = available
         .iter()
         .map(|&slot| {
-            let item = &visit.stock[slot].item;
-            let base = SelectOption::new(item.name.clone(), slot.to_string());
+            let name = registry
+                .get(visit.stock[slot])
+                .map(|item| item.name.clone())
+                .unwrap_or_else(|| "Unknown item".into());
+            let base = SelectOption::new(name, slot.to_string());
             if slot == selected {
                 base.with_default(true)
             } else {
@@ -139,7 +172,10 @@ pub fn build_shop_message(
         StringSelect::new("shop_select", "Choose an item", select_options),
     )));
 
-    let price = visit.stock[selected].item.value;
+    let price = registry
+        .get(visit.stock[selected])
+        .map(|item| item.value)
+        .unwrap_or(0);
     components.push(Component::ActionRow(ActionRow::one_button(
         Button::primary(format!("shop_buy:{selected}"), format!("Buy ${price}")),
     )));
@@ -172,6 +208,7 @@ async fn prepare_shop_response(
         _ => return Ok(no_chud_message()),
     };
 
+    let registry = data.runtime.item_registry.lock().await;
     let mut merchant = data.runtime.merchant.lock().await;
     let visit = match merchant.visit.as_ref() {
         Some(v) => v.clone(),
@@ -189,8 +226,7 @@ async fn prepare_shop_response(
     let mut bought = false;
     let mut bought_slot = None;
     if let Some(slot) = buy_slot {
-        let mut registry = data.runtime.item_registry.lock().await;
-        match merchant.buy(slot, &mut player, &mut registry) {
+        match merchant.buy(slot, &mut player, &registry) {
             Ok(item) => {
                 notice = Some(format!("Bought {} for ${}.", item.name, item.value));
                 bought = true;
@@ -212,15 +248,17 @@ async fn prepare_shop_response(
 
     let selected = if bought {
         let bought_slot = bought_slot.expect("bought implies bought_slot");
-        let unsold = merchant.unsold_slots();
-        if unsold.is_empty() {
+        let stock_len = merchant
+            .visit
+            .as_ref()
+            .map(|v| v.stock.len())
+            .unwrap_or(0);
+        if stock_len == 0 {
             selected_slot
         } else {
-            unsold
-                .iter()
-                .copied()
+            (0..stock_len)
                 .find(|&slot| slot > bought_slot)
-                .unwrap_or(unsold[0])
+                .unwrap_or(0)
         }
     } else {
         selected_slot
@@ -234,6 +272,7 @@ async fn prepare_shop_response(
 
     Ok(build_shop_message(
         &visit,
+        &registry,
         &player,
         selected,
         notice.as_deref(),
@@ -247,7 +286,7 @@ pub async fn handle_merchant_shop_button(
 ) -> anyhow::Result<()> {
     let user_id = interaction.user.id.get();
     let merchant = data.runtime.merchant.lock().await;
-    let selected = merchant.first_unsold_slot().unwrap_or(0);
+    let selected = merchant.first_stock_slot().unwrap_or(0);
     drop(merchant);
 
     let message = prepare_shop_response(data, user_id, selected, None).await?;

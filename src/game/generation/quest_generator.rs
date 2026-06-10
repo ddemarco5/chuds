@@ -225,8 +225,11 @@ impl QuestGenerator {
             LlmMemorySlot::Description => &self.description_memory,
             LlmMemorySlot::Trials => &self.trial_memory,
             LlmMemorySlot::Results => &self.results_memory,
-            LlmMemorySlot::Item | LlmMemorySlot::Gravestone | LlmMemorySlot::All => {
-                panic!("Item, Gravestone, and All slots are accessed via their generators or clear_llm_memory")
+            LlmMemorySlot::Item
+            | LlmMemorySlot::Gravestone
+            | LlmMemorySlot::Merchant
+            | LlmMemorySlot::All => {
+                panic!("Item, Gravestone, Merchant, and All slots are accessed via their generators or clear_llm_memory")
             }
         }
     }

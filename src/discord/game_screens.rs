@@ -161,13 +161,8 @@ async fn render_phase_screen(
     Ok(())
 }
 
-/// Purge the channel and post a fresh attract screen (used on transition into Attract).
-pub async fn post_attract_screen(runtime: &GameRuntime) -> anyhow::Result<()> {
-    reset_channel_cache(&runtime.http, runtime.channel_id).await;
-
-    // Kick off the first story job now (idempotent) so it's generated and waiting on the
-    // board the moment the game switches to Playing. The worker persists it but skips the
-    // board UI update while we're in attract.
+/// Enqueue background pre-game generation (story job + merchant catalog). Idempotent.
+pub async fn kickoff_attract_generation(runtime: &GameRuntime) {
     {
         let board = runtime.board.lock().await;
         engine::ensure_story_generation(
@@ -176,9 +171,27 @@ pub async fn post_attract_screen(runtime: &GameRuntime) -> anyhow::Result<()> {
             Some(&runtime.pending_quests),
         );
     }
+    {
+        let merchant = runtime.merchant.lock().await;
+        engine::ensure_merchant_catalog_generation(
+            &merchant,
+            Some(&runtime.generation_queue),
+            Some(&runtime.pending_merchant_catalog),
+        );
+    }
+}
+
+/// Purge the channel and post a fresh attract screen (used on transition into Attract).
+pub async fn post_attract_screen(runtime: &GameRuntime) -> anyhow::Result<()> {
+    reset_channel_cache(&runtime.http, runtime.channel_id).await;
 
     let message = build_attract_message(runtime).await;
-    render_phase_screen(runtime, &message).await
+    render_phase_screen(runtime, &message).await?;
+
+    // Draw the attract UI before kicking off slow LLM work so the channel isn't idle
+    // while generation runs.
+    kickoff_attract_generation(runtime).await;
+    Ok(())
 }
 
 /// Refresh the attract screen in place (used when a chud joins during Attract).

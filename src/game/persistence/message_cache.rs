@@ -99,6 +99,12 @@ pub struct MessageCache {
     /// Last content fingerprint sent to the merchant message.
     #[serde(default)]
     pub merchant_content: String,
+    /// Cached visiting announcement for the current merchant visit (cleared when no visit).
+    #[serde(default)]
+    pub merchant_visit_text: Option<String>,
+    /// Identity of the merchant being announced (`index:name`), used to invalidate the cache.
+    #[serde(default)]
+    pub merchant_visit_identity: Option<String>,
     /// Discord message ID of the single attract/complete phase-screen message.
     #[serde(default)]
     pub phase_screen_message_id: Option<u64>,

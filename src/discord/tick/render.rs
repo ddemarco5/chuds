@@ -159,6 +159,14 @@ pub async fn render_tick_outcome(
     guild_hall::update_board_message(http, channel_id, board, max_jobs, None).await?;
 
     {
+        {
+            let merchant_guard = runtime.merchant.lock().await;
+            crate::game::engine::ensure_merchant_catalog_generation(
+                &merchant_guard,
+                Some(&runtime.generation_queue),
+                Some(&runtime.pending_merchant_catalog),
+            );
+        }
         let mut merchant_guard = runtime.merchant.lock().await;
         let force = merchant_guard.spawn_next_tick;
         merchant_guard.spawn_next_tick = false;
