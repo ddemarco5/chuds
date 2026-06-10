@@ -173,7 +173,7 @@ pub async fn render_tick_outcome(
 
     if outcome.story_series_complete {
         tracing::info!(
-            story_line = %crate::story_jobs::catalog().story_line_name,
+            story_line = %crate::story_jobs::story_line_name(),
             "story series complete"
         );
         // Hand off to the completion supervisor: we're running on the simulation's own tick

@@ -10,7 +10,6 @@ use crate::discord::game_screens;
 use crate::discord::guild_hall::recover_persistent_board_messages;
 use crate::discord::report_dm;
 use crate::discord::tick;
-use crate::game::domain::board::Board;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::session::{GamePhase, GameSession};
 use crate::game::engine::{self, DeathContext};
@@ -249,7 +248,7 @@ pub async fn admin_reset(ctx: Context<'_>) -> Result<(), Error> {
     storage::reset_game_data()?;
 
     let rt = &data.runtime;
-    *rt.board.lock().await = Board::default();
+    *rt.board.lock().await = storage::fresh_board();
     *rt.job_queue.lock().await = JobQueue::default();
     *rt.merchant.lock().await = MerchantState::default();
     *rt.item_registry.lock().await = ItemRegistry::default();

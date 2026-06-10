@@ -3,7 +3,6 @@ use crate::game::engine::{self, DeathContext};
 use crate::game::persistence::storage;
 use crate::game::tick::{QuestResolved, TickContext, TickOutcome};
 use crate::game::tuneable_rolls::{death_chance, injury_chance, roll_failure_consequences};
-use crate::story_jobs;
 
 pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::Result<()> {
     let due = ctx.board.tick_and_take_due();
@@ -84,13 +83,12 @@ fn resolve_quest(
 
         if board_quest.story_index.is_some() {
             board.story_next_index += 1;
-            let catalog_len = story_jobs::catalog().stories.len();
             tracing::info!(
                 story_next_index = board.story_next_index,
-                catalog_len,
+                catalog_len = board.effective_story_catalog_len(),
                 "story quest passed, advancing progress"
             );
-            if board.story_next_index >= catalog_len {
+            if board.story_series_complete() {
                 outcome.story_series_complete = true;
                 outcome.final_completer_user_id = Some(discord_user_id);
                 outcome.final_completer_chud_name = Some(player_name.clone());

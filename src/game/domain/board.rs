@@ -64,6 +64,11 @@ pub struct Board {
     /// Index of the next story job to post from the catalog.
     #[serde(default)]
     pub story_next_index: usize,
+    /// Catalog length last used for story progress checks. Updated on resume when
+    /// `data/story_jobs.yaml` is reloaded so a mid-game catalog swap cannot leave
+    /// completion checks stuck on a stale max index.
+    #[serde(default)]
+    pub story_catalog_len: usize,
 }
 
 impl Board {
@@ -73,8 +78,52 @@ impl Board {
 
     /// True once every catalog story mission has been completed.
     pub fn story_series_complete(&self) -> bool {
-        let catalog = crate::story_jobs::catalog();
-        !catalog.stories.is_empty() && self.story_next_index >= catalog.stories.len()
+        let catalog_len = self.effective_story_catalog_len();
+        catalog_len > 0 && self.story_next_index >= catalog_len
+    }
+
+    /// Catalog length used for completion checks. Falls back to the live catalog when
+    /// unset (fresh reset before reconcile); generation always uses the live catalog.
+    pub fn effective_story_catalog_len(&self) -> usize {
+        if self.story_catalog_len > 0 {
+            self.story_catalog_len
+        } else {
+            crate::story_jobs::story_count()
+        }
+    }
+
+    /// Sync story progress bounds to the reloaded catalog. Returns true if board state changed.
+    pub fn reconcile_story_catalog(&mut self) -> bool {
+        let catalog_len = crate::story_jobs::story_count();
+        let mut changed = false;
+
+        if self.story_catalog_len != catalog_len {
+            if self.story_catalog_len > 0 {
+                tracing::info!(
+                    old_len = self.story_catalog_len,
+                    new_len = catalog_len,
+                    story_next_index = self.story_next_index,
+                    "story catalog length changed on resume"
+                );
+            }
+            self.story_catalog_len = catalog_len;
+            changed = true;
+        }
+
+        for quest in &self.quests {
+            if let Some(index) = quest.story_index {
+                if index >= catalog_len {
+                    tracing::warn!(
+                        quest_id = quest.id,
+                        index,
+                        catalog_len,
+                        "story quest index outside reloaded catalog"
+                    );
+                }
+            }
+        }
+
+        changed
     }
 
     /// Add a fully-generated quest to the board and return its assigned id.

@@ -31,7 +31,7 @@ fn living_chud_names() -> Vec<String> {
 
 /// Build the attract-screen message (story title, countdown, join prompt, chud roster).
 async fn build_attract_message(runtime: &GameRuntime) -> ComponentsV2Message {
-    let title = &story_jobs::catalog().story_line_name;
+    let title = story_jobs::story_line_name();
     let when = {
         let session = runtime.session.lock().await;
         match session.game_start_at {
@@ -54,7 +54,7 @@ async fn build_attract_message(runtime: &GameRuntime) -> ComponentsV2Message {
 
 /// Build the game-complete screen (final mission, game stats, chudlerboard, per-chud stats).
 async fn build_complete_message(runtime: &GameRuntime) -> ComponentsV2Message {
-    let title = &story_jobs::catalog().story_line_name;
+    let title = story_jobs::story_line_name();
 
     let (completer, total_ticks) = {
         let session = runtime.session.lock().await;

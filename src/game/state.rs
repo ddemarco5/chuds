@@ -24,15 +24,18 @@ impl GameState {
     pub fn load() -> anyhow::Result<Self> {
         let item_registry = storage::load_item_registry()?;
         let merchant = storage::load_merchant_state(&item_registry)?;
+        let mut board = storage::load_board()?;
+        let mut session = storage::load_session()?;
+        storage::resume_story_state(&mut board, &mut session)?;
         Ok(Self {
-            board: storage::load_board()?,
+            board,
             hospital: storage::load_hospital()?,
             graveyard: storage::load_graveyard()?,
             starting_benefits: storage::load_starting_benefits()?,
             job_queue: storage::load_job_queue()?,
             item_registry,
             guild_hall: crate::game::domain::guild_hall::GuildHall { merchant },
-            session: storage::load_session()?,
+            session,
         })
     }
 

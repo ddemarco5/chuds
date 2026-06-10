@@ -121,9 +121,9 @@ pub fn ensure_story_generation(
     generation_queue: Option<&tokio::sync::mpsc::UnboundedSender<GenerationJob>>,
     pending_quests: Option<&AtomicUsize>,
 ) -> bool {
-    let catalog = story_jobs::catalog();
-    if catalog.stories.is_empty()
-        || board.story_next_index >= catalog.stories.len()
+    let catalog_len = story_jobs::story_count();
+    if catalog_len == 0
+        || board.story_next_index >= catalog_len
         || board.has_story_quest()
     {
         return false;
@@ -137,7 +137,9 @@ pub fn ensure_story_generation(
     }
 
     let index = board.story_next_index;
-    let entry = &catalog.stories[index];
+    let Some(entry) = story_jobs::story_entry(index) else {
+        return false;
+    };
     pending.fetch_add(1, Ordering::SeqCst);
     if gen_q
         .send(GenerationJob::QuestCreation {
@@ -217,11 +219,11 @@ pub fn refill_board(
     generation_queue: Option<&tokio::sync::mpsc::UnboundedSender<GenerationJob>>,
     pending_quests: Option<&AtomicUsize>,
 ) -> usize {
-    let catalog = story_jobs::catalog();
     // Story job takes priority: keep its slot reserved while it is generated from the
     // catalog (bootstrap/recovery fallback) before filling from the regular queue.
-    if !catalog.stories.is_empty()
-        && board.story_next_index < catalog.stories.len()
+    let catalog_len = story_jobs::story_count();
+    if catalog_len > 0
+        && board.story_next_index < catalog_len
         && !board.has_story_quest()
     {
         ensure_story_generation(board, generation_queue, pending_quests);
@@ -805,10 +807,9 @@ pub async fn finish_quest_result(
     if result.passed {
         let story_reward = board_quest
             .story_index
-            .and_then(|i| story_jobs::catalog().stories.get(i))
-            .and_then(|entry| entry.reward.as_ref());
+            .and_then(story_jobs::story_reward);
 
-        let seed = if let Some(reward) = story_reward {
+        let seed = if let Some(reward) = story_reward.as_ref() {
             Some(roll_item(
                 difficulty,
                 &mut rand::thread_rng(),
@@ -978,5 +979,8 @@ pub fn save_all(board: &Board, item_registry: &ItemRegistry) -> anyhow::Result<(
 }
 
 pub fn load_all() -> anyhow::Result<(Board, ItemRegistry)> {
-    Ok((storage::load_board()?, storage::load_item_registry()?))
+    let mut board = storage::load_board()?;
+    let mut session = storage::load_session()?;
+    storage::resume_story_state(&mut board, &mut session)?;
+    Ok((board, storage::load_item_registry()?))
 }

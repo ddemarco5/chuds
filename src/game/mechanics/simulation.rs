@@ -144,7 +144,7 @@ pub fn try_quest(
         let after_modifier = (raw_roll as i16 + modifier).max(1) as u8;
         let player_roll = after_modifier.max(floor);
         let floor_applied = modifier == 0 && player_roll > after_modifier;
-        let trial_roll: u8 = rng.gen_range(1..=required + 1);
+        let trial_roll: u8 = rng.gen_range(1..=required);
         let passed = player_roll >= trial_roll;
 
         outcomes.push(TrialOutcome {

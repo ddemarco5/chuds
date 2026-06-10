@@ -14,7 +14,7 @@ use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::merchants;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::Player;
-use crate::game::domain::session::GameSession;
+use crate::game::domain::session::{GamePhase, GameSession};
 use crate::game::persistence::chudmasters::Chudmasters;
 use crate::game::persistence::message_cache::MessageCache;
 
@@ -69,10 +69,47 @@ pub fn save_board(board: &Board) -> anyhow::Result<()> {
 /// Load the quest board, returning an empty board if no file exists yet.
 pub fn load_board() -> anyhow::Result<Board> {
     if !Path::new(BOARD_PATH).exists() {
-        return Ok(Board::default());
+        return Ok(fresh_board());
     }
     let yaml = std::fs::read_to_string(BOARD_PATH).context("reading board")?;
     serde_yaml::from_str(&yaml).context("parsing board")
+}
+
+/// New board with story catalog length initialized from the current catalog.
+pub fn fresh_board() -> Board {
+    let mut board = Board::default();
+    board.reconcile_story_catalog();
+    board
+}
+
+/// Reconcile persisted story progress with the reloaded catalog and session phase.
+pub fn resume_story_state(board: &mut Board, session: &mut GameSession) -> anyhow::Result<bool> {
+    crate::story_jobs::reload()?;
+    let mut changed = board.reconcile_story_catalog();
+    if reconcile_session_story(session, board) {
+        changed = true;
+    }
+    if changed {
+        save_board(board)?;
+        save_session(session)?;
+    }
+    Ok(changed)
+}
+
+/// Undo a premature Complete phase when the reloaded catalog still has story missions left.
+pub fn reconcile_session_story(session: &mut GameSession, board: &Board) -> bool {
+    if session.phase == GamePhase::Complete && !board.story_series_complete() {
+        tracing::warn!(
+            story_next_index = board.story_next_index,
+            catalog_len = board.story_catalog_len,
+            "session marked complete but story catalog still has missions; resuming Playing"
+        );
+        session.phase = GamePhase::Playing;
+        session.final_completer_user_id = None;
+        session.final_completer_chud_name = None;
+        return true;
+    }
+    false
 }
 
 /// Persist the hospital to `data/hospital.yaml`.
@@ -340,7 +377,7 @@ pub fn reset_game_data() -> anyhow::Result<()> {
                 .with_context(|| format!("deleting player {}", id))?;
         }
     }
-    save_board(&Board::default())?;
+    save_board(&fresh_board())?;
     save_job_queue(&JobQueue::default())?;
     save_hospital(&Hospital::default())?;
     save_graveyard(&Graveyard::default())?;
