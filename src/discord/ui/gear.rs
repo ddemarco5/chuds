@@ -94,21 +94,6 @@ fn format_equipped_block(slot: EquipmentSlot, item: Option<&crate::game::domain:
     }
 }
 
-pub fn format_equipped_gear(player: &Player, registry: &ItemRegistry) -> String {
-    EquipmentSlot::ALL
-        .iter()
-        .filter_map(|&slot| {
-            let item = player
-                .chud_ref()
-                .equipment
-                .item_id_in_slot(slot)
-                .and_then(|id| registry.get(id))?;
-            Some(format_equipped_block(slot, Some(item)))
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
 fn sell_button(item_id: u32, value: u32, confirm_pending: bool) -> Button {
     if confirm_pending {
         Button::danger(format!("g_sell_confirm:{item_id}"), "Are you sure?")

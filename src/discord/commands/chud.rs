@@ -3,7 +3,6 @@ use crate::discord::guild_hall;
 use crate::discord::game_screens;
 use crate::discord::channel::append_activity_log;
 use crate::discord::context::{Context, Error, GameRuntime};
-use crate::discord::ui::format_equipped_gear;
 use crate::game::busy::BusyReason;
 use crate::game::domain::player::Player;
 use crate::game::domain::session::GamePhase;
@@ -13,13 +12,51 @@ use crate::game::mechanics::simulation::effective_stats;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::storage;
 
+fn format_equipment_summary(player: &Player, registry: &ItemRegistry) -> String {
+    let chud = player.chud_ref();
+    let mut lines = Vec::new();
+    if let Some(id) = chud.equipment.gear {
+        if let Some(item) = registry.get(id) {
+            lines.push(format!(
+                "Gear: **{}** ({}) [{}]",
+                item.name,
+                item.subtype,
+                item.stats.format_triplet(),
+            ));
+        }
+    }
+    if let Some(id) = chud.equipment.weapon {
+        if let Some(item) = registry.get(id) {
+            lines.push(format!(
+                "Weapon: **{}** [{}]",
+                item.name,
+                item.stats.format_triplet(),
+            ));
+        }
+    }
+    for (i, slot) in chud.equipment.misc.iter().enumerate() {
+        if let Some(id) = slot {
+            if let Some(item) = registry.get(*id) {
+                lines.push(format!(
+                    "Misc {}: **{}** ({}) [{}]",
+                    i + 1,
+                    item.name,
+                    item.subtype,
+                    item.stats.format_triplet(),
+                ));
+            }
+        }
+    }
+    lines.join("\n")
+}
+
 fn format_inspect_description(player: &Player, registry: &ItemRegistry) -> String {
     let chud = player.chud_ref();
     let mut msg = chud_msg!("inspect_description", chud.name, chud.description);
-    let gear = format_equipped_gear(player, registry);
-    if !gear.is_empty() {
+    let equipment = format_equipment_summary(player, registry);
+    if !equipment.is_empty() {
         msg.push_str("\n\n");
-        msg.push_str(&gear);
+        msg.push_str(&equipment);
     }
     msg
 }
@@ -140,44 +177,7 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         Some(p) => {
             let chud = p.chud_ref();
             let registry = ctx.data().runtime.item_registry.lock().await;
-            let mut equipment_lines = Vec::new();
-            if let Some(id) = chud.equipment.gear {
-                if let Some(item) = registry.get(id) {
-                    equipment_lines.push(format!(
-                        "Gear: **{}** ({}) [{}]",
-                        item.name,
-                        item.subtype,
-                        item.stats.format_triplet(),
-                    ));
-                }
-            }
-            if let Some(id) = chud.equipment.weapon {
-                if let Some(item) = registry.get(id) {
-                    equipment_lines.push(format!(
-                        "Weapon: **{}** [{}]",
-                        item.name,
-                        item.stats.format_triplet(),
-                    ));
-                }
-            }
-            for (i, slot) in chud.equipment.misc.iter().enumerate() {
-                if let Some(id) = slot {
-                    if let Some(item) = registry.get(*id) {
-                        equipment_lines.push(format!(
-                            "Misc {}: **{}** ({}) [{}]",
-                            i + 1,
-                            item.name,
-                            item.subtype,
-                            item.stats.format_triplet(),
-                        ));
-                    }
-                }
-            }
-            let equipment = if equipment_lines.is_empty() {
-                String::new()
-            } else {
-                equipment_lines.join("\n")
-            };
+            let equipment = format_equipment_summary(&p, &registry);
             let stash_line = if p.stash.is_empty() {
                 format!("Stash: empty (0/{STASH_CAPACITY}) - use `/gear` to manage loadout")
             } else {

@@ -60,7 +60,7 @@ pub async fn respond_ephemeral_update(
 }
 
 pub use gear::{
-    build_gear_message, build_gear_open_message, derive_gear_mode, format_equipped_gear,
+    build_gear_message, build_gear_open_message, derive_gear_mode,
     gear_equipment_locked_notice, handle_gear_button, GearInteractionMode,
 };
 pub use merchant::{
