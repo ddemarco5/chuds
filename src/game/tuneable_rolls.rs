@@ -108,12 +108,6 @@ const DEATH_CHANCE_AT_MARGIN_8: f64 = 0.20;
 /// Death chance at margin -9.
 const DEATH_CHANCE_AT_MARGIN_9: f64 = 0.70;
 
-// ── Chud creation ─────────────────────────────────────────────────────────────
-
-/// Each starting stat is rolled in 1..=CHUD_STAT_ROLL_MAX, then trimmed until sum ≤ cap.
-const CHUD_STAT_ROLL_MAX: u8 = 3;
-const CHUD_STAT_TOTAL_CAP: u8 = 5;
-
 // ── Shared RNG helpers ────────────────────────────────────────────────────────
 
 fn sample_unit_jitter(rng: &mut impl Rng, stddev: f64) -> f64 {
@@ -500,24 +494,4 @@ pub fn roll_failure_consequences(margin: i16, rng: &mut impl Rng) -> FailureCons
         died: false,
         hospital_ticks: roll_injury_outcome(margin, rng),
     }
-}
-
-// ── Chud creation rolls ───────────────────────────────────────────────────────
-
-pub fn roll_chud_stats(rng: &mut impl Rng) -> (u8, u8, u8) {
-    let mut strength = rng.gen_range(1u8..=CHUD_STAT_ROLL_MAX);
-    let mut smarts   = rng.gen_range(1u8..=CHUD_STAT_ROLL_MAX);
-    let mut stealth  = rng.gen_range(1u8..=CHUD_STAT_ROLL_MAX);
-
-    while strength + smarts + stealth > CHUD_STAT_TOTAL_CAP {
-        if strength >= smarts && strength >= stealth {
-            strength -= 1;
-        } else if smarts >= stealth {
-            smarts -= 1;
-        } else {
-            stealth -= 1;
-        }
-    }
-
-    (strength, smarts, stealth)
 }

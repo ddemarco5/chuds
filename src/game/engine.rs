@@ -277,8 +277,8 @@ pub fn enqueue_quest(
     storage::save_job_queue(queue)
 }
 
-/// Mean stat level assumed when no chuds exist yet, roughly a starting chud's power.
-pub const DEFAULT_MEAN_CHUD_STAT: f64 = 3.0;
+/// Mean stat level assumed when no chuds exist yet (matches flat starting stats).
+pub const DEFAULT_MEAN_CHUD_STAT: f64 = 1.0;
 
 /// Average of every chud's strength/smarts/stealth across all saved players. Falls back to
 /// [`DEFAULT_MEAN_CHUD_STAT`] when there are no chuds yet.

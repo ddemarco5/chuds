@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::game::domain::item::Item;
-use crate::game::tuneable_rolls::roll_chud_stats;
 use crate::game::domain::quest_result::QuestResult;
 use crate::game::domain::stash::Stash;
 
@@ -200,12 +199,8 @@ impl Player {
     }
 }
 
-/// Create a new chud for the given Discord user with rolled stats.
-/// Stats are each rolled 1–3, then trimmed (highest first) until the sum is ≤ 5.
+/// Create a new chud for the given Discord user. All stats start at 1.
 pub fn create_chud(discord_user_id: u64, name: String, description: String) -> Player {
-    let mut rng = rand::thread_rng();
-    let (strength, smarts, stealth) = roll_chud_stats(&mut rng);
-
     Player {
         discord_user_id,
         cash: 0,
@@ -213,9 +208,9 @@ pub fn create_chud(discord_user_id: u64, name: String, description: String) -> P
         chud: Some(Chud {
             name,
             description,
-            strength,
-            smarts,
-            stealth,
+            strength: 1,
+            smarts: 1,
+            stealth: 1,
             experience: 1,
             str_successes: 0,
             smt_successes: 0,
