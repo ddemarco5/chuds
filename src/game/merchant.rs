@@ -9,9 +9,9 @@ use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::storage;
 use crate::starting_items;
 
-pub const MERCHANT_VISIT_CHANCE: f64 = 0.10;
+pub const MERCHANT_VISIT_CHANCE: f64 = 0.20;
 pub const MERCHANT_STOCK_SIZE: usize = 5;
-pub const MERCHANT_STAY_TICKS: u8 = 2;
+pub const MERCHANT_STAY_TICKS: (u8, u8) = (2, 5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MerchantTickEvent {
@@ -154,9 +154,10 @@ fn spawn_visit() -> MerchantVisit {
         .into_iter()
         .map(|item| MerchantStockSlot { item, sold: false })
         .collect();
+    let (min, max) = MERCHANT_STAY_TICKS;
     MerchantVisit {
         merchant_name: chud_msg!("merchant_names"),
-        ticks_remaining: MERCHANT_STAY_TICKS,
+        ticks_remaining: rng.gen_range(min..=max),
         stock,
     }
 }
