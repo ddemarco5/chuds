@@ -312,6 +312,19 @@ pub fn build_graveyard_components(entries: &[GraveyardEntry]) -> ComponentsV2Mes
     message
 }
 
+fn rarity_prefix(rarity: &str) -> &'static str {
+    match rarity {
+        "uncommon" => "\u{25C7} ",
+        "rare" => "\u{25C6} ",
+        "exceptional" => "\u{2605} ",
+        _ => "",
+    }
+}
+
+pub fn format_item_display_name(item: &Item) -> String {
+    format!("{}{}", rarity_prefix(&item.rarity), item.name)
+}
+
 pub fn format_item_block(item: &Item) -> String {
     let subtype = if item.subtype.is_empty() {
         String::new()
@@ -320,7 +333,7 @@ pub fn format_item_block(item: &Item) -> String {
     };
     format!(
         "**{}**{} [{}] - ${}\n{}",
-        item.name,
+        format_item_display_name(item),
         subtype,
         item.stats.format_triplet(),
         item.value,

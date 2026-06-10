@@ -131,6 +131,10 @@ pub fn format_roll_breakdown(modifier: i16, floor_applied: bool, final_roll: u8)
     }
 }
 
+fn default_common_rarity() -> String {
+    "common".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Item {
     #[serde(default)]
@@ -140,6 +144,8 @@ pub struct Item {
     pub subtype: String,
     pub stats: ItemStats,
     pub description: String,
+    #[serde(default = "default_common_rarity")]
+    pub rarity: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -182,6 +188,7 @@ impl ItemSeed {
             subtype: self.subtype,
             stats: self.stats,
             description,
+            rarity: self.rarity,
             trigger: self.trigger,
             effect: self.effect,
             value: 0,
