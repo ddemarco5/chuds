@@ -23,7 +23,7 @@ const MIN_TRIALS: usize = 1;
 /// Deliberately broad so easy and dangerous outliers both appear: raise it for an even
 /// wider mix of trivial-to-brutal jobs, lower it to cluster difficulty tightly on the
 /// average player's power level.
-pub const AUTO_JOB_DIFFICULTY_STDDEV: f64 = 2.0;
+pub const AUTO_JOB_DIFFICULTY_STDDEV: f64 = 1.0;
 /// Probability (0.0-1.0) that any given stat is irrelevant (set to 0) for a trial.
 const STAT_ZERO_CHANCE: f64 = 0.10;
 
