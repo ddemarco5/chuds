@@ -835,7 +835,7 @@ pub async fn finish_quest_result(
                 .await?;
             let rarity = seed.rarity.clone();
             let mut item = seed.into_item(name, description);
-            item.value = roll_item_value(&item.stats, &mut rand::thread_rng());
+            item.value = roll_item_value(&item.stats, &item.rarity, &mut rand::thread_rng());
             tracing::info!(
                 name = %item.name,
                 item_type = ?item.item_type,

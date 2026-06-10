@@ -181,7 +181,7 @@ impl MerchantGenerator {
             let mut rng = rand::thread_rng();
             for (seed, flavor) in seeds.into_iter().zip(flavors) {
                 let mut item = seed.into_item(flavor.name, flavor.description);
-                item.value = roll_item_value(&item.stats, &mut rng);
+                item.value = roll_item_value(&item.stats, &item.rarity, &mut rng);
                 let id = registry.add_item(item);
                 stock_pool.push(id);
             }

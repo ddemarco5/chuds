@@ -76,6 +76,10 @@ const ITEM_VALUE_ANCHOR_GOLD_HIGH: f64 = 1000.0;
 /// Raise σ for wider swings (same stats can roll noticeably higher or lower); lower σ tightens
 /// prices toward the anchor curve; 0 removes jitter entirely.
 const ITEM_VALUE_JITTER_STDDEV: f64 = 0.15;
+/// Extra price multiplier added on top of stat-derived base (0.10 → +10% gold).
+const ITEM_RARITY_PRICE_BONUS_UNCOMMON: f64 = 0.10;
+const ITEM_RARITY_PRICE_BONUS_RARE: f64 = 0.20;
+const ITEM_RARITY_PRICE_BONUS_EXCEPTIONAL: f64 = 0.30;
 
 // ── Hospital pricing ──────────────────────────────────────────────────────────
 
@@ -259,6 +263,16 @@ fn rarity_min_net(rarity: &str) -> u8 {
     }
 }
 
+fn rarity_price_bonus(rarity: &str) -> f64 {
+    let r = rarity.to_ascii_lowercase();
+    match r.as_str() {
+        "exceptional" => ITEM_RARITY_PRICE_BONUS_EXCEPTIONAL,
+        "rare" => ITEM_RARITY_PRICE_BONUS_RARE,
+        "uncommon" => ITEM_RARITY_PRICE_BONUS_UNCOMMON,
+        _ => 0.0,
+    }
+}
+
 fn rarity_from_net(net: u8) -> String {
     if net >= ITEM_RARITY_MIN_NET_EXCEPTIONAL {
         "exceptional".to_string()
@@ -395,15 +409,16 @@ fn roll_item_stats(
     (stats, rarity)
 }
 
-/// Roll gold value from stats: exponential base from net stat value × normal jitter.
-pub fn roll_item_value(stats: &ItemStats, rng: &mut impl Rng) -> u32 {
+/// Roll gold value from stats and rarity: exponential base from net stat value × rarity bonus × normal jitter.
+pub fn roll_item_value(stats: &ItemStats, rarity: &str, rng: &mut impl Rng) -> u32 {
     let net = stats.net_stat_value() as f64;
     let rate = (ITEM_VALUE_ANCHOR_GOLD_HIGH / ITEM_VALUE_ANCHOR_GOLD_LOW)
         .powf(1.0 / (ITEM_VALUE_ANCHOR_STAT_HIGH - ITEM_VALUE_ANCHOR_STAT_LOW));
     let base_coeff = ITEM_VALUE_ANCHOR_GOLD_LOW / rate.powf(ITEM_VALUE_ANCHOR_STAT_LOW);
     let base = base_coeff * rate.powf(net);
+    let rarity_mult = 1.0 + rarity_price_bonus(rarity);
     let multiplier = sample_unit_jitter(rng, ITEM_VALUE_JITTER_STDDEV);
-    (base * multiplier).round() as u32
+    (base * rarity_mult * multiplier).round() as u32
 }
 
 // ── Hospital pricing rolls ────────────────────────────────────────────────────

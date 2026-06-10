@@ -20,7 +20,7 @@ impl ItemRegistry {
         let mut rng = rand::thread_rng();
         for item in &mut self.items {
             if item.value == 0 {
-                item.value = roll_item_value(&item.stats, &mut rng);
+                item.value = roll_item_value(&item.stats, &item.rarity, &mut rng);
                 tracing::warn!(
                     item_id = item.id,
                     name = %item.name,
