@@ -71,7 +71,8 @@ fn validate_rarity(rarity: &str) -> String {
 
 static CATALOG: LazyLock<StoryCatalog> = LazyLock::new(|| {
     let file: StoryJobsFile =
-        serde_yaml::from_str(include_str!("story_jobs.yaml")).expect("invalid story_jobs.yaml");
+        serde_yaml::from_str(include_str!("../data/story_jobs.yaml"))
+            .expect("invalid data/story_jobs.yaml");
     StoryCatalog {
         story_line_name: file.story_line_name,
         stories: file
