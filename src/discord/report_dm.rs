@@ -7,7 +7,7 @@ use crate::game::tick::QuestResolved;
 
 pub const DM_CHAR_LIMIT: usize = 2000;
 
-fn pack_dm_segments(segments: &[String], limit: usize) -> Vec<String> {
+pub(crate) fn pack_dm_segments(segments: &[String], limit: usize) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
     let mut current = String::new();
 

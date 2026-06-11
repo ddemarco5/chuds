@@ -159,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::write_job(),
                 discord::commands::delete_job(),
                 discord::commands::chud(),
+                discord::commands::all_chuds(),
                 discord::commands::chudlerboard(),
                 discord::commands::add_chud(),
                 discord::commands::delete_chud(),

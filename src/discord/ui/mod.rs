@@ -31,6 +31,16 @@ pub async fn edit_ephemeral_message(
     Ok(())
 }
 
+pub async fn send_ephemeral_followup(
+    http: &Http,
+    interaction_token: &str,
+    message: &ComponentsV2Message,
+) -> anyhow::Result<()> {
+    http.create_followup_message(interaction_token, message, vec![])
+        .await?;
+    Ok(())
+}
+
 pub async fn respond_ephemeral_create(
     http: &Http,
     interaction: &ComponentInteraction,
