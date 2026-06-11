@@ -21,7 +21,7 @@ fn is_optimal(outcome: &TrialOutcome, effective: (u8, u8, u8)) -> bool {
     chosen_score >= best_score
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletedTrial {
     pub situation: String,
     pub stat_used: StatChoice,
@@ -41,7 +41,7 @@ impl CompletedTrial {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestResult {
     pub quest_title: String,
     pub quest_giver: String,

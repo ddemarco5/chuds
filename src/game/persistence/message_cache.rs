@@ -51,7 +51,7 @@ where
 }
 
 /// State for a single persistent job-slot Discord message.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JobSlot {
     /// Discord message ID for this slot's persistent post (None until first posted).
     pub message_id: Option<u64>,
@@ -117,4 +117,26 @@ pub struct MessageCache {
     /// Activity log entries (kind controls bullet vs italic rendering on sync).
     #[serde(default, deserialize_with = "deserialize_activity_log_entries")]
     pub activity_log_entries: Vec<ActivityLogEntry>,
+}
+
+/// Copy job-board UI fields from a working cache into the on-disk cache without
+/// clobbering activity log, merchant, or phase-screen state updated concurrently.
+pub fn merge_board_ui_cache(from: &MessageCache, into: &mut MessageCache) {
+    into.slots = from.slots.clone();
+    into.header_message_id = from.header_message_id;
+    into.job_board_header = from.job_board_header.clone();
+    into.status_message_id = from.status_message_id;
+    into.status_content = from.status_content.clone();
+    into.status_idle_header = from.status_idle_header.clone();
+    into.status_all_busy_header = from.status_all_busy_header.clone();
+    into.status_no_chuds_header = from.status_no_chuds_header.clone();
+    into.status_hospital_header = from.status_hospital_header.clone();
+}
+
+/// Copy merchant UI fields from a working cache into the on-disk cache.
+pub fn merge_merchant_ui_cache(from: &MessageCache, into: &mut MessageCache) {
+    into.merchant_message_id = from.merchant_message_id;
+    into.merchant_content = from.merchant_content.clone();
+    into.merchant_visit_text = from.merchant_visit_text.clone();
+    into.merchant_visit_identity = from.merchant_visit_identity.clone();
 }

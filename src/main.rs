@@ -316,11 +316,14 @@ async fn main() -> anyhow::Result<()> {
                                     if !worker_session.lock().await.is_playing() {
                                         return;
                                     }
-                                    let mut b = worker_board.lock().await;
+                                    let board = {
+                                        let guard = worker_board.lock().await;
+                                        guard.clone()
+                                    };
                                     if let Err(e) = update_board_message(
                                         &worker_http,
                                         channel_id,
-                                        &mut b,
+                                        &board,
                                         max_jobs,
                                         None,
                                     )

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::game::domain::item::Item;
 use crate::game::tuneable_rolls::roll_item_value;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ItemRegistry {
     pub items: Vec<Item>,
     pub next_id: u32,

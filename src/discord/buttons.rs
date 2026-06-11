@@ -8,6 +8,7 @@ use crate::discord::guild_hall;
 use crate::discord::channel::append_activity_log;
 use crate::discord::context::Data;
 use crate::game::busy::BusyReason;
+use crate::game::domain::board::Board;
 use crate::game::domain::player::Player;
 use crate::game::engine;
 use crate::game::guild_status::{self, GuildHallStatus};
@@ -106,7 +107,7 @@ async fn respond_to_busy(
 
 async fn announce_taken_quest(
     http: &serenity::Http,
-    board: &mut crate::game::domain::board::Board,
+    board: &Board,
     data: &Data,
     info: &engine::AssignInfo,
     status: &GuildHallStatus,
@@ -133,7 +134,7 @@ async fn announce_taken_quest(
 
 pub async fn post_quest_taken_announcement(
     http: &serenity::Http,
-    board: &mut crate::game::domain::board::Board,
+    board: &Board,
     data: &Data,
     info: &engine::AssignInfo,
     status: &GuildHallStatus,
@@ -175,32 +176,57 @@ pub async fn handle_take_button(
     };
 
     let hospital = storage::load_hospital()?;
-    let mut board = data.runtime.board.lock().await;
-    let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
-    if let Some(reason) = status.busy_reason(user_id) {
-        respond_to_busy(ctx, interaction, &player, user_id, reason).await?;
-        return Ok(());
+
+    enum TakeOutcome {
+        Busy(BusyReason),
+        Unavailable,
+        Taken {
+            board: Board,
+            status: GuildHallStatus,
+            info: engine::AssignInfo,
+        },
     }
 
-    let info = match engine::take_and_enqueue_quest(
-        &mut *board,
-        &hospital,
-        user_id,
-        quest_id,
-        &data.runtime.generation_queue,
-        false,
-        Some(&status),
-        data.runtime.job_timeout_tick,
-    ) {
-        Ok(info) => info,
-        Err(_) => {
-            ephemeral_followup(ctx, interaction, "That job is no longer available.").await?;
-            return Ok(());
+    let take_outcome = {
+        let mut board = data.runtime.board.lock().await;
+        let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
+        if let Some(reason) = status.busy_reason(user_id) {
+            TakeOutcome::Busy(reason)
+        } else {
+            match engine::take_and_enqueue_quest(
+                &mut *board,
+                &hospital,
+                user_id,
+                quest_id,
+                &data.runtime.generation_queue,
+                false,
+                Some(&status),
+                data.runtime.job_timeout_tick,
+            ) {
+                Ok(info) => {
+                    let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
+                    TakeOutcome::Taken {
+                        board: board.clone(),
+                        status,
+                        info,
+                    }
+                }
+                Err(_) => TakeOutcome::Unavailable,
+            }
         }
     };
 
-    let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
-    post_quest_taken_announcement(&ctx.http, &mut *board, data, &info, &status).await?;
+    match take_outcome {
+        TakeOutcome::Busy(reason) => {
+            respond_to_busy(ctx, interaction, &player, user_id, reason).await?;
+        }
+        TakeOutcome::Unavailable => {
+            ephemeral_followup(ctx, interaction, "That job is no longer available.").await?;
+        }
+        TakeOutcome::Taken { board, status, info } => {
+            post_quest_taken_announcement(&ctx.http, &board, data, &info, &status).await?;
+        }
+    }
     Ok(())
 }
 
@@ -238,36 +264,56 @@ pub async fn handle_scout_button(
     };
 
     let hospital = storage::load_hospital()?;
-    let mut board = data.runtime.board.lock().await;
-    let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
-    if let Some(reason) = status.busy_reason(user_id) {
-        respond_to_busy(ctx, interaction, &player, user_id, reason).await?;
-        return Ok(());
+
+    enum ScoutOutcome {
+        Busy(BusyReason),
+        Unavailable,
+        Scouted { board: Board, status: GuildHallStatus },
     }
 
-    if !board.scout(quest_id, user_id, data.runtime.job_timeout_tick) {
-        ephemeral_followup(ctx, interaction, "That job is no longer available.").await?;
-        return Ok(());
-    }
-    storage::save_board(&*board)?;
-    let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
+    let scout_outcome = {
+        let mut board = data.runtime.board.lock().await;
+        let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
+        if let Some(reason) = status.busy_reason(user_id) {
+            ScoutOutcome::Busy(reason)
+        } else if !board.scout(quest_id, user_id, data.runtime.job_timeout_tick) {
+            ScoutOutcome::Unavailable
+        } else {
+            storage::save_board(&*board)?;
+            let status = guild_status::compute_guild_hall_status(&*board, &hospital)?;
+            ScoutOutcome::Scouted {
+                board: board.clone(),
+                status,
+            }
+        }
+    };
 
-    let chud_name = player.chud_ref().name.clone();
-    let first_name = chud_name
-        .split_whitespace()
-        .next()
-        .unwrap_or(&chud_name)
-        .to_string();
-    let content = chud_msg!("chud_scouts_out", first_name);
-    append_activity_log(&data.runtime.activity_log, &content).await;
-    guild_hall::update_board_message(
-        &ctx.http,
-        data.runtime.channel_id,
-        &mut *board,
-        data.runtime.max_jobs,
-        Some(&status),
-    )
-    .await?;
+    match scout_outcome {
+        ScoutOutcome::Busy(reason) => {
+            respond_to_busy(ctx, interaction, &player, user_id, reason).await?;
+        }
+        ScoutOutcome::Unavailable => {
+            ephemeral_followup(ctx, interaction, "That job is no longer available.").await?;
+        }
+        ScoutOutcome::Scouted { board, status } => {
+            let chud_name = player.chud_ref().name.clone();
+            let first_name = chud_name
+                .split_whitespace()
+                .next()
+                .unwrap_or(&chud_name)
+                .to_string();
+            let content = chud_msg!("chud_scouts_out", first_name);
+            append_activity_log(&data.runtime.activity_log, &content).await;
+            guild_hall::update_board_message(
+                &ctx.http,
+                data.runtime.channel_id,
+                &board,
+                data.runtime.max_jobs,
+                Some(&status),
+            )
+            .await?;
+        }
+    }
     Ok(())
 }
 
@@ -332,11 +378,14 @@ pub async fn handle_heal_button(
         )
         .await?;
 
-    let mut board = data.runtime.board.lock().await;
+    let board = {
+        let guard = data.runtime.board.lock().await;
+        guard.clone()
+    };
     guild_hall::refresh_board_status(
         &ctx.http,
         data.runtime.channel_id,
-        &mut *board,
+        &board,
         data.runtime.max_jobs,
     )
     .await?;

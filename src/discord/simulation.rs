@@ -159,7 +159,7 @@ impl SimulationController {
             );
             storage::save_board(&board)?;
             storage::save_job_queue(&queue)?;
-            update_board_message(&rt.http, rt.channel_id, &mut board, rt.max_jobs, None).await?;
+            update_board_message(&rt.http, rt.channel_id, &board, rt.max_jobs, None).await?;
         }
 
         let merchant = rt.merchant.lock().await;

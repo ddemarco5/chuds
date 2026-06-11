@@ -144,16 +144,21 @@ pub async fn append_activity_log_with_kind(
 
 /// Create or edit the persistent activity log message from cache.
 pub async fn sync_activity_log_now(http: &serenity::Http, channel_id: u64) {
-    let _guard = storage::message_cache_lock().await;
-    let mut cache = storage::load_message_cache().unwrap_or_default();
-    if cache.activity_log_entries.is_empty() {
-        return;
-    }
+    let (body, existing_msg_id) = {
+        let _guard = storage::message_cache_lock().await;
+        let cache = storage::load_message_cache().unwrap_or_default();
+        if cache.activity_log_entries.is_empty() {
+            return;
+        }
+        (
+            render_activity_log(&cache.activity_log_entries),
+            cache.activity_log_message_id,
+        )
+    };
 
-    let body = render_activity_log(&cache.activity_log_entries);
     let ch = serenity::ChannelId::new(channel_id);
 
-    if let Some(msg_id) = cache.activity_log_message_id {
+    let posted_msg_id = if let Some(msg_id) = existing_msg_id {
         match http
             .edit_message(
                 ch,
@@ -166,21 +171,38 @@ pub async fn sync_activity_log_now(http: &serenity::Http, channel_id: u64) {
             Ok(_) => return,
             Err(e) => {
                 tracing::warn!(msg_id, err = %e, "failed to edit activity log, posting new message");
+                match http
+                    .send_message(ch, vec![], &serenity::CreateMessage::new().content(&body))
+                    .await
+                {
+                    Ok(msg) => Some(msg.id.get()),
+                    Err(e) => {
+                        tracing::warn!(err = %e, "failed to post activity log message");
+                        return;
+                    }
+                }
             }
         }
-    }
+    } else {
+        match http
+            .send_message(ch, vec![], &serenity::CreateMessage::new().content(&body))
+            .await
+        {
+            Ok(msg) => Some(msg.id.get()),
+            Err(e) => {
+                tracing::warn!(err = %e, "failed to post activity log message");
+                return;
+            }
+        }
+    };
 
-    match http
-        .send_message(ch, vec![], &serenity::CreateMessage::new().content(&body))
-        .await
-    {
-        Ok(msg) => {
-            cache.activity_log_message_id = Some(msg.id.get());
-            if let Err(e) = storage::save_message_cache(&cache) {
-                tracing::warn!(err = %e, "failed to save message cache after activity log post");
-            }
+    if let Some(new_id) = posted_msg_id {
+        let _guard = storage::message_cache_lock().await;
+        let mut cache = storage::load_message_cache().unwrap_or_default();
+        cache.activity_log_message_id = Some(new_id);
+        if let Err(e) = storage::save_message_cache(&cache) {
+            tracing::warn!(err = %e, "failed to save message cache after activity log post");
         }
-        Err(e) => tracing::warn!(err = %e, "failed to post activity log message"),
     }
 }
 

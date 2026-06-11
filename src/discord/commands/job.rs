@@ -140,24 +140,27 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
 
     let max_jobs = ctx.data().runtime.max_jobs;
     let channel_id = ctx.data().runtime.channel_id;
-    let mut board = ctx.data().runtime.board.lock().await;
-    let mut queue = ctx.data().runtime.job_queue.lock().await;
-    engine::refill_board(
-        &mut *board,
-        &mut *queue,
-        max_jobs,
-        ctx.data().runtime.job_timeout_tick,
-        Some(&ctx.data().runtime.generation_queue),
-        Some(&ctx.data().runtime.pending_quests),
-    );
-    storage::save_board(&*board)?;
-    storage::save_job_queue(&*queue)?;
+    let board = {
+        let mut board = ctx.data().runtime.board.lock().await;
+        let mut queue = ctx.data().runtime.job_queue.lock().await;
+        engine::refill_board(
+            &mut *board,
+            &mut *queue,
+            max_jobs,
+            ctx.data().runtime.job_timeout_tick,
+            Some(&ctx.data().runtime.generation_queue),
+            Some(&ctx.data().runtime.pending_quests),
+        );
+        storage::save_board(&*board)?;
+        storage::save_job_queue(&*queue)?;
+        board.clone()
+    };
     // Only redraw the board while playing; attract/complete own the channel.
     if ctx.data().runtime.is_playing().await {
         guild_hall::update_board_message(
             &ctx.serenity_context().http,
             channel_id,
-            &mut *board,
+            &board,
             max_jobs,
             None,
         )
@@ -178,22 +181,25 @@ pub async fn delete_job(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
     }
     let max_jobs = ctx.data().runtime.max_jobs;
     let channel_id = ctx.data().runtime.channel_id;
-    let mut board = ctx.data().runtime.board.lock().await;
-    let mut queue = ctx.data().runtime.job_queue.lock().await;
-    engine::delete_quest(&mut *board, quest_id)?;
-    engine::refill_board(
-        &mut *board,
-        &mut *queue,
-        max_jobs,
-        ctx.data().runtime.job_timeout_tick,
-        Some(&ctx.data().runtime.generation_queue),
-        Some(&ctx.data().runtime.pending_quests),
-    );
-    storage::save_job_queue(&*queue)?;
+    let board = {
+        let mut board = ctx.data().runtime.board.lock().await;
+        let mut queue = ctx.data().runtime.job_queue.lock().await;
+        engine::delete_quest(&mut *board, quest_id)?;
+        engine::refill_board(
+            &mut *board,
+            &mut *queue,
+            max_jobs,
+            ctx.data().runtime.job_timeout_tick,
+            Some(&ctx.data().runtime.generation_queue),
+            Some(&ctx.data().runtime.pending_quests),
+        );
+        storage::save_job_queue(&*queue)?;
+        board.clone()
+    };
     guild_hall::update_board_message(
         &ctx.serenity_context().http,
         channel_id,
-        &mut *board,
+        &board,
         max_jobs,
         None,
     )
@@ -226,23 +232,26 @@ pub async fn assign(
     let max_jobs = ctx.data().runtime.max_jobs;
     let channel_id = ctx.data().runtime.channel_id;
     let hospital = storage::load_hospital()?;
-    let mut board = ctx.data().runtime.board.lock().await;
-    let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
-    engine::take_and_enqueue_quest(
-        &mut *board,
-        &hospital,
-        target_user_id,
-        quest_id,
-        &ctx.data().runtime.generation_queue,
-        false,
-        Some(&status),
-        ctx.data().runtime.job_timeout_tick,
-    )?;
-    let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
+    let (board, status) = {
+        let mut board = ctx.data().runtime.board.lock().await;
+        let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
+        engine::take_and_enqueue_quest(
+            &mut *board,
+            &hospital,
+            target_user_id,
+            quest_id,
+            &ctx.data().runtime.generation_queue,
+            false,
+            Some(&status),
+            ctx.data().runtime.job_timeout_tick,
+        )?;
+        let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
+        (board.clone(), status)
+    };
     guild_hall::update_board_message(
         http,
         channel_id,
-        &mut *board,
+        &board,
         max_jobs,
         Some(&status),
     )

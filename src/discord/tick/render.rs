@@ -7,28 +7,31 @@ use crate::discord::formatting;
 use crate::discord::guild_hall;
 use crate::discord::report_dm;
 use crate::discord::ui::update_merchant_message;
-use crate::game::domain::board::Board;
-use crate::game::engine;
-use crate::game::merchant::MerchantState;
-use crate::game::persistence::item_registry::ItemRegistry;
+use crate::game::engine::{self, KillChudPending, KillResult};
 use crate::game::persistence::message_cache::ActivityLogKind;
 use crate::game::persistence::storage;
 use crate::game::tick::TickOutcome;
 
 /// Render a completed [`TickOutcome`] to Discord: activity log, DMs, board, merchant.
 ///
-/// `board`, `item_registry`, and `merchant` are the already-locked tick guards.
+/// Clones game state under brief locks, then performs all Discord I/O without holding
+/// runtime mutexes so interaction handlers stay responsive.
 pub async fn render_tick_outcome(
     runtime: &GameRuntime,
     outcome: &TickOutcome,
-    board: &mut Board,
-    registry: &mut ItemRegistry,
-    merchant: &mut MerchantState,
+    pending_deaths: &[KillChudPending],
 ) -> anyhow::Result<()> {
     let http = &runtime.http;
     let activity_log = &runtime.activity_log;
     let channel_id = runtime.channel_id;
     let max_jobs = runtime.max_jobs;
+
+    let (board, registry, merchant) = {
+        let b = runtime.board.lock().await;
+        let r = runtime.item_registry.lock().await;
+        let m = runtime.merchant.lock().await;
+        (b.clone(), r.clone(), m.clone())
+    };
 
     for (discord_user_id, message) in &outcome.hospital_releases {
         append_activity_log_deferred(activity_log, ActivityLogKind::Standard, message).await;
@@ -84,25 +87,25 @@ pub async fn render_tick_outcome(
         append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &return_msg).await;
 
         if qr.died {
-            if let Some(ctx) = &qr.death_ctx {
-                let mut graveyard = storage::load_graveyard()?;
-                let mut starting_benefits = storage::load_starting_benefits()?;
-                let kill = engine::kill_chud(
-                    qr.discord_user_id,
-                    ctx,
-                    &mut graveyard,
-                    &mut starting_benefits,
-                    registry,
-                    merchant,
-                    &runtime.gravestone_generator,
-                )
-                .await?;
+            if let Some(pending) = pending_deaths
+                .iter()
+                .find(|p| p.discord_user_id == qr.discord_user_id)
+            {
+                let epitaph =
+                    engine::finish_gravestone_epitaph(&runtime.gravestone_generator, pending)
+                        .await?;
+                let kill = KillResult {
+                    discord_user_id: pending.discord_user_id,
+                    chud_name: pending.chud_name.clone(),
+                    benefits_awarded: pending.benefits_awarded,
+                    epitaph,
+                };
                 report_dm::send_death_dm(http, &kill, Some(&qr.summary)).await;
                 continue;
             }
         }
 
-        report_dm::send_job_completion_dm(http, registry, qr).await;
+        report_dm::send_job_completion_dm(http, &registry, qr).await;
     }
 
     for sr in &outcome.scout_results {
@@ -152,24 +155,8 @@ pub async fn render_tick_outcome(
 
     sync_activity_log_now(http, channel_id).await;
 
-    if !outcome.quest_resolved.is_empty()
-        || !outcome.scout_results.is_empty()
-        || outcome.slots_filled > 0
-    {
-        storage::save_board(board)?;
-    }
-    guild_hall::update_board_message(http, channel_id, board, max_jobs, None).await?;
-
-    crate::game::engine::ensure_merchant_catalog_generation(
-        merchant,
-        Some(&runtime.generation_queue),
-        Some(&runtime.pending_merchant_catalog),
-    );
-    let force = merchant.spawn_next_tick;
-    merchant.spawn_next_tick = false;
-    merchant.advance_tick(force);
-    storage::save_guild_hall(merchant)?;
-    update_merchant_message(http, channel_id, merchant).await?;
+    guild_hall::update_board_message(http, channel_id, &board, max_jobs, None).await?;
+    update_merchant_message(http, channel_id, &merchant).await?;
 
     if outcome.story_series_complete {
         tracing::info!(

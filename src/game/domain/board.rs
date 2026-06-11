@@ -53,7 +53,7 @@ impl BoardQuest {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Board {
     pub quests: Vec<BoardQuest>,
     pub next_id: u32,

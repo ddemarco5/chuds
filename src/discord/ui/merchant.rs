@@ -81,9 +81,11 @@ pub async fn update_merchant_message(
     channel_id: u64,
     merchant: &MerchantState,
 ) -> anyhow::Result<()> {
-    let _cache_guard = storage::message_cache_lock().await;
     let ch = serenity::ChannelId::new(channel_id);
-    let mut cache = storage::load_message_cache().unwrap_or_default();
+    let mut cache = {
+        let _cache_guard = storage::message_cache_lock().await;
+        storage::load_message_cache().unwrap_or_default()
+    };
     let mut cache_dirty = false;
 
     let (visit_text, header_dirty) = resolve_merchant_visit_text(merchant, &mut cache);
@@ -116,7 +118,10 @@ pub async fn update_merchant_message(
     }
 
     if cache_dirty || header_dirty {
-        if let Err(e) = storage::save_message_cache(&cache) {
+        let _cache_guard = storage::message_cache_lock().await;
+        let mut disk = storage::load_message_cache().unwrap_or_default();
+        crate::game::persistence::message_cache::merge_merchant_ui_cache(&cache, &mut disk);
+        if let Err(e) = storage::save_message_cache(&disk) {
             tracing::warn!(err = %e, "failed to save message cache");
         }
     }

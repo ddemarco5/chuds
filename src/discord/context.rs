@@ -18,6 +18,9 @@ use crate::game::generation::quest_generator::QuestGenerator;
 /// Shared game + Discord runtime: every long-lived handle the simulation, ticks, and
 /// commands need. Bundled once so `execute_tick(&runtime)` and the simulation loop avoid
 /// threading a dozen parameters everywhere.
+///
+/// Runtime mutex lock order (always acquire in this order when taking multiple locks):
+/// `board` → `job_queue` → `item_registry` → `merchant`.
 pub struct GameRuntime {
     pub http: Arc<serenity::Http>,
     pub cache: Arc<serenity::Cache>,

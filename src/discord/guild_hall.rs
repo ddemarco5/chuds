@@ -226,7 +226,7 @@ fn build_status_message(status: &GuildHallStatus, headers: &StatusSectionHeaders
 pub async fn refresh_board_status(
     http: &serenity::Http,
     channel_id: u64,
-    board: &mut Board,
+    board: &Board,
     max_jobs: usize,
 ) -> anyhow::Result<()> {
     let hospital = storage::load_hospital()?;
@@ -367,14 +367,16 @@ pub async fn recover_persistent_board_messages(
 pub async fn update_board_message(
     http: &serenity::Http,
     channel_id: u64,
-    board: &mut Board,
+    board: &Board,
     max_jobs: usize,
     status: Option<&GuildHallStatus>,
 ) -> anyhow::Result<()> {
-    let _cache_guard = storage::message_cache_lock().await;
     let ch = serenity::ChannelId::new(channel_id);
 
-    let mut cache = storage::load_message_cache().unwrap_or_default();
+    let mut cache = {
+        let _cache_guard = storage::message_cache_lock().await;
+        storage::load_message_cache().unwrap_or_default()
+    };
     let mut cache_dirty = false;
 
     let filled = board.quests.len();
@@ -515,7 +517,10 @@ pub async fn update_board_message(
     }
 
     if cache_dirty {
-        if let Err(e) = storage::save_message_cache(&cache) {
+        let _cache_guard = storage::message_cache_lock().await;
+        let mut disk = storage::load_message_cache().unwrap_or_default();
+        crate::game::persistence::message_cache::merge_board_ui_cache(&cache, &mut disk);
+        if let Err(e) = storage::save_message_cache(&disk) {
             tracing::warn!(err = %e, "failed to save message cache");
         }
     }

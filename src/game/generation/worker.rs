@@ -37,7 +37,10 @@ enum GenerationOutcome {
     },
     QuestCreationFailed,
     GenerateResultFailed { quest_id: u32 },
-    MerchantCatalogReady(MerchantCatalog),
+    MerchantCatalogReady {
+        catalog: MerchantCatalog,
+        registry: ItemRegistry,
+    },
     MerchantCatalogFailed,
 }
 
@@ -106,12 +109,18 @@ async fn run_generation(
             }
         },
         GenerationJob::MerchantCatalog => {
-            let mut registry = item_registry.lock().await;
+            let mut local_registry = {
+                let registry = item_registry.lock().await;
+                registry.clone()
+            };
             match merchant_generator
-                .build_catalog(&mut *registry, roll_merchant_stock_seeds)
+                .build_catalog(&mut local_registry, roll_merchant_stock_seeds)
                 .await
             {
-                Ok(catalog) => GenerationOutcome::MerchantCatalogReady(catalog),
+                Ok(catalog) => GenerationOutcome::MerchantCatalogReady {
+                    catalog,
+                    registry: local_registry,
+                },
                 Err(e) => {
                     tracing::error!(err = %e, "merchant catalog generation failed");
                     GenerationOutcome::MerchantCatalogFailed
@@ -177,7 +186,8 @@ fn commit_generation(
         GenerationOutcome::GenerateResultFailed { quest_id } => {
             Ok(vec![WorkerEffect::GenerateResultFailed { quest_id }])
         }
-        GenerationOutcome::MerchantCatalogReady(catalog) => {
+        GenerationOutcome::MerchantCatalogReady { catalog, registry } => {
+            *item_registry = registry;
             let merged =
                 merchants::merge_generated_catalog(merchant.catalog.as_ref(), catalog);
             merchant.catalog = Some(merged);
@@ -242,8 +252,8 @@ pub fn spawn_generation_worker(
             let effects = {
                 let mut b = board.lock().await;
                 let mut q = job_queue.lock().await;
-                let mut m = merchant.lock().await;
                 let mut registry = item_registry.lock().await;
+                let mut m = merchant.lock().await;
                 match commit_generation(
                     outcome,
                     &mut *b,

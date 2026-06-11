@@ -83,11 +83,14 @@ pub async fn handle_chud_join(
             chud_msg!("chud_joins", chud.name, chud.description)
         };
         append_activity_log(&runtime.activity_log, &content).await;
-        let mut board = runtime.board.lock().await;
+        let board = {
+            let guard = runtime.board.lock().await;
+            guard.clone()
+        };
         guild_hall::refresh_board_status(
             &runtime.http,
             runtime.channel_id,
-            &mut *board,
+            &board,
             runtime.max_jobs,
         )
         .await?;

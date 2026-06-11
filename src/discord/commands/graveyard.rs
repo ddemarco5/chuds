@@ -37,11 +37,14 @@ pub async fn graveyard(ctx: Context<'_>) -> Result<(), Error> {
     if ctx.data().runtime.is_playing().await {
         let content = chud_msg!("graveyard_visit", player.chud_ref().name);
         append_activity_log(&ctx.data().runtime.activity_log, &content).await;
-        let mut board = ctx.data().runtime.board.lock().await;
+        let board = {
+            let guard = ctx.data().runtime.board.lock().await;
+            guard.clone()
+        };
         guild_hall::refresh_board_status(
             &http,
             ctx.data().runtime.channel_id,
-            &mut *board,
+            &board,
             ctx.data().runtime.max_jobs,
         )
         .await?;

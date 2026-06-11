@@ -922,16 +922,24 @@ pub fn liquidate_chud_items(
     Ok(total)
 }
 
-/// Kill a chud: liquidate items, award starting benefits, bury in graveyard, remove chud.
-pub async fn kill_chud(
+/// Sync portion of chud death: liquidate gear, bury with a placeholder epitaph, clear the chud.
+pub struct KillChudPending {
+    pub discord_user_id: u64,
+    pub chud_name: String,
+    pub benefits_awarded: u32,
+    pub chud: crate::game::domain::player::Chud,
+    pub death_trial: String,
+    pub death_outcome: String,
+}
+
+pub fn kill_chud_apply(
     discord_user_id: u64,
     ctx: &DeathContext,
     graveyard: &mut Graveyard,
     starting_benefits: &mut StartingBenefits,
     registry: &ItemRegistry,
     merchant: &mut MerchantState,
-    gravestone_generator: &GravestoneGenerator,
-) -> anyhow::Result<KillResult> {
+) -> anyhow::Result<KillChudPending> {
     let mut player = storage::load_player(discord_user_id)?
         .filter(|p| p.has_chud())
         .ok_or_else(|| anyhow::anyhow!("no chud found for user {}", discord_user_id))?;
@@ -939,18 +947,14 @@ pub async fn kill_chud(
     let chud = player.chud.clone().expect("checked has_chud");
     let chud_name = chud.name.clone();
 
-    let epitaph = gravestone_generator
-        .generate(&chud, &ctx.trial, &ctx.outcome)
-        .await?;
-
     let total = liquidate_chud_items(&mut player, registry, merchant)?;
     let benefits_awarded = total / 2;
     starting_benefits.add(discord_user_id, benefits_awarded);
 
     graveyard.bury(GraveyardEntry {
         discord_user_id,
-        chud,
-        epitaph: epitaph.clone(),
+        chud: chud.clone(),
+        epitaph: String::new(),
         death_trial: ctx.trial.clone(),
         death_outcome: ctx.outcome.clone(),
     });
@@ -967,10 +971,59 @@ pub async fn kill_chud(
         "chud killed"
     );
 
-    Ok(KillResult {
+    Ok(KillChudPending {
         discord_user_id,
         chud_name,
         benefits_awarded,
+        chud,
+        death_trial: ctx.trial.clone(),
+        death_outcome: ctx.outcome.clone(),
+    })
+}
+
+/// Async gravestone LLM; updates the buried entry. Call without runtime mutexes held.
+pub async fn finish_gravestone_epitaph(
+    gravestone_generator: &GravestoneGenerator,
+    pending: &KillChudPending,
+) -> anyhow::Result<String> {
+    let epitaph = gravestone_generator
+        .generate(&pending.chud, &pending.death_trial, &pending.death_outcome)
+        .await?;
+    let mut graveyard = storage::load_graveyard()?;
+    if let Some(entry) = graveyard
+        .entries
+        .iter_mut()
+        .find(|e| e.discord_user_id == pending.discord_user_id)
+    {
+        entry.epitaph = epitaph.clone();
+        storage::save_graveyard(&graveyard)?;
+    }
+    Ok(epitaph)
+}
+
+/// Kill a chud: liquidate items, award starting benefits, bury in graveyard, remove chud.
+pub async fn kill_chud(
+    discord_user_id: u64,
+    ctx: &DeathContext,
+    graveyard: &mut Graveyard,
+    starting_benefits: &mut StartingBenefits,
+    registry: &ItemRegistry,
+    merchant: &mut MerchantState,
+    gravestone_generator: &GravestoneGenerator,
+) -> anyhow::Result<KillResult> {
+    let pending = kill_chud_apply(
+        discord_user_id,
+        ctx,
+        graveyard,
+        starting_benefits,
+        registry,
+        merchant,
+    )?;
+    let epitaph = finish_gravestone_epitaph(gravestone_generator, &pending).await?;
+    Ok(KillResult {
+        discord_user_id: pending.discord_user_id,
+        chud_name: pending.chud_name,
+        benefits_awarded: pending.benefits_awarded,
         epitaph,
     })
 }

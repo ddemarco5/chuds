@@ -347,20 +347,23 @@ pub async fn admin_take_gen_item(
     };
     let http = &ctx.serenity_context().http;
     let hospital = storage::load_hospital()?;
-    let mut board = ctx.data().runtime.board.lock().await;
-    let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
-    let info = engine::take_and_enqueue_quest(
-        &mut *board,
-        &hospital,
-        target_user_id,
-        quest_id,
-        &ctx.data().runtime.generation_queue,
-        true,
-        Some(&status),
-        ctx.data().runtime.job_timeout_tick,
-    )?;
-    let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
-    post_quest_taken_announcement(http, &mut *board, ctx.data(), &info, &status).await?;
+    let (board, status, info) = {
+        let mut board = ctx.data().runtime.board.lock().await;
+        let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
+        let info = engine::take_and_enqueue_quest(
+            &mut *board,
+            &hospital,
+            target_user_id,
+            quest_id,
+            &ctx.data().runtime.generation_queue,
+            true,
+            Some(&status),
+            ctx.data().runtime.job_timeout_tick,
+        )?;
+        let status = crate::game::guild_status::compute_guild_hall_status(&*board, &hospital)?;
+        (board.clone(), status, info)
+    };
+    post_quest_taken_announcement(http, &board, ctx.data(), &info, &status).await?;
     ctx.say("ok").await?;
     Ok(())
 }
@@ -467,19 +470,29 @@ pub async fn admin_kill_chud(
 
     let mut graveyard = storage::load_graveyard()?;
     let mut starting_benefits = storage::load_starting_benefits()?;
-    let registry = ctx.data().runtime.item_registry.lock().await;
-    let mut merchant = ctx.data().runtime.merchant.lock().await;
-
-    let kill = engine::kill_chud(
-        target_user_id,
-        &death_ctx,
-        &mut graveyard,
-        &mut starting_benefits,
-        &registry,
-        &mut merchant,
+    let pending = {
+        let registry = ctx.data().runtime.item_registry.lock().await;
+        let mut merchant = ctx.data().runtime.merchant.lock().await;
+        engine::kill_chud_apply(
+            target_user_id,
+            &death_ctx,
+            &mut graveyard,
+            &mut starting_benefits,
+            &registry,
+            &mut merchant,
+        )?
+    };
+    let epitaph = engine::finish_gravestone_epitaph(
         &ctx.data().runtime.gravestone_generator,
+        &pending,
     )
     .await?;
+    let kill = engine::KillResult {
+        discord_user_id: pending.discord_user_id,
+        chud_name: pending.chud_name.clone(),
+        benefits_awarded: pending.benefits_awarded,
+        epitaph,
+    };
 
     let first_name = kill
         .chud_name
@@ -497,11 +510,14 @@ pub async fn admin_kill_chud(
 
     report_dm::send_death_dm(&ctx.serenity_context().http, &kill, None).await;
 
-    let mut board = ctx.data().runtime.board.lock().await;
+    let board = {
+        let guard = ctx.data().runtime.board.lock().await;
+        guard.clone()
+    };
     crate::discord::guild_hall::refresh_board_status(
         &ctx.serenity_context().http,
         ctx.data().runtime.channel_id,
-        &mut *board,
+        &board,
         ctx.data().runtime.max_jobs,
     )
     .await?;
