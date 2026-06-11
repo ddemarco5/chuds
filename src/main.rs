@@ -166,7 +166,6 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::stats(),
                 discord::commands::inspect(),
                 discord::commands::gear(),
-                discord::commands::cash(),
                 discord::commands::job(),
                 discord::commands::save(),
                 discord::commands::load(),

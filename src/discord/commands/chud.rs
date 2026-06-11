@@ -264,21 +264,6 @@ pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 #[poise::command(slash_command)]
-pub async fn cash(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    let user_id = ctx.author().id.get();
-    match storage::load_player(user_id)? {
-        None => ctx.say("You don't have a chud.").await?,
-        Some(p) if p.cash == 0 => {
-            ctx.say("https://tenor.com/view/poor-no-money-gif-24226168")
-                .await?
-        }
-        Some(p) => ctx.say(format!("You've got {} buckeroos", p.cash)).await?,
-    };
-    Ok(())
-}
-
-#[poise::command(slash_command)]
 pub async fn job(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let user_id = ctx.author().id.get();
