@@ -271,15 +271,15 @@ inspect_not_found:
   - "No chud named **{}** in the guild hall."
   - "Can't find **{}** — wrong name or they don't exist."
 
-inspect_busy_job:
-  - "**{}** isn't here — they're out on a job."
-  - "**{}** isn't around; they're off working."
-  - "You look for **{}**, but they're out on the clock somewhere."
+inspect_busy_job_prefix:
+  - "Can't inspect their equipment. They're out on a job."
+  - "Their gear's gone with them; they're off working somewhere."
+  - "No way to see what they're packing. They're on the clock."
 
-inspect_busy_scouting:
-  - "**{}** isn't here — they're out scouting."
-  - "**{}** is off scouting a job right now."
-  - "No sign of **{}**; they're out checking a gig."
+inspect_busy_scouting_prefix:
+  - "Can't inspect their equipment. They're out scouting."
+  - "Their gear left with them; they're off checking a gig."
+  - "No way to see what they're packing. They're out scouting."
 
 inspect_hospital_prefix:
   - "This chud is unconscious in the hospital."

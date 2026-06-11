@@ -52,15 +52,27 @@ fn format_equipment_summary(player: &Player, registry: &ItemRegistry) -> String 
     lines.join("\n")
 }
 
-fn format_inspect_description(player: &Player, registry: &ItemRegistry) -> String {
+fn format_inspect_description_only(player: &Player) -> String {
     let chud = player.chud_ref();
-    let mut msg = chud_msg!("inspect_description", chud.name, chud.description);
+    chud_msg!("inspect_description", chud.name, chud.description)
+}
+
+fn format_inspect_description(player: &Player, registry: &ItemRegistry) -> String {
+    let mut msg = format_inspect_description_only(player);
     let equipment = format_equipment_summary(player, registry);
     if !equipment.is_empty() {
         msg.push_str("\n\n");
         msg.push_str(&equipment);
     }
     msg
+}
+
+fn format_inspect_with_prefix(prefix: String, player: &Player, registry: &ItemRegistry) -> String {
+    format!(
+        "{}\n\n{}",
+        prefix,
+        format_inspect_description(player, registry),
+    )
 }
 
 /// Create a chud for `user_id` and update the channel for the current phase.
@@ -149,21 +161,26 @@ pub async fn inspect(ctx: Context<'_>, name: String) -> Result<(), Error> {
             chud_msg!("inspect_self", player.chud_ref().name)
         }
         Some(player) => {
-            let chud = player.chud_ref();
             let board = ctx.data().runtime.board.lock().await;
             let hospital = storage::load_hospital()?;
             let registry = ctx.data().runtime.item_registry.lock().await;
             match crate::game::busy::is_player_busy(&*board, &hospital, player.discord_user_id) {
                 None => format_inspect_description(&player, &registry),
-                Some(BusyReason::ActiveQuest { .. }) => chud_msg!("inspect_busy_job", chud.name),
-                Some(BusyReason::Scouting) => chud_msg!("inspect_busy_scouting", chud.name),
-                Some(BusyReason::Hospitalized) => {
-                    format!(
-                        "{}\n\n{}",
-                        chud_msg!("inspect_hospital_prefix"),
-                        format_inspect_description(&player, &registry),
-                    )
-                }
+                Some(BusyReason::ActiveQuest { .. }) => format!(
+                    "{}\n\n{}",
+                    chud_msg!("inspect_busy_job_prefix"),
+                    format_inspect_description_only(&player),
+                ),
+                Some(BusyReason::Scouting) => format!(
+                    "{}\n\n{}",
+                    chud_msg!("inspect_busy_scouting_prefix"),
+                    format_inspect_description_only(&player),
+                ),
+                Some(BusyReason::Hospitalized) => format_inspect_with_prefix(
+                    chud_msg!("inspect_hospital_prefix"),
+                    &player,
+                    &registry,
+                ),
             }
         }
     };
