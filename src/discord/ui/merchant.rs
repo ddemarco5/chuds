@@ -4,7 +4,7 @@ use poise::serenity_prelude::{
 
 use crate::chud_msg;
 use crate::discord::channel::append_activity_log;
-use crate::discord::formatting::format_item_block;
+use crate::discord::formatting::{format_item_block, format_item_display_name};
 use crate::game::domain::player::Player;
 use crate::game::merchant::{BuyError, MerchantState, MerchantVisit};
 use crate::game::persistence::item_registry::ItemRegistry;
@@ -177,7 +177,7 @@ pub fn build_shop_message(
         .map(|&slot| {
             let name = registry
                 .get(visit.stock[slot])
-                .map(|item| item.name.clone())
+                .map(format_item_display_name)
                 .unwrap_or_else(|| "Unknown item".into());
             let base = SelectOption::new(name, slot.to_string());
             if slot == selected {

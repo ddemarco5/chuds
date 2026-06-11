@@ -182,38 +182,31 @@ fn format_completion_footer(
         out.push_str(&chud_msg!("chud_brings_money", reward));
     }
     if let Some(item) = item_awarded {
-        let subtype = if item.subtype.is_empty() {
-            String::new()
-        } else {
-            format!(", {}", item.subtype)
-        };
+        let slot = format_item_slot_label(item);
         if !out.is_empty() {
             out.push('\n');
         }
         match item_award_disposition {
             Some(crate::game::engine::ItemAwardDisposition::Sold(gold)) => {
                 out.push_str(&format!(
-                    "**Stash full — sold {} for ${gold}:** ({}{subtype})\nStats: {}\n_{}_",
+                    "**Stash full — sold {} for ${gold}:** ({slot})\nStats: {}\n_{}_",
                     item.name,
-                    item_type_label(item.item_type),
                     item.stats.format_triplet(),
                     item.description,
                 ));
             }
             Some(crate::game::engine::ItemAwardDisposition::Equipped) => {
                 out.push_str(&format!(
-                    "**Stash full — auto-equipped:** {} ({}{subtype})\nStats: {}\n_{}_",
+                    "**Stash full — auto-equipped:** {} ({slot})\nStats: {}\n_{}_",
                     item.name,
-                    item_type_label(item.item_type),
                     item.stats.format_triplet(),
                     item.description,
                 ));
             }
             _ => {
                 out.push_str(&format!(
-                    "**Item stashed:** {} ({}{subtype})\nStats: {}\n_{}_\nUse `/gear` to equip.",
+                    "**Item stashed:** {} ({slot})\nStats: {}\n_{}_\nUse `/gear` to equip.",
                     item.name,
-                    item_type_label(item.item_type),
                     item.stats.format_triplet(),
                     item.description,
                 ));
@@ -325,16 +318,24 @@ pub fn format_item_display_name(item: &Item) -> String {
     format!("{}{}", rarity_prefix(&item.rarity), item.name)
 }
 
+/// Player-facing slot label — not the LLM body-part subtype.
+pub fn format_item_slot_label(item: &Item) -> String {
+    match item.item_type {
+        ItemType::Misc if !item.subtype.is_empty() => item.subtype.clone(),
+        _ => item_type_label(item.item_type).to_string(),
+    }
+}
+
+/// Player-facing slot label in parentheses, e.g. `(gear)` or `(trinket)`.
+pub fn format_item_slot_parenthetical(item: &Item) -> String {
+    format!(" ({})", format_item_slot_label(item))
+}
+
 pub fn format_item_block(item: &Item) -> String {
-    let subtype = if item.subtype.is_empty() {
-        String::new()
-    } else {
-        format!(" ({})", item.subtype)
-    };
     format!(
         "**{}**{} [{}] - ${}\n{}",
         format_item_display_name(item),
-        subtype,
+        format_item_slot_parenthetical(item),
         item.stats.format_triplet(),
         item.value,
         item.description,

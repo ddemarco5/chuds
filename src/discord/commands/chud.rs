@@ -1,4 +1,5 @@
 use crate::chud_msg;
+use crate::discord::formatting::format_item_slot_label;
 use crate::discord::guild_hall;
 use crate::discord::game_screens;
 use crate::discord::channel::append_activity_log;
@@ -20,7 +21,7 @@ fn format_equipment_summary(player: &Player, registry: &ItemRegistry) -> String 
             lines.push(format!(
                 "Gear: **{}** ({}) [{}]",
                 item.name,
-                item.subtype,
+                format_item_slot_label(item),
                 item.stats.format_triplet(),
             ));
         }
@@ -28,8 +29,9 @@ fn format_equipment_summary(player: &Player, registry: &ItemRegistry) -> String 
     if let Some(id) = chud.equipment.weapon {
         if let Some(item) = registry.get(id) {
             lines.push(format!(
-                "Weapon: **{}** [{}]",
+                "Weapon: **{}** ({}) [{}]",
                 item.name,
+                format_item_slot_label(item),
                 item.stats.format_triplet(),
             ));
         }
@@ -41,7 +43,7 @@ fn format_equipment_summary(player: &Player, registry: &ItemRegistry) -> String 
                     "Misc {}: **{}** ({}) [{}]",
                     i + 1,
                     item.name,
-                    item.subtype,
+                    format_item_slot_label(item),
                     item.stats.format_triplet(),
                 ));
             }
