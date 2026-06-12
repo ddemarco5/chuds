@@ -321,7 +321,7 @@ pub fn request_auto_board_jobs(
 
     let mean_stat = auto_job_difficulty_center(item_registry);
     let mean_stat_rounded = mean_stat.round() as u8;
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for _ in 0..to_generate {
         let difficulty = roll_auto_job_difficulty(mean_stat, &mut rng);
         pending_auto.fetch_add(1, Ordering::SeqCst);
@@ -507,7 +507,7 @@ pub fn roll_job_difficulty() -> u8 {
             ItemRegistry::default()
         }
     };
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     roll_auto_job_difficulty(auto_job_difficulty_center(&registry), &mut rng)
 }
 
@@ -907,7 +907,7 @@ pub fn prepare_quest_result(
             .last()
             .map(|o| o.player_roll as i16 - o.trial_roll as i16)
             .unwrap_or(0);
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let consequences = roll_failure_consequences(margin, &mut rng);
         if consequences.died {
             tracing::info!(
@@ -1004,16 +1004,16 @@ pub async fn finish_quest_result(
         let seed = if let Some(reward) = story_reward.as_ref() {
             Some(roll_item(
                 difficulty,
-                &mut rand::thread_rng(),
+                &mut rand::rng(),
                 Some(&reward.rarity),
                 reward.stats.as_ref(),
             ))
         } else if board_quest.story_index.is_some() {
             None
-        } else if force_item_drop || roll_item_drop(difficulty, trial_count, &mut rand::thread_rng()) {
+        } else if force_item_drop || roll_item_drop(difficulty, trial_count, &mut rand::rng()) {
             Some(roll_item(
                 difficulty,
-                &mut rand::thread_rng(),
+                &mut rand::rng(),
                 None,
                 None,
             ))
@@ -1027,7 +1027,7 @@ pub async fn finish_quest_result(
                 .await?;
             let rarity = seed.rarity.clone();
             let mut item = seed.into_item(name, description);
-            item.value = roll_item_value(&item.stats, &item.rarity, &mut rand::thread_rng());
+            item.value = roll_item_value(&item.stats, &item.rarity, &mut rand::rng());
             tracing::info!(
                 name = %item.name,
                 item_type = ?item.item_type,

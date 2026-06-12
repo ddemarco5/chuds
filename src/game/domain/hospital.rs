@@ -22,7 +22,7 @@ impl Hospital {
     pub fn admit(&mut self, discord_user_id: u64, chud_name: String, ticks: u32) -> Option<String> {
         self.entries.retain(|e| e.discord_user_id != discord_user_id);
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let heal_price = roll_heal_price(ticks, &mut rng);
 
         self.entries.push(HospitalEntry {

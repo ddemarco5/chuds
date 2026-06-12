@@ -1,5 +1,5 @@
-use rand::seq::SliceRandom;
-use rand::Rng;
+use rand::prelude::IndexedRandom;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
 use crate::game::domain::item::Item;
@@ -137,8 +137,8 @@ impl MerchantState {
         }
 
         if self.visit.is_none() {
-            let mut rng = rand::thread_rng();
-            if rng.gen_bool(MERCHANT_VISIT_CHANCE) {
+            let mut rng = rand::rng();
+            if rng.random_bool(MERCHANT_VISIT_CHANCE) {
                 if let Some(visit) = self.try_spawn_visit(None) {
                     self.visit = Some(visit);
                     return MerchantTickEvent::Spawned;
@@ -255,7 +255,7 @@ impl MerchantState {
             return None;
         }
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let merchant_index = if let Some(name) = preferred_name {
             available
                 .into_iter()
@@ -267,14 +267,14 @@ impl MerchantState {
         let sample_count = MERCHANT_VISIT_STOCK_SIZE.min(merchant.stock_pool.len());
         let stock: Vec<u32> = merchant
             .stock_pool
-            .choose_multiple(&mut rng, sample_count)
+            .sample(&mut rng, sample_count)
             .copied()
             .collect();
         let (min, max) = MERCHANT_STAY_TICKS;
         Some(MerchantVisit {
             merchant_index,
             merchant_name: merchant.name.clone(),
-            ticks_remaining: rng.gen_range(min..=max),
+            ticks_remaining: rng.random_range(min..=max),
             stock,
         })
     }
@@ -282,7 +282,7 @@ impl MerchantState {
 
 /// Roll item seeds for a merchant at the given roster index.
 pub fn roll_merchant_stock_seeds(merchant_index: usize) -> Vec<ItemSeed> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let (min, max) = if merchant_index < MERCHANT_LOW_TIER_COUNT {
         (MERCHANT_LOW_DIFF_MIN, MERCHANT_LOW_DIFF_MAX)
     } else {
@@ -291,7 +291,7 @@ pub fn roll_merchant_stock_seeds(merchant_index: usize) -> Vec<ItemSeed> {
 
     (0..MERCHANT_STOCK_POOL_SIZE)
         .map(|_| {
-            let difficulty = rng.gen_range(min..=max);
+            let difficulty = rng.random_range(min..=max);
             roll_item(difficulty, &mut rng, None, None)
         })
         .collect()

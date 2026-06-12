@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 use crate::game::domain::player::Player;
 use crate::game::domain::quest::TrialStats;
@@ -92,7 +92,7 @@ fn choose_stat(
     stats: &TrialStats,
     player: &Player,
     registry: &ItemRegistry,
-    rng: &mut impl Rng,
+    rng: &mut (impl Rng + ?Sized),
 ) -> StatChoice {
     let candidates = [
         (StatChoice::Strength, stats.strength, effective_stat(player, registry, StatChoice::Strength)),
@@ -113,7 +113,7 @@ fn choose_stat(
 
     let considered: Vec<StatChoice> = valid
         .iter()
-        .filter(|&&(_, m)| m == best_margin || !rng.gen_bool(dropout_prob))
+        .filter(|&&(_, m)| m == best_margin || !rng.random_bool(dropout_prob))
         .map(|&(s, _)| s)
         .collect();
 
@@ -122,7 +122,7 @@ fn choose_stat(
     } else {
         considered
     };
-    pool[rng.gen_range(0..pool.len())]
+    pool[rng.random_range(0..pool.len())]
 }
 
 pub fn try_quest(
@@ -131,7 +131,7 @@ pub fn try_quest(
     player: &Player,
     registry: &ItemRegistry,
 ) -> anyhow::Result<PlayedQuest> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut outcomes = Vec::new();
 
     for (stats, _situation) in quest.trials.iter().zip(generated.trials.iter()) {
@@ -139,10 +139,10 @@ pub fn try_quest(
         let effective = effective_stat(player, registry, stat_used);
         let required = stat_used.trial_required(stats);
         let (floor, modifier) = roll_aids(player, registry, stat_used);
-        let raw_roll = rng.gen_range(1..=effective);
+        let raw_roll = rng.random_range(1..=effective);
         let player_roll = raw_roll.max(floor);
         let floor_applied = player_roll > raw_roll;
-        let trial_roll: u8 = rng.gen_range(1..=required);
+        let trial_roll: u8 = rng.random_range(1..=required);
         let passed = player_roll >= trial_roll;
 
         outcomes.push(TrialOutcome {

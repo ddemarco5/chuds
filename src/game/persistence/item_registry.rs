@@ -17,7 +17,7 @@ impl ItemRegistry {
     /// Roll values for legacy items saved before `value` existed (`value == 0`).
     pub fn backfill_missing_values(&mut self) -> bool {
         let mut backfilled = false;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for item in &mut self.items {
             if item.value == 0 {
                 item.value = roll_item_value(&item.stats, &item.rarity, &mut rng);

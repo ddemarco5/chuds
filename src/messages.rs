@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::LazyLock;
 
-use rand::seq::SliceRandom;
+use rand::prelude::IndexedRandom;
 
 type Messages = HashMap<String, Vec<String>>;
 
@@ -15,7 +15,7 @@ pub fn get(key: &str, args: &[&dyn Display]) -> String {
         .get(key)
         .unwrap_or_else(|| panic!("unknown message key: {key}"));
     let mut template = templates
-        .choose(&mut rand::thread_rng())
+        .choose(&mut rand::rng())
         .unwrap()
         .clone();
     for arg in args {

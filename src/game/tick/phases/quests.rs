@@ -124,7 +124,7 @@ fn resolve_quest(
     let consequences = result.failure_consequences.clone().or_else(|| {
         if !passed {
             result.trials.last().map(|t| {
-                roll_failure_consequences(t.margin, &mut rand::thread_rng())
+                roll_failure_consequences(t.margin, &mut rand::rng())
             })
         } else {
             None
