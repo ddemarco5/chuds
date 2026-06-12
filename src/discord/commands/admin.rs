@@ -6,6 +6,8 @@ use poise::serenity_prelude as serenity;
 use crate::discord::buttons::post_quest_taken_announcement;
 use crate::discord::channel::{append_activity_log, append_activity_log_deferred};
 use crate::discord::context::{admin_guard, require_playing, Context, Error, GameRuntime};
+use crate::discord::ui::{build_slots_message, validate_pay_in, ADMIN_SPIN_PREFIX};
+use crate::discord::edit_ephemeral_message;
 use crate::discord::game_screens;
 use crate::discord::guild_hall::recover_persistent_board_messages;
 use crate::discord::report_dm;
@@ -126,6 +128,33 @@ pub async fn admin_spawn_merchant(
             let name = merchant_name.unwrap_or_default();
             ctx.say(format!("{name} has no stock")).await?;
         }
+    }
+    Ok(())
+}
+
+#[poise::command(slash_command)]
+pub async fn admin_slots(
+    ctx: Context<'_>,
+    #[description = "Pay-in amount (bet multiplier)"] pay_in: u32,
+) -> Result<(), Error> {
+    let token = match &ctx {
+        poise::Context::Application(app) => app.interaction.token.clone(),
+        _ => return Ok(()),
+    };
+    let http = ctx.serenity_context().http.clone();
+
+    ctx.defer_ephemeral().await?;
+    if !admin_guard(ctx).await {
+        return Ok(());
+    }
+    if let Err(msg) = validate_pay_in(pay_in) {
+        ctx.say(msg).await?;
+        return Ok(());
+    }
+
+    let message = build_slots_message(pay_in, None, None, None, ADMIN_SPIN_PREFIX);
+    if let Err(e) = edit_ephemeral_message(&http, &token, &message).await {
+        tracing::debug!(err = %e, pay_in, "admin_slots edit failed (ephemeral may be dismissed)");
     }
     Ok(())
 }

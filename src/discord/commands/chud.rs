@@ -3,7 +3,9 @@ use crate::discord::formatting::format_item_slot_label;
 use crate::discord::guild_hall;
 use crate::discord::game_screens;
 use crate::discord::channel::append_activity_log;
-use crate::discord::context::{Context, Error, GameRuntime};
+use crate::discord::context::{require_playing, Context, Error, GameRuntime};
+use crate::discord::edit_ephemeral_message;
+use crate::discord::ui::{build_player_slots_open_message, validate_pay_in};
 use crate::game::busy::BusyReason;
 use crate::game::domain::player::Player;
 use crate::game::domain::session::GamePhase;
@@ -236,6 +238,41 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
             ctx.say(msg).await?
         }
     };
+    Ok(())
+}
+
+#[poise::command(slash_command)]
+pub async fn slots(
+    ctx: Context<'_>,
+    #[description = "Pay-in amount per spin"] pay_in: u32,
+) -> Result<(), Error> {
+    let token = match &ctx {
+        poise::Context::Application(app) => app.interaction.token.clone(),
+        _ => return Ok(()),
+    };
+    let http = ctx.serenity_context().http.clone();
+
+    ctx.defer_ephemeral().await?;
+    if !require_playing(ctx).await {
+        return Ok(());
+    }
+
+    let user_id = ctx.author().id.get();
+    let player = storage::load_player(user_id)?;
+    let Some(player) = player.filter(|p| p.has_chud()) else {
+        ctx.say("You don't have a chud.").await?;
+        return Ok(());
+    };
+
+    if let Err(msg) = validate_pay_in(pay_in) {
+        ctx.say(msg).await?;
+        return Ok(());
+    }
+
+    let message = build_player_slots_open_message(&player, pay_in);
+    if let Err(e) = edit_ephemeral_message(&http, &token, &message).await {
+        tracing::debug!(err = %e, user_id, pay_in, "slots command edit failed (ephemeral may be dismissed)");
+    }
     Ok(())
 }
 

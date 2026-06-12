@@ -6,10 +6,10 @@ mod job;
 
 pub use admin::{
     add_chud, add_cm, admin_attract, admin_complete, admin_game, admin_kill_chud, admin_redraw,
-    admin_reset, admin_schedule_start, admin_spawn_merchant, admin_take_gen_item, delete_chud,
-    delete_cm, load, save, tick,
+    admin_reset, admin_schedule_start, admin_slots, admin_spawn_merchant, admin_take_gen_item,
+    delete_chud, delete_cm, load, save, tick,
 };
 pub use all_chuds::all_chuds;
-pub use chud::{chud, chudlerboard, gear, inspect, job, stats};
+pub use chud::{chud, chudlerboard, gear, inspect, job, slots, stats};
 pub use graveyard::graveyard;
 pub use job::{assign, delete_job, generate_job, write_job};

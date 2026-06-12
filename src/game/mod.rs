@@ -1,4 +1,5 @@
 pub mod busy;
+pub mod slots;
 pub mod guild_status;
 pub mod merchant;
 pub mod domain;
