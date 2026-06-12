@@ -241,10 +241,13 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+/// For the degenerate chud gambler
 #[poise::command(slash_command)]
 pub async fn slots(
     ctx: Context<'_>,
-    #[description = "Pay-in amount per spin"] pay_in: u32,
+    #[description = "Dollars to bet each spin"]
+    #[rename = "pay-in"]
+    pay_in: u32,
 ) -> Result<(), Error> {
     let token = match &ctx {
         poise::Context::Application(app) => app.interaction.token.clone(),

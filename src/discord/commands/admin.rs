@@ -132,10 +132,13 @@ pub async fn admin_spawn_merchant(
     Ok(())
 }
 
+/// Test the slots machine (simulated pay-in, no real cash)
 #[poise::command(slash_command)]
 pub async fn admin_slots(
     ctx: Context<'_>,
-    #[description = "Pay-in amount (bet multiplier)"] pay_in: u32,
+    #[description = "Dollars to bet each spin"]
+    #[rename = "pay-in"]
+    pay_in: u32,
 ) -> Result<(), Error> {
     let token = match &ctx {
         poise::Context::Application(app) => app.interaction.token.clone(),
