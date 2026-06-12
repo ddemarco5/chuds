@@ -187,6 +187,10 @@ pub struct QuestResults {
     pub summary: String,
 }
 
+fn results_conversation_id(chud_name: &str) -> String {
+    chud_name.replace(' ', "_")
+}
+
 pub struct QuestGenerator {
     description_agent: OpenRouterAgent,
     trial_agent: OpenRouterAgent,
@@ -199,13 +203,15 @@ pub struct QuestGenerator {
 impl QuestGenerator {
     pub fn new(api_key: &str, memory: &LlmMemoryBundle) -> anyhow::Result<Self> {
         let client = openrouter::Client::new(api_key)?;
+        let mut results_store = memory.results.clone();
+        results_store.remove("results");
         Ok(Self {
             description_agent: build_agent(&client, DESCRIPTION_SYSTEM_CONTEXT),
             description_memory: make_memory_from_store(memory.description.clone()),
             trial_agent: build_agent(&client, TRIAL_SYSTEM_CONTEXT),
             trial_memory: make_memory_from_store(memory.trials.clone()),
             results_agent: build_agent(&client, RESULTS_SYSTEM_CONTEXT),
-            results_memory: make_memory_from_store(memory.results.clone()),
+            results_memory: make_memory_from_store(results_store),
         })
     }
 
@@ -396,16 +402,17 @@ impl QuestGenerator {
         })?;
         let results_prompt = format!("{results_yaml}{scaffold}");
 
-        tracing::info!("generating quest results");
+        let conversation_id = results_conversation_id(chud_name);
+        tracing::info!(chud = %chud_name, "generating quest results");
         let r = prompt_parse_retry::<ResultsResponse>(
             &self.results_agent,
             &self.results_memory,
             &results_prompt,
             Some(outcomes.len()),
-            "results",
+            &conversation_id,
         )
         .await?;
-        tracing::info!(count = r.trials.len(), "quest results received");
+        tracing::info!(chud = %chud_name, count = r.trials.len(), "quest results received");
 
         Ok(QuestResults {
             trials: r.trials,
