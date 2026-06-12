@@ -118,14 +118,15 @@ pub fn stat_contribution(s: &str) -> i16 {
     parse_stat_floor(s) as i16 + parse_stat_modifier(s)
 }
 
-/// Format a player roll for display: ↑/↓ when gear modified effective stat, ⌊⌋ when floor-only.
+/// Format a player roll for display: ⌊⌋ when floor raised the roll; otherwise ↑/↓ when gear
+/// modified effective stat, or plain number when unmodified.
 pub fn format_roll_breakdown(modifier: i16, floor_applied: bool, final_roll: u8) -> String {
-    if modifier > 0 {
+    if floor_applied {
+        format!("\u{230a}{final_roll}\u{230b}")
+    } else if modifier > 0 {
         format!("\u{2191}{final_roll}")
     } else if modifier < 0 {
         format!("\u{2193}{final_roll}")
-    } else if floor_applied {
-        format!("\u{230a}{final_roll}\u{230b}")
     } else {
         final_roll.to_string()
     }
