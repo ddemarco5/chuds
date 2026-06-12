@@ -18,12 +18,15 @@ const REWARD_JITTER_STDDEV: f64 = 0.10;
 pub const TRIAL_COUNT_STDDEV: f64 = 1.0;
 const MIN_TRIALS: usize = 1;
 
-/// Spread of auto-generated job difficulty around the floored mean effective stat level of all chuds.
-/// Difficulty is sampled from Normal(floor(mean_effective_chud_stat), this), floored, and clamped to 1..=10.
+/// Spread of auto-generated job difficulty around the mean top-two effective stat level of all chuds.
+/// Difficulty is sampled from Normal(mean, this), rounded, and clamped to 1..=10.
 /// Deliberately broad so easy and dangerous outliers both appear: raise it for an even
 /// wider mix of trivial-to-brutal jobs, lower it to cluster difficulty tightly on the
 /// average player's power level.
 pub const AUTO_JOB_DIFFICULTY_STDDEV: f64 = 1.0;
+/// Additive bias applied to the sampled difficulty before rounding. Raise to skew auto jobs
+/// slightly harder than the computed mean; lower (negative) to ease them.
+pub const AUTO_JOB_DIFFICULTY_TRAJ: f64 = 0.0;
 /// Probability (0.0-1.0) that any given stat is irrelevant (set to 0) for a trial.
 const STAT_ZERO_CHANCE: f64 = 0.10;
 
@@ -176,12 +179,12 @@ pub fn roll_trials(difficulty: u8) -> Vec<TrialStats> {
 }
 
 /// Difficulty (1..=10) for an auto-generated job: a broad normal roll centered on the
-/// floored mean effective stat level of all chuds (base + item modifiers), so jobs mildly
+/// mean top-two effective stat level of all chuds (base + item modifiers), so jobs mildly
 /// favor the average player's power while still spawning easier and harder outliers.
 pub fn roll_auto_job_difficulty(mean_stat: f64, rng: &mut impl Rng) -> u8 {
     let normal = Normal::new(mean_stat, AUTO_JOB_DIFFICULTY_STDDEV)
         .expect("valid normal distribution");
-    let sample = normal.sample(rng).floor();
+    let sample = (normal.sample(rng) + AUTO_JOB_DIFFICULTY_TRAJ).round();
     sample.clamp(1.0, 10.0) as u8
 }
 

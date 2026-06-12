@@ -280,7 +280,7 @@ pub fn enqueue_quest(
 /// Mean stat level assumed when no chuds exist yet (matches flat starting stats).
 pub const DEFAULT_MEAN_CHUD_STAT: f64 = 1.0;
 
-/// Average of every chud's effective strength/smarts/stealth (base + item modifiers) across
+/// Mean of each chud's two highest effective stats (base + item modifiers), averaged across
 /// all saved players. Falls back to [`DEFAULT_MEAN_CHUD_STAT`] when there are no chuds yet.
 pub fn mean_chud_stat(registry: &ItemRegistry) -> f64 {
     let ids = match storage::list_player_ids() {
@@ -291,15 +291,15 @@ pub fn mean_chud_stat(registry: &ItemRegistry) -> f64 {
         }
     };
 
-    let mut total: u64 = 0;
-    let mut count: u64 = 0;
+    let mut chud_means: Vec<f64> = Vec::new();
     for id in ids {
         match storage::load_player(id) {
             Ok(Some(player)) => {
                 if player.chud.is_some() {
                     let (str, smt, sth) = effective_stats(&player, registry);
-                    total += str as u64 + smt as u64 + sth as u64;
-                    count += 3;
+                    let mut stats = [str, smt, sth];
+                    stats.sort_by(|a, b| b.cmp(a));
+                    chud_means.push((stats[0] as f64 + stats[1] as f64) / 2.0);
                 }
             }
             Ok(None) => {}
@@ -307,20 +307,20 @@ pub fn mean_chud_stat(registry: &ItemRegistry) -> f64 {
         }
     }
 
-    if count == 0 {
+    if chud_means.is_empty() {
         DEFAULT_MEAN_CHUD_STAT
     } else {
-        total as f64 / count as f64
+        chud_means.iter().sum::<f64>() / chud_means.len() as f64
     }
 }
 
-/// Floored mean of effective chud stats; used as the center for auto job difficulty rolls.
-fn auto_job_difficulty_center(registry: &ItemRegistry) -> f64 {
-    mean_chud_stat(registry).floor()
+/// Mean effective stat level used as the center for auto job difficulty rolls.
+pub(crate) fn auto_job_difficulty_center(registry: &ItemRegistry) -> f64 {
+    mean_chud_stat(registry)
 }
 
 /// Difficulty for a new job when the chudmaster leaves the field blank: a broad normal roll
-/// centered on the floored mean effective stat level of all chuds.
+/// centered on the mean top-two effective stat level across all chuds.
 pub fn roll_job_difficulty() -> u8 {
     let registry = match storage::load_item_registry() {
         Ok(registry) => registry,
