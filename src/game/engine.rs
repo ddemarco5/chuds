@@ -128,6 +128,19 @@ pub fn take_and_enqueue_quest(
     Ok(info)
 }
 
+/// Board slots held for the next catalog story job (on board or generating).
+pub fn story_slot_reserved(board: &Board) -> usize {
+    let catalog_len = story_jobs::story_count();
+    if catalog_len > 0
+        && board.story_next_index < catalog_len
+        && !board.has_story_quest()
+    {
+        1
+    } else {
+        0
+    }
+}
+
 /// Ensure the next story job is being generated. Enqueues a story `QuestCreation`
 /// when a story slot is open (none currently on the board and catalog entries remain)
 /// and no generation is already in flight. Returns true if a job was enqueued.
@@ -261,11 +274,7 @@ pub fn refill_board(
 ) -> usize {
     // Story job takes priority: keep its slot reserved while it is generated from the
     // catalog (bootstrap/recovery fallback) before filling from the player queue.
-    let catalog_len = story_jobs::story_count();
-    if catalog_len > 0
-        && board.story_next_index < catalog_len
-        && !board.has_story_quest()
-    {
+    if story_slot_reserved(board) > 0 {
         ensure_story_generation(board, generation_queue, pending_quests);
         return 0;
     }
@@ -300,9 +309,11 @@ pub fn request_auto_board_jobs(
     }
 
     let free_slots = max_jobs.saturating_sub(board.quests.len());
+    let story_reserved = story_slot_reserved(board);
     let in_flight = pending_auto.load(Ordering::SeqCst);
     let to_generate = free_slots
         .saturating_sub(reserved_cm_slot_num)
+        .saturating_sub(story_reserved)
         .saturating_sub(in_flight);
     if to_generate == 0 {
         return Ok(0);
@@ -326,6 +337,7 @@ pub fn request_auto_board_jobs(
         requested = to_generate,
         free_slots,
         reserved = reserved_cm_slot_num,
+        story_reserved,
         in_flight,
         mean_stat = mean_stat_rounded,
         "auto job generation triggered"
@@ -422,7 +434,9 @@ pub fn place_generated_quest(
             Ok(added)
         }
         QuestPlacement::BoardAuto => {
-            board.add_quest(quest_data, generated, None, job_timeout_tick, false);
+            if board.quests.len() < max_jobs {
+                board.add_quest(quest_data, generated, None, job_timeout_tick, false);
+            }
             let added = fill_board_from_queue(board, queue, max_jobs, job_timeout_tick);
             storage::save_board(board)?;
             storage::save_job_queue(queue)?;
