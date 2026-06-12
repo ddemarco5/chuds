@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use poise::serenity_prelude::{self as serenity, GetMessages, MessageId};
 
-use crate::game::persistence::message_cache::{ActivityLogEntry, ActivityLogKind, MessageCache};
+use crate::game::persistence::message_cache::{
+    persistent_message_ids, ActivityLogEntry, ActivityLogKind, MessageCache,
+};
 use crate::game::persistence::storage;
 
 const DISCORD_MESSAGE_LIMIT: usize = 2000;
@@ -227,6 +229,45 @@ pub async fn delete_all_messages_in_channel(http: &serenity::Http, channel_id: u
     }
 }
 
+async fn clear_message_reactions_if_any(
+    http: &serenity::Http,
+    channel_id: serenity::ChannelId,
+    message_id: MessageId,
+    kind: &str,
+) {
+    let msg = match http.get_message(channel_id, message_id).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::debug!(kind, msg_id = message_id.get(), err = %e, "skipped reaction clear: message not found");
+            return;
+        }
+    };
+    if msg.reactions.is_empty() {
+        return;
+    }
+    if let Err(e) = http.delete_message_reactions(channel_id, message_id).await {
+        tracing::warn!(kind, msg_id = message_id.get(), err = %e, "failed to clear reactions on persistent message");
+    }
+}
+
+/// Clear reactions on every persistent channel message when any are present.
+pub async fn clear_persistent_message_reactions(http: &serenity::Http, channel_id: u64) {
+    let message_ids = {
+        let _guard = storage::message_cache_lock().await;
+        let cache = storage::load_message_cache().unwrap_or_default();
+        persistent_message_ids(&cache)
+    };
+
+    if message_ids.is_empty() {
+        return;
+    }
+
+    let ch = serenity::ChannelId::new(channel_id);
+    for (kind, id) in message_ids {
+        clear_message_reactions_if_any(http, ch, MessageId::new(id), kind).await;
+    }
+}
+
 /// Validate that all cached message IDs still exist in Discord.
 pub async fn validate_cached_messages_exist(
     http: &serenity::Http,
@@ -235,33 +276,7 @@ pub async fn validate_cached_messages_exist(
 ) -> bool {
     let ch = serenity::ChannelId::new(channel_id);
 
-    let mut message_ids = Vec::new();
-
-    if let Some(id) = cache.header_message_id {
-        message_ids.push(("header", id));
-    }
-
-    if let Some(id) = cache.status_message_id {
-        message_ids.push(("status", id));
-    }
-
-    if let Some(id) = cache.merchant_message_id {
-        message_ids.push(("merchant", id));
-    }
-
-    if let Some(id) = cache.activity_log_message_id {
-        message_ids.push(("activity_log", id));
-    }
-
-    if let Some(id) = cache.phase_screen_message_id {
-        message_ids.push(("phase_screen", id));
-    }
-
-    for slot in &cache.slots {
-        if let Some(id) = slot.message_id {
-            message_ids.push(("slot", id));
-        }
-    }
+    let message_ids = persistent_message_ids(cache);
 
     if message_ids.is_empty() {
         return true;

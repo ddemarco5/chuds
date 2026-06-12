@@ -1,6 +1,8 @@
 mod render;
 
-use crate::discord::channel::{append_activity_log_deferred, cleanup_non_bot_messages};
+use crate::discord::channel::{
+    append_activity_log_deferred, cleanup_non_bot_messages, clear_persistent_message_reactions,
+};
 use crate::discord::context::GameRuntime;
 use crate::chud_msg;
 use crate::game::engine::{self, KillChudPending};
@@ -34,6 +36,8 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
         runtime.max_non_bot_messages,
     )
     .await;
+
+    clear_persistent_message_reactions(&runtime.http, runtime.channel_id).await;
 
     {
         let board_guard = runtime.board.lock().await;

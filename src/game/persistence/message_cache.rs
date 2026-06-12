@@ -133,6 +133,34 @@ pub fn merge_board_ui_cache(from: &MessageCache, into: &mut MessageCache) {
     into.status_hospital_header = from.status_hospital_header.clone();
 }
 
+/// Discord message IDs for every persistent channel post tracked in cache.
+pub fn persistent_message_ids(cache: &MessageCache) -> Vec<(&'static str, u64)> {
+    let mut message_ids = Vec::new();
+
+    if let Some(id) = cache.header_message_id {
+        message_ids.push(("header", id));
+    }
+    if let Some(id) = cache.status_message_id {
+        message_ids.push(("status", id));
+    }
+    if let Some(id) = cache.merchant_message_id {
+        message_ids.push(("merchant", id));
+    }
+    if let Some(id) = cache.activity_log_message_id {
+        message_ids.push(("activity_log", id));
+    }
+    if let Some(id) = cache.phase_screen_message_id {
+        message_ids.push(("phase_screen", id));
+    }
+    for slot in &cache.slots {
+        if let Some(id) = slot.message_id {
+            message_ids.push(("slot", id));
+        }
+    }
+
+    message_ids
+}
+
 /// Copy merchant UI fields from a working cache into the on-disk cache.
 pub fn merge_merchant_ui_cache(from: &MessageCache, into: &mut MessageCache) {
     into.merchant_message_id = from.merchant_message_id;

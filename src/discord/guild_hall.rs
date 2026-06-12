@@ -408,14 +408,11 @@ pub async fn update_board_message(
         cache_dirty = true;
     }
 
-    let mut clear_reactions_slots = vec![false; cache.slots.len()];
-
-    for (i, slot) in cache.slots.iter_mut().enumerate() {
+    for slot in cache.slots.iter_mut() {
         if let Some(jid) = slot.job_id {
             if !board.quests.iter().any(|q| q.id == jid) {
                 slot.job_id = None;
                 cache_dirty = true;
-                clear_reactions_slots[i] = true;
             }
         }
     }
@@ -426,7 +423,6 @@ pub async fn update_board_message(
             if let Some(i) = cache.slots.iter().position(|s| s.job_id.is_none()) {
                 cache.slots[i].job_id = Some(quest.id);
                 cache_dirty = true;
-                clear_reactions_slots[i] = true;
             }
         }
     }
@@ -446,11 +442,6 @@ pub async fn update_board_message(
                         slot.message_id = Some(msg.id.get());
                         slot.content = expected_key;
                         cache_dirty = true;
-                        if clear_reactions_slots[i] {
-                            if let Err(e) = http.delete_message_reactions(ch, msg.id).await {
-                                tracing::warn!(msg_id = msg.id.get(), slot = i, err = %e, "failed to clear reactions on job slot");
-                            }
-                        }
                     }
                     Err(e) => tracing::warn!(err = %e, slot = i, "failed to post replacement job slot message"),
                 }
@@ -458,11 +449,6 @@ pub async fn update_board_message(
                 slot.content = expected_key;
                 cache_dirty = true;
                 tracing::debug!(msg_id, slot = i, "job slot message edited");
-                if clear_reactions_slots[i] {
-                    if let Err(e) = http.delete_message_reactions(ch, MessageId::new(msg_id)).await {
-                        tracing::warn!(msg_id, slot = i, err = %e, "failed to clear reactions on job slot");
-                    }
-                }
             }
         } else {
             match send_cv2(http, ch, &slot_message).await {
@@ -471,11 +457,6 @@ pub async fn update_board_message(
                     slot.message_id = Some(msg.id.get());
                     slot.content = expected_key;
                     cache_dirty = true;
-                    if clear_reactions_slots[i] {
-                        if let Err(e) = http.delete_message_reactions(ch, msg.id).await {
-                            tracing::warn!(msg_id = msg.id.get(), slot = i, err = %e, "failed to clear reactions on job slot");
-                        }
-                    }
                 }
                 Err(e) => tracing::warn!(err = %e, slot = i, "failed to post job slot message"),
             }
