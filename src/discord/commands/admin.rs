@@ -223,6 +223,7 @@ async fn wait_for_generation_idle(rt: &GameRuntime) {
     let mut waited = 0;
     while waited < MAX_WAIT_MS {
         if rt.pending_quests.load(Ordering::SeqCst) == 0
+            && rt.pending_auto_jobs.load(Ordering::SeqCst) == 0
             && rt.pending_merchant_catalog.load(Ordering::SeqCst) == 0
         {
             return;
@@ -253,6 +254,7 @@ pub async fn admin_reset(ctx: Context<'_>) -> Result<(), Error> {
     *rt.merchant.lock().await = MerchantState::default();
     *rt.item_registry.lock().await = ItemRegistry::default();
     rt.pending_quests.store(0, Ordering::SeqCst);
+    rt.pending_auto_jobs.store(0, Ordering::SeqCst);
     rt.pending_merchant_catalog.store(0, Ordering::SeqCst);
     let default_session = GameSession::default();
     *rt.session.lock().await = default_session.clone();

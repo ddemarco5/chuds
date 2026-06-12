@@ -32,6 +32,9 @@ pub struct BoardQuest {
     /// Ticks until an idle job is recycled to the queue. Only decremented while idle.
     #[serde(default)]
     pub timeout: u32,
+    /// True when the job was submitted by a chudmaster via `/generate_job` or `/write_job`.
+    #[serde(default)]
+    pub player_submitted: bool,
 }
 
 impl BoardQuest {
@@ -133,6 +136,7 @@ impl Board {
         generated: GeneratedQuest,
         story_index: Option<usize>,
         job_timeout_tick: u32,
+        player_submitted: bool,
     ) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
@@ -147,6 +151,7 @@ impl Board {
             } else {
                 job_timeout_tick
             },
+            player_submitted,
         });
         id
     }

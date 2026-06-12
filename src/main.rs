@@ -62,14 +62,10 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("TICK_TIME_S not set"))?
         .parse()
         .map_err(|_| anyhow::anyhow!("TICK_TIME_S must be a positive integer"))?;
-    let job_gen_low_threshold: usize = std::env::var("JOB_GEN_LOW_THRESHOLD")
+    let mut reserved_cm_slot_num: usize = std::env::var("RESERVED_CM_SLOT_NUM")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(3);
-    let mut job_gen_high_threshold: usize = std::env::var("JOB_GEN_HIGH_THRESHOLD")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(10);
     let job_gen_min_history_msgs: usize = std::env::var("JOB_GEN_MIN_HISTORY_MSGS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -78,25 +74,13 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
-    // The high threshold is the backlog target; it must exceed the low trigger and never
-    // exceed the queue cap. Clamp loud rather than silently misbehaving at runtime.
-    if job_gen_high_threshold <= job_gen_low_threshold {
-        let clamped = job_gen_low_threshold + 1;
+    if reserved_cm_slot_num > max_jobs {
         tracing::warn!(
-            high = job_gen_high_threshold,
-            low = job_gen_low_threshold,
-            clamped,
-            "JOB_GEN_HIGH_THRESHOLD must be greater than JOB_GEN_LOW_THRESHOLD; clamping"
+            reserved = reserved_cm_slot_num,
+            max_jobs,
+            "RESERVED_CM_SLOT_NUM exceeds MAX_JOBS; clamping"
         );
-        job_gen_high_threshold = clamped;
-    }
-    if job_gen_high_threshold > max_job_queue {
-        tracing::warn!(
-            high = job_gen_high_threshold,
-            max_job_queue,
-            "JOB_GEN_HIGH_THRESHOLD exceeds MAX_JOB_QUEUE; clamping to MAX_JOB_QUEUE"
-        );
-        job_gen_high_threshold = max_job_queue;
+        reserved_cm_slot_num = max_jobs;
     }
 
     let llm_memory = chuds::game::persistence::llm_memory::load_llm_memory_bundle();
@@ -136,6 +120,7 @@ async fn main() -> anyhow::Result<()> {
     let merchant = Arc::new(tokio::sync::Mutex::new(game_state.guild_hall.merchant));
     let session = Arc::new(tokio::sync::Mutex::new(game_state.session));
     let pending_quests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let pending_auto_jobs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let pending_merchant_catalog = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
     tracing::info!(tick_time_s, "chuds bot starting");
@@ -258,6 +243,7 @@ async fn main() -> anyhow::Result<()> {
                     merchant_generator,
                     activity_log,
                     pending_quests,
+                    pending_auto_jobs,
                     pending_merchant_catalog,
                     session,
                     generation_queue: generation_tx,
@@ -270,8 +256,7 @@ async fn main() -> anyhow::Result<()> {
                     max_job_queue,
                     max_non_bot_messages,
                     tick_time_s,
-                    job_gen_low_threshold,
-                    job_gen_high_threshold,
+                    reserved_cm_slot_num,
                     job_gen_min_history_msgs,
                     job_timeout_tick,
                 });
@@ -289,6 +274,7 @@ async fn main() -> anyhow::Result<()> {
                     let worker_merchant = Arc::clone(&runtime.merchant);
                     let worker_http = Arc::clone(&runtime.http);
                     let worker_pending = Arc::clone(&runtime.pending_quests);
+                    let worker_pending_auto = Arc::clone(&runtime.pending_auto_jobs);
                     let worker_pending_merchant = Arc::clone(&runtime.pending_merchant_catalog);
                     let worker_session = Arc::clone(&runtime.session);
                     spawn_generation_worker(
@@ -303,6 +289,7 @@ async fn main() -> anyhow::Result<()> {
                         max_jobs,
                         job_timeout_tick,
                         worker_pending,
+                        worker_pending_auto,
                         worker_pending_merchant,
                         move |effects| {
                             let worker_http = Arc::clone(&worker_http);

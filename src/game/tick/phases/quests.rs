@@ -174,6 +174,7 @@ fn resolve_quest(
             states: Vec::new(),
             story_index: board_quest.story_index,
             timeout: job_timeout_tick,
+            player_submitted: board_quest.player_submitted,
         });
     }
 

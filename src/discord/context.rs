@@ -34,6 +34,7 @@ pub struct GameRuntime {
     pub merchant_generator: Arc<MerchantGenerator>,
     pub activity_log: Arc<ActivityLogSync>,
     pub pending_quests: Arc<AtomicUsize>,
+    pub pending_auto_jobs: Arc<AtomicUsize>,
     pub pending_merchant_catalog: Arc<AtomicUsize>,
     pub session: Arc<tokio::sync::Mutex<GameSession>>,
     pub generation_queue: tokio::sync::mpsc::UnboundedSender<GenerationJob>,
@@ -47,10 +48,8 @@ pub struct GameRuntime {
     pub max_job_queue: usize,
     pub max_non_bot_messages: usize,
     pub tick_time_s: u64,
-    /// Backlog fill at/below which the create_jobs phase triggers auto-generation.
-    pub job_gen_low_threshold: usize,
-    /// Backlog fill the create_jobs phase tops the queue up to when triggered.
-    pub job_gen_high_threshold: usize,
+    /// Empty board slots reserved for chudmaster-submitted jobs before auto-fill runs.
+    pub reserved_cm_slot_num: usize,
     /// Minimum description-memory messages required before auto-generation runs.
     pub job_gen_min_history_msgs: usize,
     /// Ticks an idle regular job may sit on the board before returning to the queue.

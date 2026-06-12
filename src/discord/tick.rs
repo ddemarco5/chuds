@@ -65,9 +65,9 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
             max_jobs: runtime.max_jobs,
             generation_queue: Some(&runtime.generation_queue),
             pending_quests: Some(&runtime.pending_quests),
+            pending_auto_jobs: Some(&runtime.pending_auto_jobs),
             description_history_msgs,
-            job_gen_low_threshold: runtime.job_gen_low_threshold,
-            job_gen_high_threshold: runtime.job_gen_high_threshold,
+            reserved_cm_slot_num: runtime.reserved_cm_slot_num,
             job_gen_min_history_msgs: runtime.job_gen_min_history_msgs,
             job_timeout_tick: runtime.job_timeout_tick,
         })?;

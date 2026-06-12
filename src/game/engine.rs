@@ -5,7 +5,7 @@ use crate::game::domain::starting_benefits::StartingBenefits;
 use crate::game::guild_status::GuildHallStatus;
 use crate::game::domain::item::{EquipmentSlot, ItemType};
 use crate::game::persistence::item_registry::ItemRegistry;
-use crate::game::domain::job_queue::{JobQueue, QueuedQuest};
+use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::player::{create_chud, Player};
 use crate::game::domain::quest_result::QuestResult;
 use crate::game::generation::gravestone_generator::GravestoneGenerator;
@@ -50,6 +50,14 @@ pub struct AddChudResult {
     pub benefits_claimed: u32,
 }
 
+/// Where a newly generated quest should land after the LLM finishes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuestPlacement {
+    Story { catalog_index: usize },
+    PlayerQueue,
+    BoardAuto,
+}
+
 /// A pending generation job sent to the background worker.
 pub enum GenerationJob {
     /// Generate the LLM result narrative for an already-assigned quest.
@@ -58,14 +66,21 @@ pub enum GenerationJob {
         player: Player,
         force_item_drop: bool,
     },
-    /// Fully generate a new quest from a description and add it to the board.
+    /// Fully generate a new quest from a description.
     QuestCreation {
         quest_data: QuestData,
-        /// Some(catalog index) for story jobs; None for regular jobs.
-        story_index: Option<usize>,
+        placement: QuestPlacement,
     },
     /// Generate the merchant roster and stock pools for a fresh game.
     MerchantCatalog,
+}
+
+/// Outcome of the tick refill orchestration (expire, queue drain, auto-gen trigger).
+pub struct TickRefillResult {
+    pub jobs_expired: usize,
+    pub slots_filled: usize,
+    pub jobs_requested: usize,
+    pub persisted: bool,
 }
 
 /// Enqueue background quest result generation after assignment.
@@ -149,7 +164,7 @@ pub fn ensure_story_generation(
                 quest_difficulty: entry.difficulty,
                 trials: roll_trials(entry.difficulty),
             },
-            story_index: Some(index),
+            placement: QuestPlacement::Story { catalog_index: index },
         })
         .is_err()
     {
@@ -188,19 +203,19 @@ pub fn ensure_merchant_catalog_generation(
     true
 }
 
-/// Decrement idle regular job timeouts, remove expired jobs, return them for re-queue.
-pub fn drain_expired_board_jobs(board: &mut Board) -> Vec<QueuedQuest> {
-    let mut expired = Vec::new();
+/// Decrement idle regular job timeouts; re-queue only player-submitted jobs.
+pub fn drain_expired_player_jobs(board: &mut Board, queue: &mut JobQueue) -> usize {
+    let mut expired = 0usize;
     board.quests.retain_mut(|q| {
         if !q.states.is_empty() || q.is_story() {
             return true;
         }
         q.timeout = q.timeout.saturating_sub(1);
         if q.timeout == 0 {
-            expired.push(QueuedQuest {
-                quest_data: q.quest_data.clone(),
-                generated: q.generated.clone(),
-            });
+            expired += 1;
+            if q.player_submitted {
+                queue.push(q.quest_data.clone(), q.generated.clone());
+            }
             false
         } else {
             true
@@ -209,8 +224,33 @@ pub fn drain_expired_board_jobs(board: &mut Board) -> Vec<QueuedQuest> {
     expired
 }
 
+/// Pull player-submitted jobs from the queue onto the board (FIFO).
+pub fn fill_board_from_queue(
+    board: &mut Board,
+    queue: &mut JobQueue,
+    max_jobs: usize,
+    job_timeout_tick: u32,
+) -> usize {
+    let mut added = 0usize;
+    while board.quests.len() < max_jobs && !queue.entries.is_empty() {
+        let entry = queue.entries.remove(0);
+        board.add_quest(
+            entry.quest_data,
+            entry.generated,
+            None,
+            job_timeout_tick,
+            true,
+        );
+        added += 1;
+    }
+    if added > 0 {
+        tracing::info!(added, "board refilled from queue");
+    }
+    added
+}
+
 /// Refill the board: ensure a story job is present (via async generation) before
-/// pulling from the regular queue. Returns the number of queue jobs added.
+/// pulling from the player queue. Returns the number of queue jobs added.
 pub fn refill_board(
     board: &mut Board,
     queue: &mut JobQueue,
@@ -220,7 +260,7 @@ pub fn refill_board(
     pending_quests: Option<&AtomicUsize>,
 ) -> usize {
     // Story job takes priority: keep its slot reserved while it is generated from the
-    // catalog (bootstrap/recovery fallback) before filling from the regular queue.
+    // catalog (bootstrap/recovery fallback) before filling from the player queue.
     let catalog_len = story_jobs::story_count();
     if catalog_len > 0
         && board.story_next_index < catalog_len
@@ -230,41 +270,165 @@ pub fn refill_board(
         return 0;
     }
 
-    // Regular jobs: pull pre-generated quests from the chudmaster queue. Selection is an
-    // age-weighted random draw rather than strict FIFO so that contiguous blocks of
-    // auto-generated jobs do not come off the queue in a row. Older entries (toward the
-    // front) get proportionally higher weight, and a waiting entry's weight rises as
-    // others are consumed, so nothing starves.
-    let mut added = 0usize;
-    let mut rng = rand::thread_rng();
-    while board.quests.len() < max_jobs && !queue.entries.is_empty() {
-        let index = weighted_oldest_index(queue.entries.len(), &mut rng);
-        let entry = queue.entries.remove(index);
-        board.add_quest(entry.quest_data, entry.generated, None, job_timeout_tick);
-        added += 1;
-    }
-    if added > 0 {
-        tracing::info!(added, "board refilled from queue");
-    }
-    added
+    fill_board_from_queue(board, queue, max_jobs, job_timeout_tick)
 }
 
-/// Pick an index into a `len`-long queue with linear age weighting: the oldest entry
-/// (front, index 0) has weight `len`, the newest (back) has weight 1. Older jobs are
-/// favored while any entry can still be drawn.
-fn weighted_oldest_index(len: usize, rng: &mut impl rand::Rng) -> usize {
-    debug_assert!(len > 0);
-    // Total weight = len + (len-1) + ... + 1 = len * (len + 1) / 2.
-    let total = len * (len + 1) / 2;
-    let mut pick = rng.gen_range(0..total);
-    for index in 0..len {
-        let weight = len - index;
-        if pick < weight {
-            return index;
-        }
-        pick -= weight;
+/// Seed for auto-generated board jobs.
+const AUTO_JOB_SEED_DESCRIPTION: &str = "Generate a brand-new job posting in the same world, tone, and style as the previous jobs. Do not closely repeat any earlier job's premise or goal, but you may reuse characters or settings.";
+
+/// Trigger async auto job generation for board slots beyond the reserved CM buffer.
+pub fn request_auto_board_jobs(
+    board: &Board,
+    max_jobs: usize,
+    reserved_cm_slot_num: usize,
+    description_history_msgs: usize,
+    job_gen_min_history_msgs: usize,
+    item_registry: &ItemRegistry,
+    generation_queue: Option<&tokio::sync::mpsc::UnboundedSender<GenerationJob>>,
+    pending_auto_jobs: Option<&AtomicUsize>,
+) -> anyhow::Result<usize> {
+    let (Some(gen_q), Some(pending_auto)) = (generation_queue, pending_auto_jobs) else {
+        return Ok(0);
+    };
+
+    if board.story_series_complete() {
+        return Ok(0);
     }
-    len - 1
+
+    if description_history_msgs < job_gen_min_history_msgs {
+        return Ok(0);
+    }
+
+    let free_slots = max_jobs.saturating_sub(board.quests.len());
+    let in_flight = pending_auto.load(Ordering::SeqCst);
+    let to_generate = free_slots
+        .saturating_sub(reserved_cm_slot_num)
+        .saturating_sub(in_flight);
+    if to_generate == 0 {
+        return Ok(0);
+    }
+
+    let mean_stat = auto_job_difficulty_center(item_registry);
+    let mean_stat_rounded = mean_stat.round() as u8;
+    let mut rng = rand::thread_rng();
+    for _ in 0..to_generate {
+        let difficulty = roll_auto_job_difficulty(mean_stat, &mut rng);
+        pending_auto.fetch_add(1, Ordering::SeqCst);
+        gen_q.send(make_quest_creation_job(
+            AUTO_JOB_SEED_DESCRIPTION.to_string(),
+            difficulty,
+            None,
+            QuestPlacement::BoardAuto,
+        ))?;
+    }
+
+    tracing::info!(
+        requested = to_generate,
+        free_slots,
+        reserved = reserved_cm_slot_num,
+        in_flight,
+        mean_stat = mean_stat_rounded,
+        "auto job generation triggered"
+    );
+
+    Ok(to_generate)
+}
+
+/// Expire idle jobs, refill from the player queue, then trigger board auto-generation.
+pub fn run_tick_refill(
+    board: &mut Board,
+    queue: &mut JobQueue,
+    item_registry: &ItemRegistry,
+    max_jobs: usize,
+    job_timeout_tick: u32,
+    generation_queue: Option<&tokio::sync::mpsc::UnboundedSender<GenerationJob>>,
+    pending_quests: Option<&AtomicUsize>,
+    pending_auto_jobs: Option<&AtomicUsize>,
+    description_history_msgs: usize,
+    job_gen_min_history_msgs: usize,
+    reserved_cm_slot_num: usize,
+) -> anyhow::Result<TickRefillResult> {
+    let jobs_expired = drain_expired_player_jobs(board, queue);
+    let slots_filled = refill_board(
+        board,
+        queue,
+        max_jobs,
+        job_timeout_tick,
+        generation_queue,
+        pending_quests,
+    );
+    let jobs_requested = request_auto_board_jobs(
+        board,
+        max_jobs,
+        reserved_cm_slot_num,
+        description_history_msgs,
+        job_gen_min_history_msgs,
+        item_registry,
+        generation_queue,
+        pending_auto_jobs,
+    )?;
+
+    let persisted = if jobs_expired > 0 || slots_filled > 0 {
+        storage::save_board(board)?;
+        storage::save_job_queue(queue)?;
+        true
+    } else {
+        false
+    };
+
+    if jobs_expired > 0 {
+        tracing::info!(
+            timed_out = jobs_expired,
+            replaced = slots_filled,
+            "{jobs_expired} jobs timed out and were replaced"
+        );
+    }
+
+    Ok(TickRefillResult {
+        jobs_expired,
+        slots_filled,
+        jobs_requested,
+        persisted,
+    })
+}
+
+/// Place a freshly generated quest according to its destination.
+pub fn place_generated_quest(
+    placement: QuestPlacement,
+    quest_data: QuestData,
+    generated: GeneratedQuest,
+    board: &mut Board,
+    queue: &mut JobQueue,
+    max_jobs: usize,
+    job_timeout_tick: u32,
+) -> anyhow::Result<usize> {
+    match placement {
+        QuestPlacement::Story { catalog_index } => {
+            board.add_quest(
+                quest_data,
+                generated,
+                Some(catalog_index),
+                job_timeout_tick,
+                false,
+            );
+            storage::save_board(board)?;
+            Ok(0)
+        }
+        QuestPlacement::PlayerQueue => {
+            enqueue_quest(queue, quest_data, generated)?;
+            let added = fill_board_from_queue(board, queue, max_jobs, job_timeout_tick);
+            storage::save_board(board)?;
+            storage::save_job_queue(queue)?;
+            Ok(added)
+        }
+        QuestPlacement::BoardAuto => {
+            board.add_quest(quest_data, generated, None, job_timeout_tick, false);
+            let added = fill_board_from_queue(board, queue, max_jobs, job_timeout_tick);
+            storage::save_board(board)?;
+            storage::save_job_queue(queue)?;
+            Ok(added)
+        }
+    }
 }
 
 /// Push a fully generated quest onto the job queue and persist.
@@ -338,6 +502,7 @@ pub fn make_quest_creation_job(
     description: String,
     difficulty: u8,
     quest_goal: Option<String>,
+    placement: QuestPlacement,
 ) -> GenerationJob {
     let quest_data = QuestData {
         quest_description: description,
@@ -347,7 +512,7 @@ pub fn make_quest_creation_job(
     };
     GenerationJob::QuestCreation {
         quest_data,
-        story_index: None, // chudmaster /generate_job — goes to queue after generation
+        placement,
     }
 }
 

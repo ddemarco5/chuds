@@ -6,7 +6,7 @@ use std::sync::{
 use crate::game::domain::board::Board;
 use crate::game::domain::job_queue::JobQueue;
 use crate::game::domain::quest_result::QuestResult;
-use crate::game::engine::{self, GenerationJob};
+use crate::game::engine::{self, GenerationJob, QuestPlacement};
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::merchant_generator::MerchantGenerator;
 use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator};
@@ -29,19 +29,32 @@ enum GenerationOutcome {
     QuestCreated {
         quest_data: QuestData,
         generated: GeneratedQuest,
-        story_index: Option<usize>,
+        placement: QuestPlacement,
     },
     QuestResult {
         quest_id: u32,
         result: QuestResult,
     },
-    QuestCreationFailed,
+    QuestCreationFailed {
+        placement: QuestPlacement,
+    },
     GenerateResultFailed { quest_id: u32 },
     MerchantCatalogReady {
         catalog: MerchantCatalog,
         registry: ItemRegistry,
     },
     MerchantCatalogFailed,
+}
+
+fn decrement_pending(placement: QuestPlacement, pending_quests: &AtomicUsize, pending_auto_jobs: &AtomicUsize) {
+    match placement {
+        QuestPlacement::BoardAuto => {
+            pending_auto_jobs.fetch_sub(1, Ordering::SeqCst);
+        }
+        QuestPlacement::Story { .. } | QuestPlacement::PlayerQueue => {
+            pending_quests.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
 }
 
 /// Run the slow LLM work for a generation job without holding shared runtime locks.
@@ -96,16 +109,16 @@ async fn run_generation(
         }
         GenerationJob::QuestCreation {
             quest_data,
-            story_index,
+            placement,
         } => match generator.generate_from_description(&quest_data).await {
             Ok(generated) => GenerationOutcome::QuestCreated {
                 quest_data,
                 generated,
-                story_index,
+                placement,
             },
             Err(e) => {
                 tracing::error!(err = %e, "quest creation failed");
-                GenerationOutcome::QuestCreationFailed
+                GenerationOutcome::QuestCreationFailed { placement }
             }
         },
         GenerationJob::MerchantCatalog => {
@@ -140,6 +153,7 @@ fn commit_generation(
     max_jobs: usize,
     job_timeout_tick: u32,
     pending_quests: &AtomicUsize,
+    pending_auto_jobs: &AtomicUsize,
     pending_merchant_catalog: &AtomicUsize,
 ) -> anyhow::Result<Vec<WorkerEffect>> {
     match outcome {
@@ -152,25 +166,26 @@ fn commit_generation(
         GenerationOutcome::QuestCreated {
             quest_data,
             generated,
-            story_index,
+            placement,
         } => {
-            let is_story = story_index.is_some();
+            let is_story = matches!(placement, QuestPlacement::Story { .. });
             tracing::info!(
                 title = %generated.quest_title,
                 giver = %generated.quest_giver,
                 story = is_story,
+                ?placement,
                 "quest generated"
             );
-            if is_story {
-                board.add_quest(quest_data, generated, story_index, job_timeout_tick);
-                storage::save_board(board)?;
-            } else {
-                engine::enqueue_quest(queue, quest_data, generated)?;
-            }
-            pending_quests.fetch_sub(1, Ordering::SeqCst);
-            let added = engine::refill_board(board, queue, max_jobs, job_timeout_tick, None, None);
-            storage::save_board(board)?;
-            storage::save_job_queue(queue)?;
+            let added = engine::place_generated_quest(
+                placement,
+                quest_data,
+                generated,
+                board,
+                queue,
+                max_jobs,
+                job_timeout_tick,
+            )?;
+            decrement_pending(placement, pending_quests, pending_auto_jobs);
             tracing::info!(
                 queued = queue.entries.len(),
                 added,
@@ -179,8 +194,8 @@ fn commit_generation(
             );
             Ok(vec![WorkerEffect::BoardRefilled { added }])
         }
-        GenerationOutcome::QuestCreationFailed => {
-            pending_quests.fetch_sub(1, Ordering::SeqCst);
+        GenerationOutcome::QuestCreationFailed { placement } => {
+            decrement_pending(placement, pending_quests, pending_auto_jobs);
             Ok(vec![WorkerEffect::QuestCreationFailed])
         }
         GenerationOutcome::GenerateResultFailed { quest_id } => {
@@ -220,6 +235,7 @@ pub fn spawn_generation_worker(
     max_jobs: usize,
     job_timeout_tick: u32,
     pending_quests: Arc<AtomicUsize>,
+    pending_auto_jobs: Arc<AtomicUsize>,
     pending_merchant_catalog: Arc<AtomicUsize>,
     on_effects: impl Fn(Vec<WorkerEffect>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
         + Send
@@ -228,13 +244,17 @@ pub fn spawn_generation_worker(
 ) {
     tokio::spawn(async move {
         while let Some(job) = rx.recv().await {
-            if matches!(&job, GenerationJob::QuestCreation { story_index: None, .. }) {
+            if let GenerationJob::QuestCreation {
+                placement: QuestPlacement::BoardAuto,
+                ..
+            } = &job
+            {
                 let skip = {
                     let b = board.lock().await;
                     b.story_series_complete()
                 };
                 if skip {
-                    pending_quests.fetch_sub(1, Ordering::SeqCst);
+                    pending_auto_jobs.fetch_sub(1, Ordering::SeqCst);
                     tracing::info!("skipping auto quest generation: story series complete");
                     continue;
                 }
@@ -263,6 +283,7 @@ pub fn spawn_generation_worker(
                     max_jobs,
                     job_timeout_tick,
                     &pending_quests,
+                    &pending_auto_jobs,
                     &pending_merchant_catalog,
                 ) {
                     Ok(effects) => effects,

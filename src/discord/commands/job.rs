@@ -7,7 +7,7 @@ use crate::discord::context::{
     admin_guard, chudmaster_check, parse_difficulty, parse_difficulty_optional, require_playing,
     say_ephemeral, Context, Error, GenerateJobModal, WriteJobModal,
 };
-use crate::game::engine;
+use crate::game::engine::{self, QuestPlacement};
 use crate::game::persistence::storage;
 
 #[poise::command(slash_command)]
@@ -71,6 +71,7 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
             data.description,
             difficulty,
             goal,
+            QuestPlacement::PlayerQueue,
         ))
         .map_err(|e| anyhow::anyhow!("generation queue closed: {e}"))?;
     say_ephemeral(
