@@ -26,7 +26,7 @@ const MIN_TRIALS: usize = 1;
 pub const AUTO_JOB_DIFFICULTY_STDDEV: f64 = 1.0;
 /// Additive bias applied to the sampled difficulty before rounding. Raise to skew auto jobs
 /// slightly harder than the computed mean; lower (negative) to ease them.
-pub const AUTO_JOB_DIFFICULTY_TRAJ: f64 = 0.0;
+pub const AUTO_JOB_DIFFICULTY_TRAJ: f64 = 0.5;
 /// Probability (0.0-1.0) that any given stat is irrelevant (set to 0) for a trial.
 const STAT_ZERO_CHANCE: f64 = 0.10;
 
