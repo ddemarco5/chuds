@@ -25,6 +25,10 @@ pub struct LlmMemoryBundle {
     pub gravestone: HashMap<String, Vec<Message>>,
     #[serde(default)]
     pub merchant: HashMap<String, Vec<Message>>,
+    #[serde(default)]
+    pub story_description: HashMap<String, Vec<Message>>,
+    #[serde(default)]
+    pub story_trials: HashMap<String, Vec<Message>>,
 }
 
 impl Default for LlmMemoryBundle {
@@ -37,6 +41,8 @@ impl Default for LlmMemoryBundle {
             item: HashMap::new(),
             gravestone: HashMap::new(),
             merchant: HashMap::new(),
+            story_description: HashMap::new(),
+            story_trials: HashMap::new(),
         }
     }
 }
@@ -82,6 +88,8 @@ fn try_load_llm_memory_bundle() -> anyhow::Result<LlmMemoryBundle> {
         item_msgs = bundle.item.values().map(|v| v.len()).sum::<usize>(),
         gravestone_msgs = bundle.gravestone.values().map(|v| v.len()).sum::<usize>(),
         merchant_msgs = bundle.merchant.values().map(|v| v.len()).sum::<usize>(),
+        story_description_msgs = bundle.story_description.values().map(|v| v.len()).sum::<usize>(),
+        story_trials_msgs = bundle.story_trials.values().map(|v| v.len()).sum::<usize>(),
         "LLM memory loaded from disk"
     );
     Ok(bundle)
@@ -105,6 +113,8 @@ pub fn save_llm_memory_bundle(bundle: &LlmMemoryBundle) -> anyhow::Result<()> {
         item_msgs = bundle.item.values().map(|v| v.len()).sum::<usize>(),
         gravestone_msgs = bundle.gravestone.values().map(|v| v.len()).sum::<usize>(),
         merchant_msgs = bundle.merchant.values().map(|v| v.len()).sum::<usize>(),
+        story_description_msgs = bundle.story_description.values().map(|v| v.len()).sum::<usize>(),
+        story_trials_msgs = bundle.story_trials.values().map(|v| v.len()).sum::<usize>(),
         "LLM memory saved to disk"
     );
     Ok(())
@@ -126,6 +136,12 @@ fn bundle_from_generators(
             .export_filtered_store(),
         results: quest
             .memory_for_slot(LlmMemorySlot::Results)
+            .export_filtered_store(),
+        story_description: quest
+            .memory_for_slot(LlmMemorySlot::StoryDescription)
+            .export_filtered_store(),
+        story_trials: quest
+            .memory_for_slot(LlmMemorySlot::StoryTrials)
             .export_filtered_store(),
         item: item.memory().export_filtered_store(),
         gravestone: gravestone.memory().export_filtered_store(),
@@ -159,6 +175,16 @@ pub fn clear_llm_memory(
                 .clear_all();
         }
         LlmMemorySlot::Trials => quest.memory_for_slot(LlmMemorySlot::Trials).clear_all(),
+        LlmMemorySlot::StoryDescription => {
+            quest
+                .memory_for_slot(LlmMemorySlot::StoryDescription)
+                .clear_all();
+        }
+        LlmMemorySlot::StoryTrials => {
+            quest
+                .memory_for_slot(LlmMemorySlot::StoryTrials)
+                .clear_all();
+        }
         LlmMemorySlot::Results => quest.memory_for_slot(LlmMemorySlot::Results).clear_all(),
         LlmMemorySlot::Item => item.memory().clear_all(),
         LlmMemorySlot::Gravestone => gravestone.memory().clear_all(),
@@ -168,6 +194,12 @@ pub fn clear_llm_memory(
                 .memory_for_slot(LlmMemorySlot::Description)
                 .clear_all();
             quest.memory_for_slot(LlmMemorySlot::Trials).clear_all();
+            quest
+                .memory_for_slot(LlmMemorySlot::StoryDescription)
+                .clear_all();
+            quest
+                .memory_for_slot(LlmMemorySlot::StoryTrials)
+                .clear_all();
             quest.memory_for_slot(LlmMemorySlot::Results).clear_all();
             item.memory().clear_all();
             gravestone.memory().clear_all();

@@ -192,6 +192,25 @@ fn results_conversation_id(chud_name: &str) -> String {
     chud_name.replace(' ', "_")
 }
 
+const REGULAR_DESC_CONV_ID: &str = "description";
+const REGULAR_TRIALS_CONV_ID: &str = "trials";
+const STORY_DESC_CONV_ID: &str = "story_description";
+const STORY_TRIALS_CONV_ID: &str = "story_trials";
+
+/// Which job-generation memory segment to read/write during quest creation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobMemoryKind {
+    Regular,
+    Story,
+}
+
+struct JobMemories<'a> {
+    description: &'a GameConversationMemory,
+    trials: &'a GameConversationMemory,
+    desc_conv_id: &'static str,
+    trials_conv_id: &'static str,
+}
+
 /// Limits for periodic LLM conversation memory resets. `0` disables reset for that slot.
 #[derive(Debug, Clone, Copy)]
 pub struct QuestMemoryResetConfig {
@@ -205,6 +224,8 @@ pub struct QuestGenerator {
     results_agent: OpenRouterAgent,
     description_memory: GameConversationMemory,
     trial_memory: GameConversationMemory,
+    story_description_memory: GameConversationMemory,
+    story_trial_memory: GameConversationMemory,
     results_memory: GameConversationMemory,
     reset_config: QuestMemoryResetConfig,
 }
@@ -223,10 +244,29 @@ impl QuestGenerator {
             description_memory: make_memory_from_store(memory.description.clone()),
             trial_agent: build_agent(&client, TRIAL_SYSTEM_CONTEXT),
             trial_memory: make_memory_from_store(memory.trials.clone()),
+            story_description_memory: make_memory_from_store(memory.story_description.clone()),
+            story_trial_memory: make_memory_from_store(memory.story_trials.clone()),
             results_agent: build_agent(&client, RESULTS_SYSTEM_CONTEXT),
             results_memory: make_memory_from_store(results_store),
             reset_config,
         })
+    }
+
+    fn job_memories(&self, kind: JobMemoryKind) -> JobMemories<'_> {
+        match kind {
+            JobMemoryKind::Regular => JobMemories {
+                description: &self.description_memory,
+                trials: &self.trial_memory,
+                desc_conv_id: REGULAR_DESC_CONV_ID,
+                trials_conv_id: REGULAR_TRIALS_CONV_ID,
+            },
+            JobMemoryKind::Story => JobMemories {
+                description: &self.story_description_memory,
+                trials: &self.story_trial_memory,
+                desc_conv_id: STORY_DESC_CONV_ID,
+                trials_conv_id: STORY_TRIALS_CONV_ID,
+            },
+        }
     }
 
     async fn maybe_reset_job_memory(&self) {
@@ -237,19 +277,19 @@ impl QuestGenerator {
         let desc = self.description_memory.export_filtered_store();
         let trials = self.trial_memory.export_filtered_store();
         let exchanges = desc
-            .get("description")
+            .get(REGULAR_DESC_CONV_ID)
             .map(|m| m.len() / 2)
             .unwrap_or(0)
             .max(
                 trials
-                    .get("trials")
+                    .get(REGULAR_TRIALS_CONV_ID)
                     .map(|m| m.len() / 2)
                     .unwrap_or(0),
             );
         if exchanges >= limit {
-            let _ = self.description_memory.clear("description").await;
-            let _ = self.trial_memory.clear("trials").await;
-            tracing::info!(exchanges, limit, "quest job memory reset");
+            let _ = self.description_memory.clear(REGULAR_DESC_CONV_ID).await;
+            let _ = self.trial_memory.clear(REGULAR_TRIALS_CONV_ID).await;
+            tracing::info!(exchanges, limit, "regular quest job memory reset");
         }
     }
 
@@ -290,6 +330,8 @@ impl QuestGenerator {
         match slot {
             LlmMemorySlot::Description => &self.description_memory,
             LlmMemorySlot::Trials => &self.trial_memory,
+            LlmMemorySlot::StoryDescription => &self.story_description_memory,
+            LlmMemorySlot::StoryTrials => &self.story_trial_memory,
             LlmMemorySlot::Results => &self.results_memory,
             LlmMemorySlot::Item
             | LlmMemorySlot::Gravestone
@@ -300,32 +342,39 @@ impl QuestGenerator {
         }
     }
 
-    pub async fn generate_from_description(&self, quest: &QuestData) -> anyhow::Result<GeneratedQuest> {
-        self.maybe_reset_job_memory().await;
+    pub async fn generate_from_description(
+        &self,
+        quest: &QuestData,
+        memory_kind: JobMemoryKind,
+    ) -> anyhow::Result<GeneratedQuest> {
+        if memory_kind == JobMemoryKind::Regular {
+            self.maybe_reset_job_memory().await;
+        }
+        let mem = self.job_memories(memory_kind);
         let desc_yaml = serde_yaml::to_string(&DescPrompt {
             quest_description: &quest.quest_description,
             quest_difficulty: quest.quest_difficulty,
             quest_goal: quest.quest_goal.as_deref(),
         })?;
         if quest.quest_goal.is_some() {
-            tracing::info!("generating quest description with user-provided goal");
+            tracing::info!(?memory_kind, "generating quest description with user-provided goal");
         } else {
-            tracing::info!("generating quest description");
+            tracing::info!(?memory_kind, "generating quest description");
         }
         let desc_response = prompt_parse_retry::<DescResponse>(
             &self.description_agent,
-            &self.description_memory,
+            mem.description,
             &desc_yaml,
             None,
-            "description",
+            mem.desc_conv_id,
         )
         .await?;
-        tracing::info!("quest description received");
+        tracing::info!(?memory_kind, "quest description received");
         let quest_title = desc_response.quest_title;
         let quest_giver = desc_response.quest_giver;
         let description = desc_response.description;
         let quest_goal = quest.quest_goal.clone().unwrap_or(desc_response.goal);
-        tracing::info!("quest goal is {quest_goal}");
+        tracing::info!(?memory_kind, "quest goal is {quest_goal}");
 
         let trial_scaffold = {
             let slots = quest
@@ -349,17 +398,22 @@ impl QuestGenerator {
                 trials: &quest.trials,
             })?
         );
-        tracing::info!("generating quest trials");
+        tracing::info!(?memory_kind, "generating quest trials");
         let trials = prompt_parse_retry::<TrialsResponse>(
             &self.trial_agent,
-            &self.trial_memory,
+            mem.trials,
             &trial_yaml,
             Some(quest.trials.len()),
-            "trials",
+            mem.trials_conv_id,
         )
         .await?
         .trials;
-        tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
+        tracing::info!(
+            ?memory_kind,
+            count = trials.len(),
+            expected = quest.trials.len(),
+            "quest trials received"
+        );
 
         let reward = calculate_quest_reward(&quest.trials);
         Ok(GeneratedQuest {
@@ -407,7 +461,7 @@ impl QuestGenerator {
             &self.trial_memory,
             &trial_yaml,
             Some(quest.trials.len()),
-            "trials",
+            REGULAR_TRIALS_CONV_ID,
         )
         .await?
         .trials;

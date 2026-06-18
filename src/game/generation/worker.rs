@@ -9,7 +9,7 @@ use crate::game::domain::quest_result::QuestResult;
 use crate::game::engine::{self, GenerationJob, QuestPlacement};
 use crate::game::generation::item_generator::ItemGenerator;
 use crate::game::generation::merchant_generator::MerchantGenerator;
-use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator};
+use crate::game::generation::quest_generator::{GeneratedQuest, QuestData, QuestGenerator, JobMemoryKind};
 use crate::game::merchant::{roll_merchant_stock_seeds, MerchantCatalog, MerchantState};
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::merchants;
@@ -110,17 +110,26 @@ async fn run_generation(
         GenerationJob::QuestCreation {
             quest_data,
             placement,
-        } => match generator.generate_from_description(&quest_data).await {
-            Ok(generated) => GenerationOutcome::QuestCreated {
-                quest_data,
-                generated,
-                placement,
-            },
-            Err(e) => {
-                tracing::error!(err = %e, "quest creation failed");
-                GenerationOutcome::QuestCreationFailed { placement }
+        } => {
+            let memory_kind = match &placement {
+                QuestPlacement::Story { .. } => JobMemoryKind::Story,
+                _ => JobMemoryKind::Regular,
+            };
+            match generator
+                .generate_from_description(&quest_data, memory_kind)
+                .await
+            {
+                Ok(generated) => GenerationOutcome::QuestCreated {
+                    quest_data,
+                    generated,
+                    placement,
+                },
+                Err(e) => {
+                    tracing::error!(err = %e, "quest creation failed");
+                    GenerationOutcome::QuestCreationFailed { placement }
+                }
             }
-        },
+        }
         GenerationJob::MerchantCatalog => {
             let mut local_registry = {
                 let registry = item_registry.lock().await;

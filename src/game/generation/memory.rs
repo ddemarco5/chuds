@@ -12,6 +12,8 @@ pub const MEMORY_TOKEN_BUDGET: usize = 50_000;
 pub enum LlmMemorySlot {
     Description,
     Trials,
+    StoryDescription,
+    StoryTrials,
     Results,
     Item,
     Gravestone,
