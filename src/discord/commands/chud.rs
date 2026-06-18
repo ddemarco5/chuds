@@ -1,5 +1,5 @@
 use crate::chud_msg;
-use crate::discord::formatting::format_item_slot_label;
+use crate::discord::formatting::{format_equipment_summary, format_player_stats_block, PlayerStatsBlockOptions};
 use crate::discord::guild_hall;
 use crate::discord::game_screens;
 use crate::discord::channel::append_activity_log;
@@ -9,50 +9,9 @@ use crate::discord::ui::{build_player_slots_open_message, validate_pay_in};
 use crate::game::busy::BusyReason;
 use crate::game::domain::player::Player;
 use crate::game::domain::session::GamePhase;
-use crate::game::domain::stash::STASH_CAPACITY;
 use crate::game::engine;
-use crate::game::mechanics::simulation::effective_stats;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::storage;
-
-fn format_equipment_summary(player: &Player, registry: &ItemRegistry) -> String {
-    let chud = player.chud_ref();
-    let mut lines = Vec::new();
-    if let Some(id) = chud.equipment.gear {
-        if let Some(item) = registry.get(id) {
-            lines.push(format!(
-                "Gear: **{}** ({}) [{}]",
-                item.name,
-                format_item_slot_label(item),
-                item.stats.format_triplet(),
-            ));
-        }
-    }
-    if let Some(id) = chud.equipment.weapon {
-        if let Some(item) = registry.get(id) {
-            lines.push(format!(
-                "Weapon: **{}** ({}) [{}]",
-                item.name,
-                format_item_slot_label(item),
-                item.stats.format_triplet(),
-            ));
-        }
-    }
-    for (i, slot) in chud.equipment.misc.iter().enumerate() {
-        if let Some(id) = slot {
-            if let Some(item) = registry.get(*id) {
-                lines.push(format!(
-                    "Misc {}: **{}** ({}) [{}]",
-                    i + 1,
-                    item.name,
-                    format_item_slot_label(item),
-                    item.stats.format_triplet(),
-                ));
-            }
-        }
-    }
-    lines.join("\n")
-}
 
 fn format_inspect_description_only(player: &Player) -> String {
     let chud = player.chud_ref();
@@ -199,42 +158,15 @@ pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         None => ctx.say("You don't have a chud.").await?,
         Some(p) if !p.has_chud() => ctx.say("You don't have a chud.").await?,
         Some(p) => {
-            let chud = p.chud_ref();
             let registry = ctx.data().runtime.item_registry.lock().await;
-            let equipment = format_equipment_summary(&p, &registry);
-            let stash_line = if p.stash.is_empty() {
-                format!("Stash: empty (0/{STASH_CAPACITY}) - use `/gear` to manage loadout")
-            } else {
-                format!(
-                    "Stash: {}/{} items - use `/gear` to manage loadout",
-                    p.stash.len(),
-                    STASH_CAPACITY
-                )
-            };
-            let effective = effective_stats(&p, &registry);
-            let stats_line = p.format_effective_stats_line(effective);
-            let msg = if equipment.is_empty() {
-                format!(
-                    "**{}**\n{}\n\n{}\n{}\n{}\n\nYou've got ${} worth of loose change.",
-                    chud.name,
-                    chud.description,
-                    stash_line,
-                    stats_line,
-                    p.format_job_record(),
-                    p.cash,
-                )
-            } else {
-                format!(
-                    "**{}**\n{}\n\n{}\n\n{}\n{}\n{}\n\nYou've got ${} worth of loose change.",
-                    chud.name,
-                    chud.description,
-                    equipment,
-                    stash_line,
-                    stats_line,
-                    p.format_job_record(),
-                    p.cash,
-                )
-            };
+            let msg = format_player_stats_block(
+                &p,
+                &registry,
+                PlayerStatsBlockOptions {
+                    include_stash: true,
+                    include_cash: true,
+                },
+            );
             ctx.say(msg).await?
         }
     };

@@ -3,8 +3,11 @@ use poise::serenity_prelude::{self as serenity, MessageId};
 use crate::chud_msg;
 use crate::discord::components_v2::{Component, ComponentsV2Message, TextDisplay};
 use crate::discord::context::GameRuntime;
-use crate::discord::guild_hall::{edit_cv2, format_chudlerboard, reset_channel_cache, send_cv2};
+use crate::discord::formatting::{format_player_stats_block, PlayerStatsBlockOptions};
+use crate::discord::guild_hall::{edit_cv2, reset_channel_cache, send_cv2};
+use crate::game::domain::player::Player;
 use crate::game::engine;
+use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::storage;
 use crate::story_jobs;
 
@@ -52,42 +55,50 @@ async fn build_attract_message(runtime: &GameRuntime) -> ComponentsV2Message {
     ComponentsV2Message::channel(vec![Component::Text(TextDisplay::new(body))])
 }
 
-/// Build the game-complete screen (final mission, game stats, chudlerboard, per-chud stats).
+/// Build the game-complete screen (story recap, per-chud stats, post-game records).
 async fn build_complete_message(runtime: &GameRuntime) -> ComponentsV2Message {
     let title = story_jobs::story_line_name();
+    let story_count = story_jobs::story_count();
 
-    let (completer, total_ticks) = {
+    let total_ticks = {
         let session = runtime.session.lock().await;
-        (
-            session
-                .final_completer_chud_name
-                .clone()
-                .unwrap_or_else(|| "TBD".to_string()),
-            session.total_ticks,
-        )
+        session.total_ticks
     };
 
-    let mut body = format!(
-        "# {title}\n## GAME COMPLETE\nFinal mission completed by: **{completer}**\nDays taken: {total_ticks}\n"
-    );
+    let episode_stats = storage::load_episode_stats().unwrap_or_default();
 
-    let chudlerboard = format_chudlerboard(&runtime.http).await;
-    if !chudlerboard.is_empty() {
+    let mut body = format!("# {title} Complete!\n");
+    let story_recap = episode_stats.format_story_recap(story_count);
+    if !story_recap.is_empty() {
+        body.push_str(&story_recap);
         body.push('\n');
-        body.push_str(&chudlerboard);
+    }
+    body.push_str(&format!("Days taken: {total_ticks}"));
+
+    let registry = runtime.item_registry.lock().await;
+    let chud_blocks = per_chud_complete_blocks(&registry);
+    if !chud_blocks.is_empty() {
+        body.push_str("\n\n**The chuds**\n");
+        body.push_str(&chud_blocks.join("\n\n"));
     }
 
-    let stats = per_chud_stat_lines();
-    if !stats.is_empty() {
-        body.push_str("\n**The chuds**\n");
-        body.push_str(&stats.join("\n"));
+    let post_game = episode_stats.format_post_game_lines();
+    if !post_game.is_empty() {
+        body.push_str("\n\n");
+        body.push_str(&post_game.join("\n"));
     }
 
     ComponentsV2Message::channel(vec![Component::Text(TextDisplay::new(body))])
 }
 
-/// One line per living chud: missions passed/failed and current cash.
-fn per_chud_stat_lines() -> Vec<String> {
+fn indent_lines(text: &str, prefix: &str) -> String {
+    text.lines()
+        .map(|line| format!("{prefix}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn per_chud_complete_blocks(registry: &ItemRegistry) -> Vec<String> {
     let ids = match storage::list_player_ids() {
         Ok(ids) => ids,
         Err(e) => {
@@ -95,19 +106,32 @@ fn per_chud_stat_lines() -> Vec<String> {
             return Vec::new();
         }
     };
-    let mut lines = Vec::new();
+
+    let mut players: Vec<Player> = Vec::new();
     for id in ids {
         if let Ok(Some(player)) = storage::load_player(id) {
             if player.has_chud() {
-                let chud = player.chud_ref();
-                lines.push(format!(
-                    "**{}** — {} passed, {} failed | ${}",
-                    chud.name, chud.total_job_successes, chud.total_job_failures, player.cash
-                ));
+                players.push(player);
             }
         }
     }
-    lines
+    players.sort_by(|a, b| a.chud_ref().name.cmp(&b.chud_ref().name));
+
+    players
+        .iter()
+        .map(|player| {
+            let header = format!("<@{}>'s chud:", player.discord_user_id);
+            let stats = format_player_stats_block(
+                player,
+                registry,
+                PlayerStatsBlockOptions {
+                    include_stash: false,
+                    include_cash: true,
+                },
+            );
+            format!("{header}\n{}", indent_lines(&stats, "    "))
+        })
+        .collect()
 }
 
 /// Post or edit the single attract/complete phase-screen message (edit-in-place via cache key).

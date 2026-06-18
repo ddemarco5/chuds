@@ -7,10 +7,104 @@ use crate::game::domain::graveyard::GraveyardEntry;
 use crate::game::domain::item::{Item, ItemType};
 use crate::game::domain::player::Player;
 use crate::game::domain::quest_result::{CompletedTrial, QuestResult};
+use crate::game::domain::stash::STASH_CAPACITY;
 use crate::game::engine::KillResult;
 use crate::game::mechanics::simulation::effective_stats;
 use crate::game::generation::generators::collapse_whitespace;
 use crate::game::persistence::item_registry::ItemRegistry;
+
+#[derive(Debug, Clone, Copy)]
+pub struct PlayerStatsBlockOptions {
+    pub include_stash: bool,
+    pub include_cash: bool,
+}
+
+pub fn format_equipment_summary(player: &Player, registry: &ItemRegistry) -> String {
+    let chud = player.chud_ref();
+    let mut lines = Vec::new();
+    if let Some(id) = chud.equipment.gear {
+        if let Some(item) = registry.get(id) {
+            lines.push(format!(
+                "Gear: **{}** ({}) [{}]",
+                item.name,
+                format_item_slot_label(item),
+                item.stats.format_triplet(),
+            ));
+        }
+    }
+    if let Some(id) = chud.equipment.weapon {
+        if let Some(item) = registry.get(id) {
+            lines.push(format!(
+                "Weapon: **{}** ({}) [{}]",
+                item.name,
+                format_item_slot_label(item),
+                item.stats.format_triplet(),
+            ));
+        }
+    }
+    for (i, slot) in chud.equipment.misc.iter().enumerate() {
+        if let Some(id) = slot {
+            if let Some(item) = registry.get(*id) {
+                lines.push(format!(
+                    "Misc {}: **{}** ({}) [{}]",
+                    i + 1,
+                    item.name,
+                    format_item_slot_label(item),
+                    item.stats.format_triplet(),
+                ));
+            }
+        }
+    }
+    lines.join("\n")
+}
+
+pub fn format_player_stats_block(
+    player: &Player,
+    registry: &ItemRegistry,
+    options: PlayerStatsBlockOptions,
+) -> String {
+    let chud = player.chud_ref();
+    let equipment = format_equipment_summary(player, registry);
+    let effective = effective_stats(player, registry);
+    let stats_line = player.format_effective_stats_line(effective);
+    let job_record = player.format_job_record();
+
+    let mut out = format!("**{}\n{}", chud.name, chud.description);
+
+    if !equipment.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&equipment);
+    }
+
+    out.push_str("\n\n");
+
+    if options.include_stash {
+        let stash_line = if player.stash.is_empty() {
+            format!("Stash: empty (0/{STASH_CAPACITY}) - use `/gear` to manage loadout")
+        } else {
+            format!(
+                "Stash: {}/{} items - use `/gear` to manage loadout",
+                player.stash.len(),
+                STASH_CAPACITY
+            )
+        };
+        out.push_str(&stash_line);
+        out.push('\n');
+    }
+
+    out.push_str(&stats_line);
+    out.push('\n');
+    out.push_str(&job_record);
+
+    if options.include_cash {
+        out.push_str(&format!(
+            "\n\nYou've got ${} worth of loose change.",
+            player.cash
+        ));
+    }
+
+    out
+}
 
 /// Collapse whitespace so Discord `*italic*` markers stay on one line.
 fn markdown_italic_line(text: &str) -> String {

@@ -84,7 +84,11 @@ fn resolve_quest(
         tracing::info!("{} made ${}", player_name, reward);
         player.cash += reward;
 
-        episode_stats.update_highest_difficulty(board_quest.quest_data.quest_difficulty);
+        episode_stats.update_highest_difficulty(
+            board_quest.quest_data.quest_difficulty,
+            discord_user_id,
+            &player_name,
+        );
         if let Some(index) = board_quest.story_index {
             episode_stats.record_story_beat(
                 index,
