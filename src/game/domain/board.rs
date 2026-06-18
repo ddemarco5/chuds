@@ -10,7 +10,7 @@ use crate::game::generation::quest_generator::{GeneratedQuest, QuestData};
 pub enum QuestState {
     Active {
         discord_user_id: u64,
-        /// Ticks remaining until this quest resolves. Decremented once per tick.
+        /// Ticks remaining until this quest resolves. Decremented by `jobs_per_tick` each tick.
         ticks_remaining: u32,
     },
     Scouting {
@@ -231,12 +231,12 @@ impl Board {
     /// quests that are ready to resolve this tick. A quest is due when its result
     /// is present in `completed_results` AND either:
     ///   - `ticks_remaining` has reached zero (all trials elapsed), OR
-    ///   - the current trial's result is a failure (early resolution).
-    pub fn tick_and_take_due(&mut self) -> Vec<BoardQuest> {
+    ///   - any elapsed trial's result is a failure (early resolution).
+    pub fn tick_and_take_due(&mut self, jobs_per_tick: u32) -> Vec<BoardQuest> {
         for q in &mut self.quests {
             for s in &mut q.states {
                 if let QuestState::Active { ticks_remaining, .. } = s {
-                    *ticks_remaining = ticks_remaining.saturating_sub(1);
+                    *ticks_remaining = ticks_remaining.saturating_sub(jobs_per_tick);
                 }
             }
         }
@@ -249,13 +249,11 @@ impl Board {
                     if *ticks_remaining == 0 {
                         due_ids.insert(q.id);
                     } else {
-                        let trial_index =
-                            total_trials.saturating_sub(*ticks_remaining + 1) as usize;
-                        if result
-                            .trials
-                            .get(trial_index)
-                            .map_or(false, |t| !t.passed)
-                        {
+                        let elapsed = total_trials.saturating_sub(*ticks_remaining);
+                        let failed = (0..elapsed as usize).any(|i| {
+                            result.trials.get(i).map_or(false, |t| !t.passed)
+                        });
+                        if failed {
                             due_ids.insert(q.id);
                         }
                     }

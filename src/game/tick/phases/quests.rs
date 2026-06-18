@@ -5,7 +5,7 @@ use crate::game::tick::{QuestResolved, TickContext, TickOutcome};
 use crate::game::tuneable_rolls::{death_chance, injury_chance, roll_failure_consequences};
 
 pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::Result<()> {
-    let due = ctx.board.tick_and_take_due();
+    let due = ctx.board.tick_and_take_due(ctx.jobs_per_tick);
     tracing::info!(quests_due = due.len(), "quest phase complete");
 
     for board_quest in due {

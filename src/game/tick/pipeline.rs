@@ -59,6 +59,8 @@ pub struct TickContext<'a> {
     pub job_gen_min_history_msgs: usize,
     /// Ticks an idle regular job may sit on the board before returning to the queue.
     pub job_timeout_tick: u32,
+    /// Active quest `ticks_remaining` decremented by this amount each board tick.
+    pub jobs_per_tick: u32,
 }
 
 #[derive(Default)]

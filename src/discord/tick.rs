@@ -76,6 +76,7 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
             reserved_cm_slot_num: runtime.reserved_cm_slot_num,
             job_gen_min_history_msgs: runtime.job_gen_min_history_msgs,
             job_timeout_tick: runtime.job_timeout_tick,
+            jobs_per_tick: runtime.jobs_per_tick,
         })?;
 
         storage::save_hospital(&hospital)?;

@@ -75,6 +75,13 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
+    let jobs_per_tick: u32 = std::env::var("JOBS_PER_TICK")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    if jobs_per_tick == 0 {
+        anyhow::bail!("JOBS_PER_TICK must be at least 1");
+    }
     let job_memory_reset_after: usize = std::env::var("JOB_MEMORY_RESET_AFTER")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -278,6 +285,7 @@ async fn main() -> anyhow::Result<()> {
                     reserved_cm_slot_num,
                     job_gen_min_history_msgs,
                     job_timeout_tick,
+                    jobs_per_tick,
                 });
 
                 // Generation worker: spawned once and left running; it simply idles until a
