@@ -162,7 +162,7 @@ fn per_chud_complete_blocks(registry: &ItemRegistry) -> Vec<String> {
                     include_cash: false,
                 },
             );
-            format!("<@{}>'s chud:\n\n{stats}", player.discord_user_id)
+            format!("<@{}>'s chud {stats}", player.discord_user_id)
         })
         .collect()
 }

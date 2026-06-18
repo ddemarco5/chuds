@@ -162,6 +162,8 @@ pub async fn handle_slots_spin(
         }
     };
 
+    let mut episode_stats = storage::load_episode_stats()?;
+
     let message = match validate_pay_in(pay_in) {
         Err(msg) => build_slots_message(
             pay_in.max(1),
@@ -172,8 +174,16 @@ pub async fn handle_slots_spin(
         ),
         Ok(()) => match slots::spin_for_player(&mut player, pay_in) {
             Ok(spin) => {
+                let chud_name = player.chud_ref().name.clone();
+                episode_stats.record_gambling_spin(
+                    user_id,
+                    &chud_name,
+                    spin.pay_in,
+                    spin.payout,
+                );
+                storage::save_episode_stats(&episode_stats)?;
+
                 if spin.payout > 0 {
-                    let chud_name = player.chud_ref().name.clone();
                     let first_name = chud_name
                         .split_whitespace()
                         .next()

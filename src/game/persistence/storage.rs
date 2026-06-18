@@ -439,7 +439,9 @@ pub fn load_episode_stats() -> anyhow::Result<EpisodeStats> {
         return Ok(EpisodeStats::default());
     }
     let yaml = std::fs::read_to_string(EPISODE_STATS_PATH).context("reading episode stats")?;
-    serde_yaml::from_str(&yaml).context("parsing episode stats")
+    let mut stats: EpisodeStats = serde_yaml::from_str(&yaml).context("parsing episode stats")?;
+    stats.normalize();
+    Ok(stats)
 }
 
 /// Return `true` if the given Discord user ID is a Chudmaster.
