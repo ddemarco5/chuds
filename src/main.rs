@@ -75,6 +75,14 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
+    let job_memory_reset_after: usize = std::env::var("JOB_MEMORY_RESET_AFTER")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+    let result_memory_reset_after: usize = std::env::var("RESULT_MEMORY_RESET_AFTER")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
     if reserved_cm_slot_num > max_jobs {
         tracing::warn!(
             reserved = reserved_cm_slot_num,
@@ -88,6 +96,10 @@ async fn main() -> anyhow::Result<()> {
     let generator = Arc::new(chuds::game::generation::quest_generator::QuestGenerator::new(
         &api_key,
         &llm_memory,
+        chuds::game::generation::quest_generator::QuestMemoryResetConfig {
+            job_generations: job_memory_reset_after,
+            result_generations: result_memory_reset_after,
+        },
     )?);
     let item_generator = Arc::new(chuds::game::generation::item_generator::ItemGenerator::new(
         &api_key,

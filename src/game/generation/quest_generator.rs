@@ -1,3 +1,4 @@
+use rig::memory::ConversationMemory;
 use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
 
@@ -191,6 +192,13 @@ fn results_conversation_id(chud_name: &str) -> String {
     chud_name.replace(' ', "_")
 }
 
+/// Limits for periodic LLM conversation memory resets. `0` disables reset for that slot.
+#[derive(Debug, Clone, Copy)]
+pub struct QuestMemoryResetConfig {
+    pub job_generations: usize,
+    pub result_generations: usize,
+}
+
 pub struct QuestGenerator {
     description_agent: OpenRouterAgent,
     trial_agent: OpenRouterAgent,
@@ -198,10 +206,15 @@ pub struct QuestGenerator {
     description_memory: GameConversationMemory,
     trial_memory: GameConversationMemory,
     results_memory: GameConversationMemory,
+    reset_config: QuestMemoryResetConfig,
 }
 
 impl QuestGenerator {
-    pub fn new(api_key: &str, memory: &LlmMemoryBundle) -> anyhow::Result<Self> {
+    pub fn new(
+        api_key: &str,
+        memory: &LlmMemoryBundle,
+        reset_config: QuestMemoryResetConfig,
+    ) -> anyhow::Result<Self> {
         let client = openrouter::Client::new(api_key)?;
         let mut results_store = memory.results.clone();
         results_store.remove("results");
@@ -212,7 +225,54 @@ impl QuestGenerator {
             trial_memory: make_memory_from_store(memory.trials.clone()),
             results_agent: build_agent(&client, RESULTS_SYSTEM_CONTEXT),
             results_memory: make_memory_from_store(results_store),
+            reset_config,
         })
+    }
+
+    async fn maybe_reset_job_memory(&self) {
+        let limit = self.reset_config.job_generations;
+        if limit == 0 {
+            return;
+        }
+        let desc = self.description_memory.export_filtered_store();
+        let trials = self.trial_memory.export_filtered_store();
+        let exchanges = desc
+            .get("description")
+            .map(|m| m.len() / 2)
+            .unwrap_or(0)
+            .max(
+                trials
+                    .get("trials")
+                    .map(|m| m.len() / 2)
+                    .unwrap_or(0),
+            );
+        if exchanges >= limit {
+            let _ = self.description_memory.clear("description").await;
+            let _ = self.trial_memory.clear("trials").await;
+            tracing::info!(exchanges, limit, "quest job memory reset");
+        }
+    }
+
+    async fn maybe_reset_result_memory(&self, chud_name: &str) {
+        let limit = self.reset_config.result_generations;
+        if limit == 0 {
+            return;
+        }
+        let conversation_id = results_conversation_id(chud_name);
+        let store = self.results_memory.export_filtered_store();
+        let exchanges = store
+            .get(&conversation_id)
+            .map(|m| m.len() / 2)
+            .unwrap_or(0);
+        if exchanges >= limit {
+            let _ = self.results_memory.clear(&conversation_id).await;
+            tracing::info!(
+                chud = chud_name,
+                exchanges,
+                limit,
+                "quest result memory reset"
+            );
+        }
     }
 
     /// Total messages currently held in the description agent's memory (post char-budget
@@ -241,6 +301,7 @@ impl QuestGenerator {
     }
 
     pub async fn generate_from_description(&self, quest: &QuestData) -> anyhow::Result<GeneratedQuest> {
+        self.maybe_reset_job_memory().await;
         let desc_yaml = serde_yaml::to_string(&DescPrompt {
             quest_description: &quest.quest_description,
             quest_difficulty: quest.quest_difficulty,
@@ -317,6 +378,7 @@ impl QuestGenerator {
         title: String,
         giver: String,
     ) -> anyhow::Result<GeneratedQuest> {
+        self.maybe_reset_job_memory().await;
         let trial_scaffold = {
             let slots = quest
                 .trials
@@ -371,6 +433,7 @@ impl QuestGenerator {
         chud_description: &str,
         failure_outcome: Option<&str>,
     ) -> anyhow::Result<QuestResults> {
+        self.maybe_reset_result_memory(chud_name).await;
         let scaffold = {
             let slots = outcomes
                 .iter()
