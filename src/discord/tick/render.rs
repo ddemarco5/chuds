@@ -40,7 +40,13 @@ pub async fn render_tick_outcome(
 
     for qr in &outcome.quest_resolved {
         tracing::info!(quest = %qr.quest_title, passed = qr.result.passed, player = %qr.player_name, "quest resolved");
-        let content = if qr.level_up.any() {
+        append_activity_log_deferred(
+            activity_log,
+            ActivityLogKind::QuestSummary,
+            &qr.summary,
+        )
+        .await;
+        if qr.level_up.any() {
             let mut adjs: Vec<&str> = Vec::new();
             if qr.level_up.str_up {
                 adjs.push("stronger");
@@ -62,11 +68,9 @@ pub async fn render_tick_outcome(
                     format!("{}, and {}", rest.join(", "), last)
                 }
             };
-            format!("{}\n{} seems {}.", qr.summary, qr.player_name, adj_str)
-        } else {
-            qr.summary.clone()
-        };
-        append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &content).await;
+            let level_msg = format!("{} seems {}.", qr.player_name, adj_str);
+            append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &level_msg).await;
+        }
 
         let first_name = qr
             .player_name

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use poise::serenity_prelude::{self as serenity, GetMessages, MessageId};
 
+use crate::game::generation::generators::collapse_whitespace;
 use crate::game::persistence::message_cache::{
     persistent_message_ids, ActivityLogEntry, ActivityLogKind, MessageCache,
 };
@@ -65,10 +66,24 @@ fn format_world_entry(raw: &str) -> String {
         .join("\n")
 }
 
+fn format_quest_summary_entry(raw: &str) -> String {
+    raw.lines()
+        .map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("-# _{}_", collapse_whitespace(line))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn format_log_entry(entry: &ActivityLogEntry) -> String {
     match entry.kind {
         ActivityLogKind::Standard => format_standard_entry(&entry.text),
         ActivityLogKind::World => format_world_entry(&entry.text),
+        ActivityLogKind::QuestSummary => format_quest_summary_entry(&entry.text),
     }
 }
 

@@ -9,6 +9,8 @@ pub enum ActivityLogKind {
     Standard,
     /// Italic text, no bullet (world / ambient narration).
     World,
+    /// Subtext + italic, no bullet (quest return recap).
+    QuestSummary,
 }
 
 #[derive(Debug, Clone, Serialize)]
