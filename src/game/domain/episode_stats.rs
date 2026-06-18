@@ -14,6 +14,8 @@ pub struct EpisodeStats {
     pub money: MoneyEpisodeStats,
     #[serde(default)]
     pub gambling: GamblingEpisodeStats,
+    #[serde(default)]
+    pub hospital: HospitalEpisodeStats,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +98,19 @@ pub struct ChudGamblingStats {
     pub gambling_won: u32,
     #[serde(default)]
     pub gambling_lost: u32,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct HospitalEpisodeStats {
+    #[serde(default)]
+    pub by_chud: HashMap<u64, ChudHospitalStats>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ChudHospitalStats {
+    pub chud_name: String,
+    #[serde(default)]
+    pub hospital_days: u32,
 }
 
 impl HighestDifficultyRecord {
@@ -271,6 +286,19 @@ impl EpisodeStats {
         }
     }
 
+    pub fn record_hospital_day(&mut self, discord_user_id: u64, chud_name: &str) {
+        let entry = self
+            .hospital
+            .by_chud
+            .entry(discord_user_id)
+            .or_insert_with(|| ChudHospitalStats {
+                chud_name: chud_name.to_string(),
+                ..Default::default()
+            });
+        entry.chud_name = chud_name.to_string();
+        entry.hospital_days = entry.hospital_days.saturating_add(1);
+    }
+
     /// Consider each trial margin; keep the most negative roll seen this episode.
     pub fn consider_worst_rolls(
         &mut self,
@@ -410,6 +438,13 @@ impl EpisodeStats {
             ));
         }
 
+        if let Some((days, names)) = self.chuds_at_top_hospital(|stats| stats.hospital_days) {
+            lines.push(format!(
+                "{} spent the most time in the hospital; {days} days",
+                format_chud_names(&names)
+            ));
+        }
+
         lines
     }
 
@@ -454,6 +489,33 @@ impl EpisodeStats {
 
         let names: Vec<&str> = self
             .gambling
+            .by_chud
+            .values()
+            .filter(|stats| amount_for(stats) == max)
+            .map(|stats| stats.chud_name.as_str())
+            .collect();
+
+        if names.is_empty() {
+            return None;
+        }
+
+        Some((max, names))
+    }
+
+    fn chuds_at_top_hospital(
+        &self,
+        amount_for: impl Fn(&ChudHospitalStats) -> u32,
+    ) -> Option<(u32, Vec<&str>)> {
+        let max = self
+            .hospital
+            .by_chud
+            .values()
+            .map(&amount_for)
+            .max()
+            .filter(|&amount| amount > 0)?;
+
+        let names: Vec<&str> = self
+            .hospital
             .by_chud
             .values()
             .filter(|stats| amount_for(stats) == max)
