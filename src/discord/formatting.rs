@@ -293,20 +293,9 @@ pub fn build_dm_death_components(content: &DmDeathContent) -> ComponentsV2Messag
     ))])
 }
 
-fn to_doublestruck_caps(s: &str) -> String {
-    s.to_uppercase()
-        .chars()
-        .map(|c| match c {
-            'A'..='Z' => char::from_u32(0x1D538 + (c as u32 - 'A' as u32)).unwrap_or(c),
-            '0'..='9' => char::from_u32(0x1D7D8 + (c as u32 - '0' as u32)).unwrap_or(c),
-            other => other,
-        })
-        .collect()
-}
-
 fn format_gravestone_name(name: &str) -> String {
     // CV2 Text Display has no center alignment; `#` heading gives the name prominence.
-    format!("# {}", to_doublestruck_caps(name))
+    format!("# **{}**", name.to_uppercase())
 }
 
 fn format_gravestone_epitaph(epitaph: &str) -> String {
