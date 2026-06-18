@@ -566,10 +566,15 @@ pub async fn load(ctx: Context<'_>) -> Result<(), Error> {
     if !admin_guard(ctx).await {
         return Ok(());
     }
-    let (new_board, new_registry) = engine::load_all()?;
+    let rt = &ctx.data().runtime;
+    let (mut new_board, new_registry) = engine::load_all()?;
+    storage::reconcile_resumed_board(
+        &mut new_board,
+        rt.job_timeout_tick,
+        &rt.generation_queue,
+    )?;
     let new_merchant = storage::load_merchant_state(&new_registry)?;
     let new_session = storage::load_session()?;
-    let rt = &ctx.data().runtime;
     *rt.board.lock().await = new_board;
     *rt.item_registry.lock().await = new_registry;
     *rt.merchant.lock().await = new_merchant;

@@ -100,6 +100,22 @@ pub fn resume_story_state(board: &mut Board, session: &mut GameSession) -> anyho
     Ok(changed)
 }
 
+/// Repairs known-bad persisted board state after YAML load, before gameplay resumes.
+/// Missing quest results are re-enqueued for generation. Add future resume-time fixes here.
+pub fn reconcile_resumed_board(
+    board: &mut Board,
+    job_timeout_tick: u32,
+    generation_queue: &tokio::sync::mpsc::UnboundedSender<crate::game::engine::GenerationJob>,
+) -> anyhow::Result<()> {
+    board.backfill_job_timeouts(job_timeout_tick);
+    let enqueued = crate::game::engine::enqueue_missing_active_quest_results(board, generation_queue)?;
+    if enqueued > 0 {
+        tracing::info!(enqueued, "re-enqueued quest results on resume");
+    }
+    save_board(board)?;
+    Ok(())
+}
+
 /// Undo Complete only when the story catalog grew after the player had already finished it.
 /// Admin-complete and normal restarts while Complete are left alone.
 pub fn reconcile_session_story(

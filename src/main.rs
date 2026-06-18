@@ -129,12 +129,7 @@ async fn main() -> anyhow::Result<()> {
     let shutdown_gravestone = Arc::clone(&gravestone_generator);
     let shutdown_merchant = Arc::clone(&merchant_generator);
     let game_state = GameState::load()?;
-    let mut board = game_state.board;
-    board.backfill_job_timeouts(job_timeout_tick);
-    if let Err(e) = storage::save_board(&board) {
-        tracing::warn!(err = %e, "failed to persist job timeout backfill");
-    }
-    let board = Arc::new(tokio::sync::Mutex::new(board));
+    let board = Arc::new(tokio::sync::Mutex::new(game_state.board));
     let job_queue = Arc::new(tokio::sync::Mutex::new(game_state.job_queue));
     let item_registry = Arc::new(tokio::sync::Mutex::new(game_state.item_registry));
     let merchant = Arc::new(tokio::sync::Mutex::new(game_state.guild_hall.merchant));
@@ -349,6 +344,17 @@ async fn main() -> anyhow::Result<()> {
                             })
                         },
                     );
+                }
+
+                {
+                    let mut board_guard = runtime.board.lock().await;
+                    if let Err(e) = storage::reconcile_resumed_board(
+                        &mut *board_guard,
+                        job_timeout_tick,
+                        &runtime.generation_queue,
+                    ) {
+                        tracing::warn!(err = %e, "failed to reconcile board on resume");
+                    }
                 }
 
                 let simulation = SimulationController::new(Arc::clone(&runtime));

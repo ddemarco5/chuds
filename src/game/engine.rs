@@ -1,4 +1,4 @@
-use crate::game::domain::board::{Board, BoardQuest};
+use crate::game::domain::board::{Board, BoardQuest, QuestState};
 use crate::game::domain::graveyard::{Graveyard, GraveyardEntry};
 use crate::game::domain::hospital::Hospital;
 use crate::game::domain::starting_benefits::StartingBenefits;
@@ -126,6 +126,53 @@ pub fn take_and_enqueue_quest(
         .clone();
     enqueue_quest_result(generation_queue, board_quest, info.player.clone(), force_item_drop)?;
     Ok(info)
+}
+
+/// Re-enqueue LLM result generation for active quests missing `completed_results`.
+/// Clears assignments when the assigned player no longer exists.
+pub fn enqueue_missing_active_quest_results(
+    board: &mut Board,
+    generation_queue: &tokio::sync::mpsc::UnboundedSender<GenerationJob>,
+) -> anyhow::Result<usize> {
+    let needing: Vec<BoardQuest> = board
+        .quests
+        .iter()
+        .filter(|q| q.has_active() && !board.completed_results.contains_key(&q.id))
+        .cloned()
+        .collect();
+
+    let mut enqueued = 0usize;
+    for quest in needing {
+        let Some(discord_user_id) = quest.assigned_to() else {
+            continue;
+        };
+
+        let player = match storage::load_player(discord_user_id)? {
+            Some(p) if p.has_chud() => p,
+            _ => {
+                tracing::warn!(
+                    quest_id = quest.id,
+                    discord_user_id,
+                    "clearing active quest assignment (player missing on resume)"
+                );
+                if let Some(q) = board.quests.iter_mut().find(|q| q.id == quest.id) {
+                    q.states.retain(|s| !matches!(s, QuestState::Active { .. }));
+                }
+                continue;
+            }
+        };
+
+        tracing::info!(
+            quest_id = quest.id,
+            discord_user_id,
+            player = %player.chud_ref().name,
+            "re-enqueueing missing quest result generation on resume"
+        );
+        enqueue_quest_result(generation_queue, quest, player, false)?;
+        enqueued += 1;
+    }
+
+    Ok(enqueued)
 }
 
 /// Board slots held for the next catalog story job (on board or generating).
