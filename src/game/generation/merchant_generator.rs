@@ -222,7 +222,7 @@ pub async fn prompt_parse_retry_with_list_count<T: serde::de::DeserializeOwned>(
     use rig::completion::message::Message;
 
     use crate::game::generation::generators::{
-        prompt_with_retry, truncate_for_log, yaml_correction,
+        normalize_yaml_string_values, prompt_with_retry, truncate_for_log, yaml_correction,
     };
 
     const MAX_RETRIES: u32 = 5;
@@ -257,7 +257,8 @@ pub async fn prompt_parse_retry_with_list_count<T: serde::de::DeserializeOwned>(
                     e
                 ));
             }
-            Ok(value) => {
+            Ok(mut value) => {
+                normalize_yaml_string_values(&mut value);
                 let actual = value
                     .get(list_key)
                     .and_then(|t| t.as_sequence())

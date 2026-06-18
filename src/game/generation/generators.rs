@@ -20,6 +20,28 @@ pub fn build_agent(client: &openrouter::Client, system_context: &str) -> OpenRou
         .build()
 }
 
+/// Collapse runs of whitespace (newlines, tabs, spaces) into single spaces.
+pub fn collapse_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub(crate) fn normalize_yaml_string_values(value: &mut serde_yaml::Value) {
+    match value {
+        serde_yaml::Value::String(s) => *s = collapse_whitespace(s),
+        serde_yaml::Value::Sequence(seq) => {
+            for v in seq {
+                normalize_yaml_string_values(v);
+            }
+        }
+        serde_yaml::Value::Mapping(map) => {
+            for v in map.values_mut() {
+                normalize_yaml_string_values(v);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn sanitize(s: &str) -> String {
     let s = s.trim();
     let inner = s
@@ -188,7 +210,8 @@ pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
                     e
                 ));
             }
-            Ok(value) => {
+            Ok(mut value) => {
+                normalize_yaml_string_values(&mut value);
                 if let Some(expected) = expected_trials {
                     let actual = value
                         .get("trials")

@@ -9,11 +9,12 @@ use crate::game::domain::player::Player;
 use crate::game::domain::quest_result::{CompletedTrial, QuestResult};
 use crate::game::engine::KillResult;
 use crate::game::mechanics::simulation::effective_stats;
+use crate::game::generation::generators::collapse_whitespace;
 use crate::game::persistence::item_registry::ItemRegistry;
 
 /// Collapse whitespace so Discord `*italic*` markers stay on one line.
 fn markdown_italic_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    collapse_whitespace(text)
 }
 
 /// Accent colors for quest outcome containers (RGB integers).
