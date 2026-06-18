@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::{LazyLock, RwLock};
 
 use anyhow::Context;
@@ -105,14 +104,11 @@ fn load_from_disk() -> anyhow::Result<StoryCatalog> {
 }
 
 static CATALOG: LazyLock<RwLock<StoryCatalog>> = LazyLock::new(|| {
-    RwLock::new(if Path::new(STORY_JOBS_PATH).exists() {
+    RwLock::new(
         load_from_disk().unwrap_or_else(|e| {
             panic!("failed to load {STORY_JOBS_PATH}: {e}");
-        })
-    } else {
-        parse_catalog(include_str!("../data/story_jobs.yaml"))
-            .expect("invalid embedded data/story_jobs.yaml")
-    })
+        }),
+    )
 });
 
 /// Re-read `data/story_jobs.yaml` from disk so story progress checks use the current catalog length.
