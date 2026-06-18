@@ -686,6 +686,7 @@ pub fn award_pending_item(
     merchant: &mut MerchantState,
     player: &mut Player,
     item: crate::game::domain::item::Item,
+    stats: Option<&mut crate::game::domain::episode_stats::EpisodeStats>,
 ) -> anyhow::Result<(crate::game::domain::item::Item, ItemAwardDisposition)> {
     let id = registry.add_item(item);
     let awarded = registry
@@ -719,7 +720,7 @@ pub fn award_pending_item(
 
     let gold = awarded.value;
     merchant.recycle_item(id)?;
-    player.cash = player.cash.saturating_add(gold);
+    player.earn_cash(gold, stats);
     storage::save_player(player)?;
     tracing::info!(
         player = %player.chud_ref().name,
@@ -858,8 +859,10 @@ pub fn sell_item(
     // TODO: vendor/transfer logic (market fees, soulbound checks, etc.) before payout/removal.
     transfer_item_from_player(player, item_id);
     merchant.recycle_item(item_id)?;
-    player.cash = player.cash.saturating_add(gold);
+    let mut stats = storage::load_episode_stats()?;
+    player.earn_cash(gold, Some(&mut stats));
     storage::save_player(player)?;
+    storage::save_episode_stats(&stats)?;
     Ok(gold)
 }
 

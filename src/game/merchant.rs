@@ -167,14 +167,14 @@ impl MerchantState {
 
         let item = registry.get(id).ok_or(BuyError::SoldOut)?;
         let price = item.value;
-        if player.cash < price {
-            return Err(BuyError::InsufficientFunds);
-        }
         if !player.stash.has_room() {
             return Err(BuyError::StashFull);
         }
 
-        player.cash = player.cash.saturating_sub(price);
+        let mut stats = storage::load_episode_stats().expect("load episode stats for merchant buy");
+        if !player.try_spend_cash(price, Some(&mut stats)) {
+            return Err(BuyError::InsufficientFunds);
+        }
         player.stash.push(id).map_err(|_| BuyError::StashFull)?;
         visit.stock.remove(slot);
 
@@ -188,6 +188,7 @@ impl MerchantState {
 
         storage::save_player(player).expect("save player after merchant buy");
         storage::save_merchant_state(self).expect("save merchant state after buy");
+        storage::save_episode_stats(&stats).expect("save episode stats after merchant buy");
 
         Ok(awarded)
     }

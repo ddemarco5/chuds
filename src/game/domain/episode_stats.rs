@@ -10,6 +10,8 @@ pub struct EpisodeStats {
     pub story: StoryEpisodeStats,
     #[serde(default)]
     pub records: RecordEpisodeStats,
+    #[serde(default)]
+    pub money: MoneyEpisodeStats,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +52,21 @@ pub struct WorstRollRecord {
     pub margin: i16,
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct MoneyEpisodeStats {
+    #[serde(default)]
+    pub by_chud: HashMap<u64, ChudMoneyStats>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ChudMoneyStats {
+    pub chud_name: String,
+    #[serde(default)]
+    pub earned: u32,
+    #[serde(default)]
+    pub spent: u32,
+}
+
 impl EpisodeStats {
     /// Record the first chud to beat a story mission. Ignores later attempts.
     pub fn record_story_beat(
@@ -86,6 +103,38 @@ impl EpisodeStats {
             chud_name: chud_name.to_string(),
             difficulty,
         });
+    }
+
+    pub fn record_money_earned(&mut self, discord_user_id: u64, chud_name: &str, amount: u32) {
+        if amount == 0 {
+            return;
+        }
+        let entry = self
+            .money
+            .by_chud
+            .entry(discord_user_id)
+            .or_insert_with(|| ChudMoneyStats {
+                chud_name: chud_name.to_string(),
+                ..Default::default()
+            });
+        entry.chud_name = chud_name.to_string();
+        entry.earned = entry.earned.saturating_add(amount);
+    }
+
+    pub fn record_money_spent(&mut self, discord_user_id: u64, chud_name: &str, amount: u32) {
+        if amount == 0 {
+            return;
+        }
+        let entry = self
+            .money
+            .by_chud
+            .entry(discord_user_id)
+            .or_insert_with(|| ChudMoneyStats {
+                chud_name: chud_name.to_string(),
+                ..Default::default()
+            });
+        entry.chud_name = chud_name.to_string();
+        entry.spent = entry.spent.saturating_add(amount);
     }
 
     /// Consider each trial margin; keep the most negative roll seen this episode.
@@ -170,8 +219,32 @@ impl EpisodeStats {
         }
         if let Some(wr) = &self.records.worst_roll {
             lines.push(format!(
-                "Worst roll of {} vs {}, {}",
-                wr.player_roll, wr.trial_roll, wr.chud_name
+                "{} had the worst roll of {} vs {}",
+                wr.chud_name, wr.player_roll, wr.trial_roll
+            ));
+        }
+        if let Some(richest) = self
+            .money
+            .by_chud
+            .values()
+            .max_by_key(|stats| stats.earned)
+            .filter(|stats| stats.earned > 0)
+        {
+            lines.push(format!(
+                "{} made the most money; ${}",
+                richest.chud_name, richest.earned
+            ));
+        }
+        if let Some(biggest_spender) = self
+            .money
+            .by_chud
+            .values()
+            .max_by_key(|stats| stats.spent)
+            .filter(|stats| stats.spent > 0)
+        {
+            lines.push(format!(
+                "{} spent the most money; ${}",
+                biggest_spender.chud_name, biggest_spender.spent
             ));
         }
         lines

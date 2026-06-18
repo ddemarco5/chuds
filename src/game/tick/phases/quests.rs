@@ -82,7 +82,7 @@ fn resolve_quest(
     episode_stats.consider_worst_rolls(discord_user_id, &player_name, &result.trials);
     if passed {
         tracing::info!("{} made ${}", player_name, reward);
-        player.cash += reward;
+        player.earn_cash(reward, Some(episode_stats));
 
         episode_stats.update_highest_difficulty(
             board_quest.quest_data.quest_difficulty,
@@ -117,7 +117,13 @@ fn resolve_quest(
     let mut item_award_disposition = None;
     if passed {
         if let Some(item) = result.pending_item.take() {
-            match engine::award_pending_item(item_registry, merchant, &mut player, item) {
+            match engine::award_pending_item(
+                item_registry,
+                merchant,
+                &mut player,
+                item,
+                Some(episode_stats),
+            ) {
                 Ok((item, disposition)) => {
                     item_awarded = Some(item);
                     item_award_disposition = Some(disposition);

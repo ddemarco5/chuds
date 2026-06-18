@@ -352,13 +352,12 @@ pub async fn handle_heal_button(
         .get_heal_price(user_id)
         .expect("chud with heal button is hospitalized");
 
-    assert!(
-        player.cash >= heal_price,
-        "player cannot afford heal they were offered"
-    );
-
-    player.cash -= heal_price;
+    let mut episode_stats = storage::load_episode_stats()?;
+    if !player.try_spend_cash(heal_price, Some(&mut episode_stats)) {
+        anyhow::bail!("player cannot afford heal they were offered");
+    }
     storage::save_player(&player)?;
+    storage::save_episode_stats(&episode_stats)?;
 
     let chud_name = hospital
         .get_chud_name(user_id)

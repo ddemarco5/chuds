@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::game::domain::episode_stats::EpisodeStats;
 use crate::game::domain::item::Item;
 use crate::game::domain::quest_result::QuestResult;
 use crate::game::domain::stash::Stash;
@@ -113,6 +114,36 @@ impl Player {
 
     pub fn chud_mut(&mut self) -> &mut Chud {
         self.chud.as_mut().expect("player has no chud")
+    }
+
+    /// Credit cash and optionally record the earning against episode stats.
+    pub fn earn_cash(&mut self, amount: u32, stats: Option<&mut EpisodeStats>) {
+        if amount == 0 {
+            return;
+        }
+        self.cash = self.cash.saturating_add(amount);
+        if let Some(stats) = stats {
+            if self.has_chud() {
+                stats.record_money_earned(self.discord_user_id, &self.chud_ref().name, amount);
+            }
+        }
+    }
+
+    /// Debit cash when affordable and optionally record the spend against episode stats.
+    pub fn try_spend_cash(&mut self, amount: u32, stats: Option<&mut EpisodeStats>) -> bool {
+        if amount == 0 {
+            return true;
+        }
+        if self.cash < amount {
+            return false;
+        }
+        self.cash -= amount;
+        if let Some(stats) = stats {
+            if self.has_chud() {
+                stats.record_money_spent(self.discord_user_id, &self.chud_ref().name, amount);
+            }
+        }
+        true
     }
 
     pub fn format_job_record(&self) -> String {
