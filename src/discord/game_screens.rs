@@ -184,7 +184,10 @@ async fn render_phase_screen(
             let _ = id;
         }
         Some(id) => {
-            if edit_cv2(&runtime.http, ch, MessageId::new(id), message).await {
+            if edit_cv2(&runtime.http, ch, MessageId::new(id), message)
+                .await
+                .is_ok()
+            {
                 cache.phase_screen_content = key;
                 dirty = true;
             } else {

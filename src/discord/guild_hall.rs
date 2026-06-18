@@ -1,4 +1,7 @@
+use std::sync::LazyLock;
+
 use poise::serenity_prelude::{self as serenity, Http, MessageId};
+use tokio::sync::Mutex;
 
 use crate::chud_msg;
 use crate::discord::components_v2::{
@@ -21,6 +24,10 @@ use crate::discord::ui::update_merchant_message;
 use crate::game::merchant::MerchantState;
 use crate::game::persistence::message_cache::JobSlot;
 use crate::game::persistence::storage;
+
+/// Serialize Discord board renders so overlapping tick/worker/button updates cannot
+/// both post new slot messages or clobber cache state.
+static BOARD_RENDER_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 fn subtext_lines(text: &str) -> String {
     text.lines()
@@ -90,6 +97,14 @@ fn build_job_slot(quest: Option<&BoardQuest>) -> ComponentsV2Message {
     ComponentsV2Message::channel(vec![Component::Container(Container::with_accent(
         accent, inner,
     ))])
+}
+
+/// First open slot, preferring placeholders that already have a Discord message.
+fn first_empty_slot(slots: &[JobSlot]) -> Option<usize> {
+    slots
+        .iter()
+        .position(|s| s.job_id.is_none() && s.message_id.is_some())
+        .or_else(|| slots.iter().position(|s| s.job_id.is_none()))
 }
 
 fn status_section(header: &str, names: &[String]) -> String {
@@ -247,10 +262,58 @@ pub(crate) async fn edit_cv2(
     channel: serenity::ChannelId,
     message_id: MessageId,
     message: &ComponentsV2Message,
-) -> bool {
+) -> Result<(), serenity::Error> {
     http.edit_message(channel, message_id, message, vec![])
         .await
-        .is_ok()
+        .map(|_| ())
+}
+
+async fn sync_job_slot(
+    http: &Http,
+    ch: serenity::ChannelId,
+    slot: &mut JobSlot,
+    slot_index: usize,
+    slot_message: &ComponentsV2Message,
+    expected_key: &str,
+) -> bool {
+    if expected_key == slot.content && slot.message_id.is_some() {
+        return false;
+    }
+
+    if let Some(msg_id) = slot.message_id {
+        match edit_cv2(http, ch, MessageId::new(msg_id), slot_message).await {
+            Ok(()) => {
+                slot.content = expected_key.to_string();
+                tracing::debug!(msg_id, slot = slot_index, "job slot message edited");
+                return true;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    msg_id,
+                    slot = slot_index,
+                    err = %e,
+                    "failed to edit job slot message, will post replacement"
+                );
+                if let Err(del_err) = http.delete_message(ch, MessageId::new(msg_id), None).await {
+                    tracing::debug!(msg_id, err = %del_err, "could not delete stale job slot message");
+                }
+                slot.message_id = None;
+            }
+        }
+    }
+
+    match send_cv2(http, ch, slot_message).await {
+        Ok(msg) => {
+            tracing::info!(msg_id = msg.id.get(), slot = slot_index, "job slot message posted");
+            slot.message_id = Some(msg.id.get());
+            slot.content = expected_key.to_string();
+            true
+        }
+        Err(e) => {
+            tracing::warn!(err = %e, slot = slot_index, "failed to post job slot message");
+            false
+        }
+    }
 }
 
 pub async fn format_chudlerboard(http: &serenity::Http) -> String {
@@ -371,6 +434,7 @@ pub async fn update_board_message(
     max_jobs: usize,
     status: Option<&GuildHallStatus>,
 ) -> anyhow::Result<()> {
+    let _render_guard = BOARD_RENDER_LOCK.lock().await;
     let ch = serenity::ChannelId::new(channel_id);
 
     let mut cache = {
@@ -394,7 +458,10 @@ pub async fn update_board_message(
         }
     } else if header_key != cache.job_board_header {
         let msg_id = cache.header_message_id.unwrap();
-        if edit_cv2(http, ch, MessageId::new(msg_id), &header_message).await {
+        if edit_cv2(http, ch, MessageId::new(msg_id), &header_message)
+            .await
+            .is_ok()
+        {
             cache.job_board_header = header_key;
             cache_dirty = true;
             tracing::debug!(msg_id, "job board header message edited");
@@ -420,7 +487,7 @@ pub async fn update_board_message(
     for quest in &board.quests {
         let already_slotted = cache.slots.iter().any(|s| s.job_id == Some(quest.id));
         if !already_slotted {
-            if let Some(i) = cache.slots.iter().position(|s| s.job_id.is_none()) {
+            if let Some(i) = first_empty_slot(&cache.slots) {
                 cache.slots[i].job_id = Some(quest.id);
                 cache_dirty = true;
             }
@@ -431,35 +498,8 @@ pub async fn update_board_message(
         let quest = slot.job_id.and_then(|jid| board.quests.iter().find(|q| q.id == jid));
         let slot_message = build_job_slot(quest);
         let expected_key = slot_message.cache_key();
-        if expected_key == slot.content && slot.message_id.is_some() {
-            continue;
-        }
-        if let Some(msg_id) = slot.message_id {
-            if !edit_cv2(http, ch, MessageId::new(msg_id), &slot_message).await {
-                tracing::warn!(msg_id, slot = i, "failed to edit job slot message, posting new one");
-                match send_cv2(http, ch, &slot_message).await {
-                    Ok(msg) => {
-                        slot.message_id = Some(msg.id.get());
-                        slot.content = expected_key;
-                        cache_dirty = true;
-                    }
-                    Err(e) => tracing::warn!(err = %e, slot = i, "failed to post replacement job slot message"),
-                }
-            } else {
-                slot.content = expected_key;
-                cache_dirty = true;
-                tracing::debug!(msg_id, slot = i, "job slot message edited");
-            }
-        } else {
-            match send_cv2(http, ch, &slot_message).await {
-                Ok(msg) => {
-                    tracing::info!(msg_id = msg.id.get(), slot = i, "job slot message posted");
-                    slot.message_id = Some(msg.id.get());
-                    slot.content = expected_key;
-                    cache_dirty = true;
-                }
-                Err(e) => tracing::warn!(err = %e, slot = i, "failed to post job slot message"),
-            }
+        if sync_job_slot(http, ch, slot, i, &slot_message, &expected_key).await {
+            cache_dirty = true;
         }
     }
 
@@ -488,7 +528,10 @@ pub async fn update_board_message(
         }
     } else if status_key != cache.status_content {
         let msg_id = cache.status_message_id.unwrap();
-        if edit_cv2(http, ch, MessageId::new(msg_id), &status_message).await {
+        if edit_cv2(http, ch, MessageId::new(msg_id), &status_message)
+            .await
+            .is_ok()
+        {
             cache.status_content = status_key;
             cache_dirty = true;
             tracing::debug!(msg_id, "guild hall status message edited");
