@@ -7,7 +7,7 @@ use crate::game::tick::QuestResolved;
 
 pub const DM_CHAR_LIMIT: usize = 2000;
 
-pub(crate) fn pack_dm_segments(segments: &[String], limit: usize) -> Vec<String> {
+pub fn pack_message_segments(segments: &[String], limit: usize) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
     let mut current = String::new();
 
@@ -121,7 +121,7 @@ pub async fn send_job_completion_dm(
         return;
     }
 
-    for part in pack_dm_segments(content.segments(), DM_CHAR_LIMIT) {
+    for part in pack_message_segments(content.segments(), DM_CHAR_LIMIT) {
         if let Err(e) = http
             .send_message(dm_channel, vec![], &CreateMessage::new().content(&part))
             .await
@@ -166,7 +166,7 @@ pub async fn send_death_dm(http: &Http, kill: &KillResult, summary: Option<&str>
         return;
     }
 
-    for part in pack_dm_segments(&[content.body.clone()], DM_CHAR_LIMIT) {
+    for part in pack_message_segments(&[content.body.clone()], DM_CHAR_LIMIT) {
         if let Err(e) = http
             .send_message(dm_channel, vec![], &CreateMessage::new().content(&part))
             .await

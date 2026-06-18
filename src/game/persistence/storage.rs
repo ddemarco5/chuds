@@ -87,8 +87,10 @@ pub fn fresh_board() -> Board {
 /// Reconcile persisted story progress with the reloaded catalog and session phase.
 pub fn resume_story_state(board: &mut Board, session: &mut GameSession) -> anyhow::Result<bool> {
     crate::story_jobs::reload()?;
-    let mut changed = board.reconcile_story_catalog();
-    if reconcile_session_story(session, board) {
+    let old_catalog_len = board.story_catalog_len;
+    let catalog_changed = board.reconcile_story_catalog();
+    let mut changed = catalog_changed;
+    if reconcile_session_story(session, board, catalog_changed, old_catalog_len) {
         changed = true;
     }
     if changed {
@@ -98,20 +100,35 @@ pub fn resume_story_state(board: &mut Board, session: &mut GameSession) -> anyho
     Ok(changed)
 }
 
-/// Undo a premature Complete phase when the reloaded catalog still has story missions left.
-pub fn reconcile_session_story(session: &mut GameSession, board: &Board) -> bool {
-    if session.phase == GamePhase::Complete && !board.story_series_complete() {
-        tracing::warn!(
-            story_next_index = board.story_next_index,
-            catalog_len = board.story_catalog_len,
-            "session marked complete but story catalog still has missions; resuming Playing"
-        );
-        session.phase = GamePhase::Playing;
-        session.final_completer_user_id = None;
-        session.final_completer_chud_name = None;
-        return true;
+/// Undo Complete only when the story catalog grew after the player had already finished it.
+/// Admin-complete and normal restarts while Complete are left alone.
+pub fn reconcile_session_story(
+    session: &mut GameSession,
+    board: &Board,
+    catalog_changed: bool,
+    old_catalog_len: usize,
+) -> bool {
+    if session.phase != GamePhase::Complete {
+        return false;
     }
-    false
+    if board.story_series_complete() {
+        return false;
+    }
+    let had_finished_old_catalog =
+        old_catalog_len > 0 && board.story_next_index >= old_catalog_len;
+    if !catalog_changed || !had_finished_old_catalog {
+        return false;
+    }
+    tracing::warn!(
+        story_next_index = board.story_next_index,
+        old_catalog_len,
+        new_catalog_len = board.story_catalog_len,
+        "story catalog grew after the episode was complete; resuming Playing"
+    );
+    session.phase = GamePhase::Playing;
+    session.final_completer_user_id = None;
+    session.final_completer_chud_name = None;
+    true
 }
 
 /// Persist the hospital to `data/hospital.yaml`.

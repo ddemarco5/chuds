@@ -69,7 +69,7 @@ pub fn format_player_stats_block(
     let stats_line = player.format_effective_stats_line(effective);
     let job_record = player.format_job_record();
 
-    let mut out = format!("**{}\n{}", chud.name, chud.description);
+    let mut out = format!("**{}**\n-# {}", chud.name, chud.description);
 
     if !equipment.is_empty() {
         out.push_str("\n\n");

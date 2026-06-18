@@ -1,10 +1,13 @@
 use poise::serenity_prelude::{self as serenity, MessageId};
 
 use crate::chud_msg;
-use crate::discord::components_v2::{Component, ComponentsV2Message, TextDisplay};
+use crate::discord::components_v2::{
+    Component, ComponentsV2Message, Container, ContainerChild, TextDisplay,
+};
 use crate::discord::context::GameRuntime;
 use crate::discord::formatting::{format_player_stats_block, PlayerStatsBlockOptions};
 use crate::discord::guild_hall::{edit_cv2, reset_channel_cache, send_cv2};
+use crate::discord::report_dm::{pack_message_segments, DM_CHAR_LIMIT};
 use crate::game::domain::player::Player;
 use crate::game::engine;
 use crate::game::persistence::item_registry::ItemRegistry;
@@ -56,7 +59,37 @@ async fn build_attract_message(runtime: &GameRuntime) -> ComponentsV2Message {
 }
 
 /// Build the game-complete screen (story recap, per-chud stats, post-game records).
-async fn build_complete_message(runtime: &GameRuntime) -> ComponentsV2Message {
+/// Returns one rich CV2 message when under the limit, or multiple text messages when fragmented.
+async fn build_complete_messages(runtime: &GameRuntime) -> Vec<ComponentsV2Message> {
+    let header = build_complete_header(runtime).await;
+    let registry = runtime.item_registry.lock().await;
+    let chud_blocks = per_chud_complete_blocks(&registry);
+
+    let mut segments = vec![header.clone()];
+    if !chud_blocks.is_empty() {
+        segments.push("\n\n**The chuds**\n\n".to_string());
+        for block in &chud_blocks {
+            segments.push(format!("{block}\n\n"));
+        }
+    }
+
+    let plain_len: usize = segments.iter().map(String::len).sum();
+    if plain_len <= DM_CHAR_LIMIT {
+        return vec![build_rich_complete_message(&header, &chud_blocks)];
+    }
+
+    tracing::info!(
+        plain_len,
+        parts = pack_message_segments(&segments, DM_CHAR_LIMIT).len(),
+        "fragmenting complete screen across Discord messages"
+    );
+    pack_message_segments(&segments, DM_CHAR_LIMIT)
+        .into_iter()
+        .map(|part| ComponentsV2Message::channel(vec![Component::Text(TextDisplay::new(part))]))
+        .collect()
+}
+
+async fn build_complete_header(runtime: &GameRuntime) -> String {
     let title = story_jobs::story_line_name();
     let story_count = story_jobs::story_count();
 
@@ -75,27 +108,28 @@ async fn build_complete_message(runtime: &GameRuntime) -> ComponentsV2Message {
     }
     body.push_str(&format!("Days taken: {total_ticks}"));
 
-    let registry = runtime.item_registry.lock().await;
-    let chud_blocks = per_chud_complete_blocks(&registry);
-    if !chud_blocks.is_empty() {
-        body.push_str("\n\n**The chuds**\n");
-        body.push_str(&chud_blocks.join("\n\n"));
-    }
-
     let post_game = episode_stats.format_post_game_lines();
     if !post_game.is_empty() {
         body.push_str("\n\n");
         body.push_str(&post_game.join("\n"));
     }
 
-    ComponentsV2Message::channel(vec![Component::Text(TextDisplay::new(body))])
+    body
 }
 
-fn indent_lines(text: &str, prefix: &str) -> String {
-    text.lines()
-        .map(|line| format!("{prefix}{line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
+fn build_rich_complete_message(header: &str, chud_blocks: &[String]) -> ComponentsV2Message {
+    let mut components = vec![Component::Text(TextDisplay::new(header))];
+
+    if !chud_blocks.is_empty() {
+        components.push(Component::Text(TextDisplay::new("**The chuds**")));
+        for block in chud_blocks {
+            components.push(Component::Container(Container::new(vec![ContainerChild::Text(
+                TextDisplay::new(block),
+            )])));
+        }
+    }
+
+    ComponentsV2Message::channel(components)
 }
 
 fn per_chud_complete_blocks(registry: &ItemRegistry) -> Vec<String> {
@@ -120,16 +154,15 @@ fn per_chud_complete_blocks(registry: &ItemRegistry) -> Vec<String> {
     players
         .iter()
         .map(|player| {
-            let header = format!("<@{}>'s chud:", player.discord_user_id);
             let stats = format_player_stats_block(
                 player,
                 registry,
                 PlayerStatsBlockOptions {
                     include_stash: false,
-                    include_cash: true,
+                    include_cash: false,
                 },
             );
-            format!("{header}\n{}", indent_lines(&stats, "    "))
+            format!("<@{}>'s chud:\n\n{stats}", player.discord_user_id)
         })
         .collect()
 }
@@ -227,6 +260,12 @@ pub async fn update_attract_screen(runtime: &GameRuntime) -> anyhow::Result<()> 
 /// Purge the channel and post the game-complete screen (used on transition into Complete).
 pub async fn post_complete_screen(runtime: &GameRuntime) -> anyhow::Result<()> {
     reset_channel_cache(&runtime.http, runtime.channel_id).await;
-    let message = build_complete_message(runtime).await;
-    render_phase_screen(runtime, &message).await
+    let messages = build_complete_messages(runtime).await;
+    let ch = serenity::ChannelId::new(runtime.channel_id);
+    for message in &messages {
+        if let Err(e) = send_cv2(&runtime.http, ch, message).await {
+            tracing::warn!(err = %e, "failed to post complete screen segment");
+        }
+    }
+    Ok(())
 }
