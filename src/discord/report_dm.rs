@@ -81,6 +81,7 @@ pub async fn send_job_completion_dm(
     http: &Http,
     registry: &ItemRegistry,
     qr: &QuestResolved,
+    kill: Option<&KillResult>,
 ) {
     let content = formatting::build_dm_completion_content(
         &qr.player_name,
@@ -92,6 +93,7 @@ pub async fn send_job_completion_dm(
         qr.item_awarded.as_ref(),
         qr.item_award_disposition,
         qr.hospitalized,
+        kill,
     );
     let plain_len = content.plain().len();
 

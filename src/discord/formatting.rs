@@ -26,6 +26,7 @@ pub struct DmCompletionContent {
     pub preamble: String,
     pub summary: String,
     passed: bool,
+    died: bool,
     segments: Vec<String>,
 }
 
@@ -49,36 +50,51 @@ pub fn build_dm_completion_content(
     item_awarded: Option<&Item>,
     item_award_disposition: Option<crate::game::engine::ItemAwardDisposition>,
     hospitalized: bool,
+    kill: Option<&KillResult>,
 ) -> DmCompletionContent {
     let segments = build_dm_preamble_segments(player_name, result, player, registry);
     let preamble = segments.join("");
-    let outcome = if result.passed { "PASSED" } else { "FAILED" };
-    let footer = format_completion_footer(
-        player_name,
-        player,
-        level_up,
-        result.passed,
-        reward,
-        item_awarded,
-        item_award_disposition,
-    );
-    let hospital_msg = hospitalized.then(|| chud_msg!("dm_hospitalized", player_name));
-    let summary = format_completion_outcome_box(
-        outcome,
-        &result.summary,
-        &footer,
-        hospital_msg.as_deref(),
-    );
+    let (summary, passed, died) = if let Some(kill) = kill {
+        let footer = format_death_footer(kill);
+        let summary = format_completion_outcome_box("DIED", &result.summary, &footer, None);
+        (summary, false, true)
+    } else {
+        let outcome = if result.passed { "PASSED" } else { "FAILED" };
+        let footer = format_completion_footer(
+            player_name,
+            player,
+            level_up,
+            result.passed,
+            reward,
+            item_awarded,
+            item_award_disposition,
+        );
+        let hospital_msg = hospitalized.then(|| chud_msg!("dm_hospitalized", player_name));
+        let summary = format_completion_outcome_box(
+            outcome,
+            &result.summary,
+            &footer,
+            hospital_msg.as_deref(),
+        );
+        (summary, result.passed, false)
+    };
     DmCompletionContent {
         preamble,
         summary,
-        passed: result.passed,
+        passed,
+        died,
         segments,
     }
 }
 
-fn summary_container(summary: &str, passed: bool) -> Component {
-    let accent = if passed { ACCENT_PASSED } else { ACCENT_FAILED };
+fn summary_container(summary: &str, passed: bool, died: bool) -> Component {
+    let accent = if died {
+        ACCENT_DEATH
+    } else if passed {
+        ACCENT_PASSED
+    } else {
+        ACCENT_FAILED
+    };
     Component::Container(Container::with_accent(
         accent,
         vec![ContainerChild::Text(TextDisplay::new(summary.to_string()))],
@@ -88,7 +104,7 @@ fn summary_container(summary: &str, passed: bool) -> Component {
 pub fn build_dm_completion_components(content: &DmCompletionContent) -> ComponentsV2Message {
     ComponentsV2Message::channel(vec![
         Component::Text(TextDisplay::new(content.preamble.clone())),
-        summary_container(&content.summary, content.passed),
+        summary_container(&content.summary, content.passed, content.died),
     ])
 }
 
@@ -97,12 +113,13 @@ pub fn build_dm_summary_components(content: &DmCompletionContent) -> ComponentsV
     ComponentsV2Message::channel(vec![summary_container(
         &content.summary,
         content.passed,
+        content.died,
     )])
 }
 
 /// Single-notice DM — same accent container as the job pass/fail summary.
 pub fn build_dm_notice_components(message: &str, passed: bool) -> ComponentsV2Message {
-    ComponentsV2Message::channel(vec![summary_container(message, passed)])
+    ComponentsV2Message::channel(vec![summary_container(message, passed, false)])
 }
 
 /// Header, summary, rewards, and optional hospital note — one multiline block inside the container.
@@ -232,6 +249,15 @@ fn format_completion_footer(
             fmt_stat(level_up.sth_up, player.chud_ref().stealth),
             fmt_stat(level_up.exp_up, player.chud_ref().experience),
         ));
+    }
+    out
+}
+
+fn format_death_footer(kill: &KillResult) -> String {
+    let mut out = format!("*{}*", kill.epitaph);
+    if kill.benefits_awarded > 0 {
+        out.push('\n');
+        out.push_str(&chud_msg!("dm_starting_benefits", kill.benefits_awarded));
     }
     out
 }

@@ -86,7 +86,7 @@ pub async fn render_tick_outcome(
         let return_msg = chud_msg!(return_key, first_name);
         append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &return_msg).await;
 
-        if qr.died {
+        let kill_result = if qr.died {
             if let Some(pending) = pending_deaths
                 .iter()
                 .find(|p| p.discord_user_id == qr.discord_user_id)
@@ -94,18 +94,20 @@ pub async fn render_tick_outcome(
                 let epitaph =
                     engine::finish_gravestone_epitaph(&runtime.gravestone_generator, pending)
                         .await?;
-                let kill = KillResult {
+                Some(KillResult {
                     discord_user_id: pending.discord_user_id,
                     chud_name: pending.chud_name.clone(),
                     benefits_awarded: pending.benefits_awarded,
                     epitaph,
-                };
-                report_dm::send_death_dm(http, &kill, Some(&qr.summary)).await;
-                continue;
+                })
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
-        report_dm::send_job_completion_dm(http, &registry, qr).await;
+        report_dm::send_job_completion_dm(http, &registry, qr, kill_result.as_ref()).await;
     }
 
     for sr in &outcome.scout_results {
