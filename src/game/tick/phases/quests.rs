@@ -12,6 +12,7 @@ pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::
         if let Some(resolved) = resolve_quest(
             ctx.board,
             &mut ctx.hospital,
+            ctx.episode_stats,
             ctx.item_registry,
             ctx.merchant,
             board_quest,
@@ -36,6 +37,7 @@ pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::
 fn resolve_quest(
     board: &mut Board,
     hospital: &mut crate::game::domain::hospital::Hospital,
+    episode_stats: &mut crate::game::domain::episode_stats::EpisodeStats,
     item_registry: &mut crate::game::persistence::item_registry::ItemRegistry,
     merchant: &mut crate::game::merchant::MerchantState,
     board_quest: BoardQuest,
@@ -77,9 +79,20 @@ fn resolve_quest(
 
     let level_up = player.record_quest(&result);
     let player_name = player.chud_ref().name.clone();
+    episode_stats.consider_worst_rolls(discord_user_id, &player_name, &result.trials);
     if passed {
         tracing::info!("{} made ${}", player_name, reward);
         player.cash += reward;
+
+        episode_stats.update_highest_difficulty(board_quest.quest_data.quest_difficulty);
+        if let Some(index) = board_quest.story_index {
+            episode_stats.record_story_beat(
+                index,
+                discord_user_id,
+                player_name.clone(),
+                quest_title.clone(),
+            );
+        }
 
         if board_quest.story_index.is_some() {
             board.story_next_index += 1;

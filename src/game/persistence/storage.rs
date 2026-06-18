@@ -5,6 +5,7 @@ use anyhow::Context;
 use tokio::sync::{Mutex, MutexGuard};
 
 use crate::game::domain::board::Board;
+use crate::game::domain::episode_stats::EpisodeStats;
 use crate::game::domain::guild_hall::GuildHall;
 use crate::game::merchant::MerchantState;
 use crate::game::domain::graveyard::Graveyard;
@@ -29,6 +30,7 @@ const CHUDMASTERS_PATH: &str = "data/chudmasters.yaml";
 const ITEM_REGISTRY_PATH: &str = "data/item_registry.yaml";
 const GUILD_HALL_PATH: &str = "data/guild_hall.yaml";
 const SESSION_PATH: &str = "data/session.yaml";
+const EPISODE_STATS_PATH: &str = "data/episode_stats.yaml";
 
 static MESSAGE_CACHE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -386,6 +388,7 @@ pub fn reset_game_data() -> anyhow::Result<()> {
     merchants::clear_merchants()?;
     save_item_registry(&ItemRegistry::default())?;
     save_session(&GameSession::default())?;
+    save_episode_stats(&EpisodeStats::default())?;
     tracing::info!("game data reset to a fresh game");
     Ok(())
 }
@@ -404,6 +407,22 @@ pub fn load_session() -> anyhow::Result<GameSession> {
     }
     let yaml = std::fs::read_to_string(SESSION_PATH).context("reading session")?;
     serde_yaml::from_str(&yaml).context("parsing session")
+}
+
+/// Persist episode stats to `data/episode_stats.yaml`.
+pub fn save_episode_stats(stats: &EpisodeStats) -> anyhow::Result<()> {
+    std::fs::create_dir_all("data")?;
+    let yaml = serde_yaml::to_string(stats).context("serializing episode stats")?;
+    std::fs::write(EPISODE_STATS_PATH, yaml).context("writing episode stats")
+}
+
+/// Load episode stats, returning defaults if no file exists yet.
+pub fn load_episode_stats() -> anyhow::Result<EpisodeStats> {
+    if !Path::new(EPISODE_STATS_PATH).exists() {
+        return Ok(EpisodeStats::default());
+    }
+    let yaml = std::fs::read_to_string(EPISODE_STATS_PATH).context("reading episode stats")?;
+    serde_yaml::from_str(&yaml).context("parsing episode stats")
 }
 
 /// Return `true` if the given Discord user ID is a Chudmaster.

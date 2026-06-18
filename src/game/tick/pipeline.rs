@@ -1,4 +1,5 @@
 use crate::game::domain::board::Board;
+use crate::game::domain::episode_stats::EpisodeStats;
 use crate::game::domain::hospital::Hospital;
 use crate::game::domain::item::Item;
 use crate::game::merchant::MerchantState;
@@ -42,6 +43,7 @@ pub struct QuestResolved {
 pub struct TickContext<'a> {
     pub board: &'a mut Board,
     pub hospital: &'a mut Hospital,
+    pub episode_stats: &'a mut EpisodeStats,
     pub queue: &'a mut JobQueue,
     pub item_registry: &'a mut ItemRegistry,
     pub merchant: &'a mut MerchantState,

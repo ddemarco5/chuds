@@ -1,4 +1,5 @@
 pub mod board;
+pub mod episode_stats;
 pub mod graveyard;
 pub mod guild_hall;
 pub mod hospital;

@@ -1,4 +1,5 @@
 use crate::game::domain::board::Board;
+use crate::game::domain::episode_stats::EpisodeStats;
 use crate::game::domain::graveyard::Graveyard;
 use crate::game::domain::guild_hall::GuildHall;
 use crate::game::domain::hospital::Hospital;
@@ -18,6 +19,7 @@ pub struct GameState {
     pub item_registry: ItemRegistry,
     pub guild_hall: GuildHall,
     pub session: GameSession,
+    pub episode_stats: EpisodeStats,
 }
 
 impl GameState {
@@ -36,6 +38,7 @@ impl GameState {
             item_registry,
             guild_hall: crate::game::domain::guild_hall::GuildHall { merchant },
             session,
+            episode_stats: storage::load_episode_stats()?,
         })
     }
 
@@ -51,6 +54,7 @@ impl GameState {
             crate::game::persistence::merchants::save_merchants(catalog)?;
         }
         storage::save_session(&self.session)?;
+        storage::save_episode_stats(&self.episode_stats)?;
         Ok(())
     }
 }

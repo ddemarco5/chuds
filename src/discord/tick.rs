@@ -51,6 +51,7 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
     let mut hospital = storage::load_hospital()?;
     let mut graveyard = storage::load_graveyard()?;
     let mut starting_benefits = storage::load_starting_benefits()?;
+    let mut episode_stats = storage::load_episode_stats()?;
 
     let (outcome, pending_deaths) = {
         let mut board = runtime.board.lock().await;
@@ -63,6 +64,7 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
         let outcome = run_tick(&mut TickContext {
             board: &mut *board,
             hospital: &mut hospital,
+            episode_stats: &mut episode_stats,
             queue: &mut *queue,
             item_registry: &mut *registry,
             merchant: &mut *merchant,
@@ -77,6 +79,7 @@ pub async fn execute_tick(runtime: &GameRuntime) -> anyhow::Result<()> {
         })?;
 
         storage::save_hospital(&hospital)?;
+        storage::save_episode_stats(&episode_stats)?;
 
         let mut pending_deaths: Vec<KillChudPending> = Vec::new();
         for qr in &outcome.quest_resolved {
