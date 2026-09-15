@@ -73,6 +73,8 @@ pub struct TickOutcome {
     pub jobs_expired: usize,
     /// Number of board auto jobs requested for generation this tick.
     pub jobs_requested: usize,
+    /// Number of board quests whose remaining ticks hit zero this tick.
+    pub quests_due: usize,
     pub story_series_complete: bool,
     /// Discord user ID of the chud that finished the final story mission (when complete).
     pub final_completer_user_id: Option<u64>,

@@ -28,7 +28,7 @@ fn char_budget_filter(msgs: Vec<Message>) -> Vec<Message> {
         .iter()
         .map(|m| serde_json::to_string(m).map(|s| s.len()).unwrap_or(0))
         .sum();
-    tracing::info!(
+    tracing::debug!(
         history_msgs = out.len(),
         history_chars = total,
         budget_chars = char_budget,

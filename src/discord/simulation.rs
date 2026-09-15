@@ -89,7 +89,6 @@ impl SimulationController {
             interval.tick().await;
             loop {
                 interval.tick().await;
-                tracing::info!("background tick firing");
                 if let Err(e) = execute_tick(&runtime).await {
                     tracing::error!(err = %e, "background tick failed");
                 }

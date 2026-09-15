@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use rig::client::AgentClientExt;
 use rig::completion::{CompletionError, Prompt, PromptError};
 use rig::completion::message::Message;
@@ -81,7 +83,13 @@ pub fn yaml_correction(kind: &str, error: &str, raw_preview: &str) -> String {
 
 const YAML_PARSE_RETRIES: u32 = 5;
 
-fn yaml_retry(retries: &mut u32, raw: &str, kind: &str, error: &str) -> Option<String> {
+fn yaml_retry(
+    retries: &mut u32,
+    raw: &str,
+    kind: &str,
+    error: &str,
+    conversation_id: &str,
+) -> Option<String> {
     if *retries >= YAML_PARSE_RETRIES {
         return None;
     }
@@ -90,6 +98,7 @@ fn yaml_retry(retries: &mut u32, raw: &str, kind: &str, error: &str) -> Option<S
     tracing::warn!(
         kind,
         error,
+        conversation_id,
         retries = *retries,
         YAML_PARSE_RETRIES,
         "retrying LLM YAML"
@@ -122,10 +131,12 @@ pub async fn prompt_with_retry(
     agent: &OpenRouterAgent,
     prompt: &str,
     history: &[Message],
+    conversation_id: &str,
 ) -> anyhow::Result<String> {
     const MAX_RETRIES: u32 = 12;
     let mut retries = 0;
     loop {
+        let started = Instant::now();
         match tokio::time::timeout(
             tokio::time::Duration::from_secs(PROMPT_TIMEOUT_SECS),
             agent
@@ -136,9 +147,12 @@ pub async fn prompt_with_retry(
         .await
         {
             Err(_elapsed) => {
+                let elapsed_ms = started.elapsed().as_millis();
                 if retries < MAX_RETRIES {
                     retries += 1;
                     tracing::warn!(
+                        conversation_id,
+                        elapsed_ms,
                         PROMPT_TIMEOUT_SECS,
                         retries,
                         MAX_RETRIES,
@@ -148,12 +162,21 @@ pub async fn prompt_with_retry(
                     continue;
                 }
                 return Err(anyhow::anyhow!(
-                    "LLM request timed out after {} retries",
+                    "LLM request timed out after {} retries ({conversation_id})",
                     MAX_RETRIES
                 ));
             }
-            Ok(Ok(response)) => return Ok(sanitize(&response)),
+            Ok(Ok(response)) => {
+                tracing::debug!(
+                    conversation_id,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    retries,
+                    "LLM request complete"
+                );
+                return Ok(sanitize(&response));
+            }
             Ok(Err(e)) => {
+                let elapsed_ms = started.elapsed().as_millis();
                 let msg = e.to_string();
                 let (wait_secs, label) = if msg.contains("404") {
                     (10, "404 model not found")
@@ -174,9 +197,11 @@ pub async fn prompt_with_retry(
                 if retries >= MAX_RETRIES {
                     return Err(e.into());
                 }
-                tracing::warn!(msg);
+                tracing::debug!(conversation_id, elapsed_ms, err = %msg, "retryable LLM error body");
                 retries += 1;
                 tracing::warn!(
+                    conversation_id,
+                    elapsed_ms,
                     error = label,
                     wait_secs,
                     retries,
@@ -205,16 +230,22 @@ pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
         } else {
             format!("{prompt}\n\n{correction}")
         };
-        let raw = prompt_with_retry(agent, &effective_prompt, &history).await?;
+        let raw = prompt_with_retry(agent, &effective_prompt, &history, conversation_id).await?;
         let parsed = serde_yaml::from_str::<serde_yaml::Value>(&raw);
         match parsed {
             Err(e) => {
-                correction = yaml_retry(&mut retries, &raw, "malformed YAML", &e.to_string())
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "LLM returned malformed YAML after {YAML_PARSE_RETRIES} retries: {e}"
-                        )
-                    })?;
+                correction = yaml_retry(
+                    &mut retries,
+                    &raw,
+                    "malformed YAML",
+                    &e.to_string(),
+                    conversation_id,
+                )
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "LLM returned malformed YAML after {YAML_PARSE_RETRIES} retries: {e}"
+                    )
+                })?;
                 continue;
             }
             Ok(mut value) => {
@@ -226,12 +257,18 @@ pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
                         .map(|s| s.len());
                     if actual != Some(expected) {
                         let msg = format!("expected {expected} trial strings, got {actual:?}");
-                        correction = yaml_retry(&mut retries, &raw, "wrong trial count", &msg)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "LLM returned wrong trial count after {YAML_PARSE_RETRIES} retries: expected {expected}, got {actual:?}"
-                                )
-                            })?;
+                        correction = yaml_retry(
+                            &mut retries,
+                            &raw,
+                            "wrong trial count",
+                            &msg,
+                            conversation_id,
+                        )
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "LLM returned wrong trial count after {YAML_PARSE_RETRIES} retries: expected {expected}, got {actual:?}"
+                            )
+                        })?;
                         continue;
                     }
                 }
@@ -243,7 +280,7 @@ pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
                                 vec![Message::user(prompt), Message::assistant(&raw)],
                             )
                             .await;
-                        tracing::info!(conversation_id, "committed to memory");
+                        tracing::debug!(conversation_id, "committed to memory");
                         return Ok(result);
                     }
                     Err(e) => {
@@ -252,6 +289,7 @@ pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
                             &raw,
                             "unexpected YAML structure",
                             &e.to_string(),
+                            conversation_id,
                         )
                         .ok_or_else(|| {
                             anyhow::anyhow!(

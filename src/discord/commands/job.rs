@@ -53,7 +53,7 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
         .map(|s| s.trim().to_string());
     tracing::info!(
         author = %ctx.author().name,
-        description = %data.description,
+        description = %crate::game::generation::generators::truncate_for_log(&data.description, 80),
         has_goal = goal.is_some(),
         difficulty,
         auto_difficulty = data.difficulty.as_deref().map(str::trim).filter(|s| !s.is_empty()).is_none(),
@@ -112,9 +112,9 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
         }
     }
     tracing::info!(
-        "{} submitted write_job with description '{}'",
-        ctx.author().name,
-        data.description
+        author = %ctx.author().name,
+        description = %crate::game::generation::generators::truncate_for_log(&data.description, 80),
+        "submitted write_job"
     );
     let (quest_data, generated) = engine::generate_written_job(
         &ctx.data().runtime.generator,

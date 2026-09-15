@@ -6,7 +6,7 @@ use crate::game::tuneable_rolls::{death_chance, injury_chance, roll_failure_cons
 
 pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::Result<()> {
     let due = ctx.board.tick_and_take_due(ctx.jobs_per_tick);
-    tracing::info!(quests_due = due.len(), "quest phase complete");
+    outcome.quests_due = due.len();
 
     for board_quest in due {
         if let Some(resolved) = resolve_quest(
@@ -81,7 +81,6 @@ fn resolve_quest(
     let player_name = player.chud_ref().name.clone();
     episode_stats.consider_worst_rolls(discord_user_id, &player_name, &result.trials);
     if passed {
-        tracing::info!("{} made ${}", player_name, reward);
         player.earn_cash(reward, Some(episode_stats));
 
         episode_stats.update_highest_difficulty(
@@ -138,10 +137,13 @@ fn resolve_quest(
     storage::save_player(&player)?;
 
     tracing::info!(
-        discord_user_id,
+        player = %player_name,
         quest = %quest_title,
         passed,
-        "quest resolved and player saved"
+        reward = if passed { reward } else { 0 },
+        rolls = %result.rolls_summary(),
+        discord_user_id,
+        "quest resolved"
     );
 
     let consequences = result.failure_consequences.clone().or_else(|| {

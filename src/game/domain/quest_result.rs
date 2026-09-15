@@ -105,11 +105,24 @@ impl QuestResult {
         (str_w, smt_w, sth_w)
     }
 
-    pub fn log(&self) {
-        tracing::info!(title = %self.quest_title, giver = %self.quest_giver, description = %self.quest_description, "quest result");
+    pub fn rolls_summary(&self) -> String {
+        self.trials
+            .iter()
+            .map(|t| format!("{}/{}", t.player_roll, t.trial_roll))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
 
+    pub fn log(&self) {
+        tracing::info!(
+            title = %self.quest_title,
+            giver = %self.quest_giver,
+            passed = self.passed,
+            rolls = %self.rolls_summary(),
+            "quest result"
+        );
         for (i, trial) in self.trials.iter().enumerate() {
-            tracing::info!(
+            tracing::debug!(
                 trial = i + 1,
                 situation = %trial.situation,
                 stat = trial.stat_used.label(),
@@ -121,7 +134,6 @@ impl QuestResult {
                 "trial outcome"
             );
         }
-
-        tracing::info!(passed = self.passed, summary = %self.summary, "quest complete");
+        tracing::debug!(passed = self.passed, summary = %self.summary, "quest complete");
     }
 }

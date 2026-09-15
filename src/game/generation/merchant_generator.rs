@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use rig::memory::ConversationMemory;
 use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
@@ -115,6 +117,7 @@ impl MerchantGenerator {
             serde_yaml::to_string(&MerchantProfilePrompt { count })?,
         );
         tracing::info!(count, "generating merchant profiles");
+        let started = Instant::now();
         let response = prompt_parse_retry::<MerchantProfilesResponse>(
             &self.profile_agent,
             &self.memory,
@@ -129,7 +132,11 @@ impl MerchantGenerator {
                 response.merchants.len()
             );
         }
-        tracing::info!(count, "merchant profiles received");
+        tracing::debug!(
+            count,
+            elapsed_ms = started.elapsed().as_millis(),
+            "merchant profiles received"
+        );
         Ok(response.merchants)
     }
 
@@ -149,7 +156,8 @@ impl MerchantGenerator {
                 items: seeds,
             })?,
         );
-        tracing::info!(merchant = %merchant_name, items = expected, "generating merchant stock flavor");
+        tracing::info!(merchant = %merchant_name, items = expected, "generating merchant stock");
+        let started = Instant::now();
         let response = prompt_parse_retry_with_list_count::<MerchantStockResponse>(
             &self.stock_agent,
             &self.memory,
@@ -159,7 +167,12 @@ impl MerchantGenerator {
             &format!("merchant_stock_{}", merchant_name.replace(' ', "_")),
         )
         .await?;
-        tracing::info!(merchant = %merchant_name, items = response.items.len(), "merchant stock flavor received");
+        tracing::info!(
+            merchant = %merchant_name,
+            items = response.items.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "merchant stock done"
+        );
         Ok(response.items)
     }
 
@@ -186,25 +199,12 @@ impl MerchantGenerator {
                 stock_pool.push(id);
             }
 
-            tracing::info!(
-                merchant = %profile.name,
-                items = stock_pool.len(),
-                "merchant stock items generated"
-            );
-
             merchants.push(MerchantDefinition {
                 name: profile.name,
                 theme: profile.theme,
                 stock_pool,
             });
         }
-
-        let item_count: usize = merchants.iter().map(|m| m.stock_pool.len()).sum();
-        tracing::info!(
-            merchants = merchants.len(),
-            items = item_count,
-            "merchant item generation complete"
-        );
 
         Ok(MerchantCatalog { merchants })
     }
@@ -235,7 +235,7 @@ pub async fn prompt_parse_retry_with_list_count<T: serde::de::DeserializeOwned>(
         } else {
             format!("{prompt}\n\n{correction}")
         };
-        let raw = prompt_with_retry(agent, &effective_prompt, &history).await?;
+        let raw = prompt_with_retry(agent, &effective_prompt, &history, conversation_id).await?;
         let parsed = serde_yaml::from_str::<serde_yaml::Value>(&raw);
         match parsed {
             Err(e) => {
@@ -243,6 +243,7 @@ pub async fn prompt_parse_retry_with_list_count<T: serde::de::DeserializeOwned>(
                     retries += 1;
                     let preview = truncate_for_log(&raw, 500);
                     tracing::warn!(
+                        conversation_id,
                         error = %e,
                         retries,
                         MAX_RETRIES,
@@ -268,6 +269,7 @@ pub async fn prompt_parse_retry_with_list_count<T: serde::de::DeserializeOwned>(
                         retries += 1;
                         let preview = truncate_for_log(&raw, 500);
                         tracing::warn!(
+                            conversation_id,
                             expected_count,
                             actual = ?actual,
                             list_key,
@@ -295,7 +297,7 @@ pub async fn prompt_parse_retry_with_list_count<T: serde::de::DeserializeOwned>(
                                 vec![Message::user(prompt), Message::assistant(&raw)],
                             )
                             .await;
-                        tracing::info!(conversation_id, "committed to memory");
+                        tracing::debug!(conversation_id, "committed to memory");
                         return Ok(result);
                     }
                     Err(e) => {

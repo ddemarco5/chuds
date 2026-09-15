@@ -369,12 +369,12 @@ impl QuestGenerator {
             mem.desc_conv_id,
         )
         .await?;
-        tracing::info!(?memory_kind, "quest description received");
+        tracing::debug!(?memory_kind, "quest description received");
         let quest_title = desc_response.quest_title;
         let quest_giver = desc_response.quest_giver;
         let description = desc_response.description;
         let quest_goal = quest.quest_goal.clone().unwrap_or(desc_response.goal);
-        tracing::info!(?memory_kind, "quest goal is {quest_goal}");
+        tracing::debug!(?memory_kind, "quest goal is {quest_goal}");
 
         let trial_scaffold = {
             let slots = quest
@@ -408,7 +408,7 @@ impl QuestGenerator {
         )
         .await?
         .trials;
-        tracing::info!(
+        tracing::debug!(
             ?memory_kind,
             count = trials.len(),
             expected = quest.trials.len(),
@@ -465,7 +465,7 @@ impl QuestGenerator {
         )
         .await?
         .trials;
-        tracing::info!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
+        tracing::debug!(count = trials.len(), expected = quest.trials.len(), "quest trials received");
 
         let reward = calculate_quest_reward(&quest.trials);
         Ok(GeneratedQuest {
@@ -529,7 +529,7 @@ impl QuestGenerator {
             &conversation_id,
         )
         .await?;
-        tracing::info!(chud = %chud_name, count = r.trials.len(), "quest results received");
+        tracing::debug!(chud = %chud_name, count = r.trials.len(), "quest results received");
 
         Ok(QuestResults {
             trials: r.trials,

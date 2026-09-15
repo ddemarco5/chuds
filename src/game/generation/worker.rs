@@ -2,6 +2,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use std::time::Instant;
 
 use crate::game::domain::board::Board;
 use crate::game::domain::job_queue::JobQueue;
@@ -30,10 +31,12 @@ enum GenerationOutcome {
         quest_data: QuestData,
         generated: GeneratedQuest,
         placement: QuestPlacement,
+        elapsed_ms: u128,
     },
     QuestResult {
         quest_id: u32,
         result: QuestResult,
+        elapsed_ms: u128,
     },
     QuestCreationFailed {
         placement: QuestPlacement,
@@ -42,6 +45,7 @@ enum GenerationOutcome {
     MerchantCatalogReady {
         catalog: MerchantCatalog,
         registry: ItemRegistry,
+        elapsed_ms: u128,
     },
     MerchantCatalogFailed,
 }
@@ -72,6 +76,7 @@ async fn run_generation(
             force_item_drop,
         } => {
             let quest_id = board_quest.id;
+            let started = Instant::now();
             let prep = match {
                 let registry = item_registry.lock().await;
                 engine::prepare_quest_result(&registry, &board_quest, &player)
@@ -96,7 +101,11 @@ async fn run_generation(
             )
             .await
             {
-                Ok(result) => GenerationOutcome::QuestResult { quest_id, result },
+                Ok(result) => GenerationOutcome::QuestResult {
+                    quest_id,
+                    result,
+                    elapsed_ms: started.elapsed().as_millis(),
+                },
                 Err(e) => {
                     tracing::error!(
                         quest_id,
@@ -115,6 +124,7 @@ async fn run_generation(
                 QuestPlacement::Story { .. } => JobMemoryKind::Story,
                 _ => JobMemoryKind::Regular,
             };
+            let started = Instant::now();
             match generator
                 .generate_from_description(&quest_data, memory_kind)
                 .await
@@ -123,6 +133,7 @@ async fn run_generation(
                     quest_data,
                     generated,
                     placement,
+                    elapsed_ms: started.elapsed().as_millis(),
                 },
                 Err(e) => {
                     tracing::error!(err = %e, "quest creation failed");
@@ -135,6 +146,7 @@ async fn run_generation(
                 let registry = item_registry.lock().await;
                 registry.clone()
             };
+            let started = Instant::now();
             match merchant_generator
                 .build_catalog(&mut local_registry, roll_merchant_stock_seeds)
                 .await
@@ -142,6 +154,7 @@ async fn run_generation(
                 Ok(catalog) => GenerationOutcome::MerchantCatalogReady {
                     catalog,
                     registry: local_registry,
+                    elapsed_ms: started.elapsed().as_millis(),
                 },
                 Err(e) => {
                     tracing::error!(err = %e, "merchant catalog generation failed");
@@ -166,25 +179,25 @@ fn commit_generation(
     pending_merchant_catalog: &AtomicUsize,
 ) -> anyhow::Result<Vec<WorkerEffect>> {
     match outcome {
-        GenerationOutcome::QuestResult { quest_id, result } => {
+        GenerationOutcome::QuestResult {
+            quest_id,
+            result,
+            elapsed_ms,
+        } => {
             board.completed_results.insert(quest_id, result);
             storage::save_board(board)?;
-            tracing::info!(quest_id, "generation complete, result stored");
+            tracing::info!(quest_id, elapsed_ms, "generation complete, result stored");
             Ok(vec![WorkerEffect::QuestResultStored { quest_id }])
         }
         GenerationOutcome::QuestCreated {
             quest_data,
             generated,
             placement,
+            elapsed_ms,
         } => {
             let is_story = matches!(placement, QuestPlacement::Story { .. });
-            tracing::info!(
-                title = %generated.quest_title,
-                giver = %generated.quest_giver,
-                story = is_story,
-                ?placement,
-                "quest generated"
-            );
+            let title = generated.quest_title.clone();
+            let giver = generated.quest_giver.clone();
             let added = engine::place_generated_quest(
                 placement,
                 quest_data,
@@ -196,10 +209,14 @@ fn commit_generation(
             )?;
             decrement_pending(placement, pending_quests, pending_auto_jobs);
             tracing::info!(
-                queued = queue.entries.len(),
-                added,
+                title = %title,
+                giver = %giver,
                 story = is_story,
-                "quest placement complete"
+                ?placement,
+                added,
+                queued = queue.entries.len(),
+                elapsed_ms,
+                "quest generated"
             );
             Ok(vec![WorkerEffect::BoardRefilled { added }])
         }
@@ -210,7 +227,11 @@ fn commit_generation(
         GenerationOutcome::GenerateResultFailed { quest_id } => {
             Ok(vec![WorkerEffect::GenerateResultFailed { quest_id }])
         }
-        GenerationOutcome::MerchantCatalogReady { catalog, registry } => {
+        GenerationOutcome::MerchantCatalogReady {
+            catalog,
+            registry,
+            elapsed_ms,
+        } => {
             *item_registry = registry;
             let merged =
                 merchants::merge_generated_catalog(merchant.catalog.as_ref(), catalog);
@@ -218,10 +239,13 @@ fn commit_generation(
             storage::save_item_registry(item_registry)?;
             storage::save_merchant_state(merchant)?;
             pending_merchant_catalog.fetch_sub(1, Ordering::SeqCst);
-            tracing::info!(
-                merchants = merchant.catalog.as_ref().map(|c| c.merchants.len()).unwrap_or(0),
-                "merchant catalog generation complete"
-            );
+            let merchants = merchant.catalog.as_ref().map(|c| c.merchants.len()).unwrap_or(0);
+            let items = merchant
+                .catalog
+                .as_ref()
+                .map(|c| c.merchants.iter().map(|m| m.stock_pool.len()).sum::<usize>())
+                .unwrap_or(0);
+            tracing::info!(merchants, items, elapsed_ms, "merchant catalog ready");
             Ok(vec![WorkerEffect::MerchantCatalogReady])
         }
         GenerationOutcome::MerchantCatalogFailed => {

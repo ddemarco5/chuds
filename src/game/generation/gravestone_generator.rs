@@ -79,7 +79,7 @@ impl GravestoneGenerator {
             "gravestone",
         )
         .await?;
-        tracing::info!(chud = %chud.name, "gravestone epitaph received");
+        tracing::debug!(chud = %chud.name, "gravestone epitaph received");
         Ok(response.epitaph)
     }
 }

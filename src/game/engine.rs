@@ -304,7 +304,7 @@ pub fn fill_board_from_queue(
         added += 1;
     }
     if added > 0 {
-        tracing::info!(added, "board refilled from queue");
+        tracing::debug!(added, "board refilled from queue");
     }
     added
 }
@@ -436,7 +436,7 @@ pub fn run_tick_refill(
     };
 
     if jobs_expired > 0 {
-        tracing::info!(
+        tracing::debug!(
             timed_out = jobs_expired,
             replaced = slots_filled,
             "{jobs_expired} jobs timed out and were replaced"
@@ -697,7 +697,13 @@ pub fn assign_chud_to_quest(
     }
 
     storage::save_board(board)?;
-    tracing::info!(discord_user_id, quest_id, ticks_remaining, "chud assigned to quest");
+    tracing::info!(
+        name = %player.chud_ref().name,
+        discord_user_id,
+        quest_id,
+        ticks_remaining,
+        "chud assigned to quest"
+    );
     Ok(AssignInfo {
         player,
         quest_title,

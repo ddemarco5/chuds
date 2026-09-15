@@ -222,7 +222,7 @@ impl Player {
             tracing::info!(name = %chud.name, stat = "experience", value = chud.experience, "[LEVEL UP]");
         }
 
-        tracing::info!(
+        tracing::debug!(
             name = %chud.name,
             str = %format!("{} ({}/{})", chud.strength, chud.str_successes, STAT_LEVEL_BASE * chud.strength as u32),
             smt = %format!("{} ({}/{})", chud.smarts, chud.smt_successes, STAT_LEVEL_BASE * chud.smarts as u32),

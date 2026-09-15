@@ -107,7 +107,7 @@ impl ItemGenerator {
             "item",
         )
         .await?;
-        tracing::info!(name = %response.name, "item flavor received");
+        tracing::debug!(name = %response.name, "item flavor received");
         Ok((response.name, response.description))
     }
 }

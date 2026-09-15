@@ -101,7 +101,7 @@ pub async fn send_job_completion_dm(
         return;
     };
 
-    tracing::info!(
+    tracing::debug!(
         discord_user_id = qr.discord_user_id,
         player = %qr.player_name,
         segmented = plain_len > DM_CHAR_LIMIT,

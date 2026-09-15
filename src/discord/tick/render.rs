@@ -40,7 +40,6 @@ pub async fn render_tick_outcome(
     }
 
     for qr in &outcome.quest_resolved {
-        tracing::info!(quest = %qr.quest_title, passed = qr.result.passed, player = %qr.player_name, "quest resolved");
         append_activity_log_deferred(
             activity_log,
             ActivityLogKind::QuestSummary,
