@@ -185,8 +185,10 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::admin_schedule_start(),
                 discord::commands::graveyard(),
             ],
-            event_handler: |ctx, event, _framework, data| {
+            event_handler: |framework, event| {
                 Box::pin(async move {
+                    let ctx = framework.serenity_context;
+                    let data = framework.user_data;
                     if let serenity::FullEvent::InteractionCreate { interaction } = event {
                         if let serenity::Interaction::Component(component) = interaction {
                             let id = &component.data.custom_id;
