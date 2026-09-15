@@ -1,5 +1,7 @@
 use crate::chud_msg;
-use crate::discord::formatting::{format_equipment_summary, format_player_stats_block, PlayerStatsBlockOptions};
+use crate::discord::formatting::{
+    format_equipment_summary, format_player_stats_block, PlayerStatsBlockOptions,
+};
 use crate::discord::guild_hall;
 use crate::discord::game_screens;
 use crate::discord::channel::append_activity_log;
@@ -10,6 +12,19 @@ use crate::game::domain::session::GamePhase;
 use crate::game::engine;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::storage;
+
+const NO_CHUD: &str = "You don't have a chud.";
+
+async fn require_chud(ctx: Context<'_>) -> Result<Option<Player>, Error> {
+    ctx.defer_ephemeral().await?;
+    match storage::load_player(ctx.author().id.get())?.filter(|p| p.has_chud()) {
+        Some(player) => Ok(Some(player)),
+        None => {
+            ctx.say(NO_CHUD).await?;
+            Ok(None)
+        }
+    }
+}
 
 fn format_inspect_description_only(player: &Player) -> String {
     let chud = player.chud_ref();
@@ -149,25 +164,19 @@ pub async fn inspect(ctx: Context<'_>, name: String) -> Result<(), Error> {
 
 #[poise::command(slash_command)]
 pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    let user_id = ctx.author().id.get();
-    let player = storage::load_player(user_id)?;
-    match player {
-        None => ctx.say("You don't have a chud.").await?,
-        Some(p) if !p.has_chud() => ctx.say("You don't have a chud.").await?,
-        Some(p) => {
-            let registry = ctx.data().runtime.item_registry.lock().await;
-            let msg = format_player_stats_block(
-                &p,
-                &registry,
-                PlayerStatsBlockOptions {
-                    include_stash: true,
-                    include_cash: true,
-                },
-            );
-            ctx.say(msg).await?
-        }
+    let Some(player) = require_chud(ctx).await? else {
+        return Ok(());
     };
+    let registry = ctx.data().runtime.item_registry.lock().await;
+    let msg = format_player_stats_block(
+        &player,
+        &registry,
+        PlayerStatsBlockOptions {
+            include_stash: true,
+            include_cash: true,
+        },
+    );
+    ctx.say(msg).await?;
     Ok(())
 }
 
@@ -179,38 +188,24 @@ pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
     };
     let http = ctx.serenity_context().http.clone();
 
-    ctx.defer_ephemeral().await?;
-    let user_id = ctx.author().id.get();
-    let player = storage::load_player(user_id)?;
-    let Some(player) = player.filter(|p| p.has_chud()) else {
-        ctx.say("You don't have a chud.").await?;
+    let Some(player) = require_chud(ctx).await? else {
         return Ok(());
     };
 
     let message = crate::discord::build_gear_open_message(ctx.data(), &player).await?;
 
     if let Err(e) = crate::discord::edit_ephemeral_message(&http, &token, &message).await {
-        tracing::debug!(err = %e, user_id, "gear command edit failed (ephemeral may be dismissed)");
+        tracing::debug!(err = %e, user_id = player.discord_user_id, "gear command edit failed (ephemeral may be dismissed)");
     }
     Ok(())
 }
 
 #[poise::command(slash_command)]
 pub async fn job(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    let user_id = ctx.author().id.get();
-    let player = storage::load_player(user_id)?;
-    let player = match player {
-        None => {
-            ctx.say("You don't have a chud.").await?;
-            return Ok(());
-        }
-        Some(p) if !p.has_chud() => {
-            ctx.say("You don't have a chud.").await?;
-            return Ok(());
-        }
-        Some(p) => p,
+    let Some(player) = require_chud(ctx).await? else {
+        return Ok(());
     };
+    let user_id = player.discord_user_id;
     let chud_name = player.chud_ref().name.clone();
     let board = ctx.data().runtime.board.lock().await;
     match board.active_quest_for(user_id) {

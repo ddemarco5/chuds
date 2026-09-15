@@ -4,15 +4,14 @@ pub mod merchant;
 use poise::serenity_prelude::{ComponentInteraction, Http};
 
 use crate::discord::components_v2::{
-    components_v2_flags, Component, ComponentsV2Message, InteractionCreateResponse,
-    InteractionUpdateResponse, TextDisplay,
+    Component, ComponentsV2Message, InteractionCreateResponse, InteractionUpdateResponse,
+    TextDisplay,
 };
 
 pub fn no_chud_message() -> ComponentsV2Message {
-    ComponentsV2Message {
-        flags: components_v2_flags(),
-        components: vec![Component::Text(TextDisplay::new("You don't have a chud."))],
-    }
+    ComponentsV2Message::ephemeral(vec![Component::Text(TextDisplay::new(
+        "You don't have a chud.",
+    ))])
 }
 
 pub fn push_status_notice(components: &mut Vec<Component>, notice: Option<&str>) {

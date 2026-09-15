@@ -7,6 +7,11 @@ use crate::game::domain::stash::Stash;
 
 const MAX_STAT: u8 = 10;
 
+/// First whitespace-separated token, or the whole string if there is none.
+pub fn first_word(name: &str) -> &str {
+    name.split_whitespace().next().unwrap_or(name)
+}
+
 #[derive(Debug, Default)]
 pub struct LevelUp {
     pub str_up: bool,

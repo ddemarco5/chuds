@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// How an activity log line is rendered when synced to Discord.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -13,43 +13,10 @@ pub enum ActivityLogKind {
     QuestSummary,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityLogEntry {
     pub kind: ActivityLogKind,
     pub text: String,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum ActivityLogEntryWire {
-    Plain(String),
-    Structured {
-        #[serde(default)]
-        kind: ActivityLogKind,
-        text: String,
-    },
-}
-
-impl From<ActivityLogEntryWire> for ActivityLogEntry {
-    fn from(w: ActivityLogEntryWire) -> Self {
-        match w {
-            ActivityLogEntryWire::Plain(text) => ActivityLogEntry {
-                kind: ActivityLogKind::Standard,
-                text,
-            },
-            ActivityLogEntryWire::Structured { kind, text } => ActivityLogEntry { kind, text },
-        }
-    }
-}
-
-fn deserialize_activity_log_entries<'de, D>(
-    deserializer: D,
-) -> Result<Vec<ActivityLogEntry>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let wires = Vec::<ActivityLogEntryWire>::deserialize(deserializer)?;
-    Ok(wires.into_iter().map(Into::into).collect())
 }
 
 /// State for a single persistent job-slot Discord message.
@@ -78,7 +45,7 @@ pub struct MessageCache {
     #[serde(default)]
     pub job_board_header: String,
     /// Discord message ID of the persistent guild-hall status area below job slots.
-    #[serde(default, alias = "divider_message_id")]
+    #[serde(default)]
     pub status_message_id: Option<u64>,
     /// Last content fingerprint sent to the status message.
     #[serde(default)]
@@ -117,7 +84,7 @@ pub struct MessageCache {
     #[serde(default)]
     pub activity_log_message_id: Option<u64>,
     /// Activity log entries (kind controls bullet vs italic rendering on sync).
-    #[serde(default, deserialize_with = "deserialize_activity_log_entries")]
+    #[serde(default)]
     pub activity_log_entries: Vec<ActivityLogEntry>,
 }
 

@@ -5,15 +5,16 @@ use poise::serenity_prelude::{
 use crate::chud_msg;
 use crate::discord::channel::append_activity_log;
 use crate::discord::formatting::{format_item_block, format_item_display_name};
-use crate::game::domain::player::Player;
+use crate::game::domain::player::{first_word, Player};
+use crate::game::generation::generators::collapse_whitespace;
 use crate::game::merchant::{BuyError, MerchantState, MerchantVisit};
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::message_cache::MessageCache;
 use crate::game::persistence::storage;
 
 use super::super::components_v2::{
-    components_v2_flags, ActionRow, Button, Component, ComponentsV2Message, ContainerChild,
-    SelectOption, StringSelect, TextDisplay,
+    ActionRow, Button, Component, ComponentsV2Message, ContainerChild, SelectOption, StringSelect,
+    TextDisplay,
 };
 use super::super::context::Data;
 use super::{no_chud_message, push_status_notice, respond_ephemeral_create, respond_ephemeral_update};
@@ -24,7 +25,7 @@ fn merchant_visit_identity(visit: &MerchantVisit) -> String {
 
 /// Shop title with merchant theme as Discord subtext (`-#`).
 fn format_shop_header(name: &str, theme: &str) -> String {
-    let theme_line = theme.split_whitespace().collect::<Vec<_>>().join(" ");
+    let theme_line = collapse_whitespace(theme);
     if theme_line.is_empty() {
         format!("**{name}**")
     } else {
@@ -154,10 +155,7 @@ pub fn build_shop_message(
     if available.is_empty() {
         components.push(Component::Text(TextDisplay::new("_The merchant is sold out._")));
         push_status_notice(&mut components, notice);
-        return ComponentsV2Message {
-            flags: components_v2_flags(),
-            components,
-        };
+        return ComponentsV2Message::ephemeral(components);
     }
 
     let selected = if available.contains(&selected_slot) {
@@ -202,10 +200,7 @@ pub fn build_shop_message(
 
     push_status_notice(&mut components, notice);
 
-    ComponentsV2Message {
-        flags: components_v2_flags(),
-        components,
-    }
+    ComponentsV2Message::ephemeral(components)
 }
 
 fn buy_notice(err: BuyError) -> String {
@@ -233,12 +228,9 @@ async fn prepare_shop_response(
     let visit = match merchant.visit.as_ref() {
         Some(v) => v.clone(),
         None => {
-            return Ok(ComponentsV2Message {
-                flags: components_v2_flags(),
-                components: vec![Component::Text(TextDisplay::new(
-                    "The merchant has already left.",
-                ))],
-            });
+            return Ok(ComponentsV2Message::ephemeral(vec![Component::Text(
+                TextDisplay::new("The merchant has already left."),
+            )]));
         }
     };
 
@@ -251,13 +243,12 @@ async fn prepare_shop_response(
                 notice = Some(format!("Bought {} for ${}.", item.name, item.value));
                 bought = true;
                 bought_slot = Some(slot);
-                let chud_name = player.chud_ref().name.clone();
-                let first_name = chud_name
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or(&chud_name)
-                    .to_string();
-                let log_msg = chud_msg!("chud_buys_item", first_name, item.name, item.value);
+                let log_msg = chud_msg!(
+                    "chud_buys_item",
+                    first_word(&player.chud_ref().name),
+                    item.name,
+                    item.value
+                );
                 append_activity_log(&data.runtime.activity_log, &log_msg).await;
             }
             Err(e) => {

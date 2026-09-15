@@ -49,10 +49,6 @@ pub struct HighestDifficultyRecord {
     pub difficulty: u8,
     #[serde(default)]
     pub chuds: Vec<RecordChud>,
-    #[serde(default, skip_serializing, rename = "discord_user_id")]
-    legacy_discord_user_id: Option<u64>,
-    #[serde(default, skip_serializing, rename = "chud_name")]
-    legacy_chud_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,10 +58,6 @@ pub struct WorstRollRecord {
     pub margin: i16,
     #[serde(default)]
     pub chuds: Vec<RecordChud>,
-    #[serde(default, skip_serializing, rename = "discord_user_id")]
-    legacy_discord_user_id: Option<u64>,
-    #[serde(default, skip_serializing, rename = "chud_name")]
-    legacy_chud_name: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -96,34 +88,11 @@ pub struct ChudHospitalStats {
     pub hospital_days: u32,
 }
 
-impl HighestDifficultyRecord {
-    fn normalize(&mut self) {
-        if self.chuds.is_empty() {
-            if let (Some(discord_user_id), Some(chud_name)) = (
-                self.legacy_discord_user_id.take(),
-                self.legacy_chud_name.take(),
-            ) {
-                self.chuds.push(RecordChud {
-                    discord_user_id,
-                    chud_name,
-                });
-            }
-        }
-    }
-}
-
-impl WorstRollRecord {
-    fn normalize(&mut self) {
-        if self.chuds.is_empty() {
-            if let (Some(discord_user_id), Some(chud_name)) = (
-                self.legacy_discord_user_id.take(),
-                self.legacy_chud_name.take(),
-            ) {
-                self.chuds.push(RecordChud {
-                    discord_user_id,
-                    chud_name,
-                });
-            }
+impl RecordChud {
+    fn new(discord_user_id: u64, chud_name: &str) -> Self {
+        Self {
+            discord_user_id,
+            chud_name: chud_name.to_string(),
         }
     }
 }
@@ -132,10 +101,7 @@ fn push_record_chud(chuds: &mut Vec<RecordChud>, discord_user_id: u64, chud_name
     if let Some(entry) = chuds.iter_mut().find(|c| c.discord_user_id == discord_user_id) {
         entry.chud_name = chud_name.to_string();
     } else {
-        chuds.push(RecordChud {
-            discord_user_id,
-            chud_name: chud_name.to_string(),
-        });
+        chuds.push(RecordChud::new(discord_user_id, chud_name));
     }
 }
 
@@ -152,16 +118,6 @@ fn format_chud_names(names: &[&str]) -> String {
 }
 
 impl EpisodeStats {
-    /// Migrate legacy single-chud record fields into `chuds` vectors.
-    pub fn normalize(&mut self) {
-        if let Some(hd) = &mut self.records.highest_difficulty {
-            hd.normalize();
-        }
-        if let Some(wr) = &mut self.records.worst_roll {
-            wr.normalize();
-        }
-    }
-
     /// Record the first chud to beat a story mission. Ignores later attempts.
     pub fn record_story_beat(
         &mut self,
@@ -188,20 +144,12 @@ impl EpisodeStats {
             None => {
                 self.records.highest_difficulty = Some(HighestDifficultyRecord {
                     difficulty,
-                    chuds: vec![RecordChud {
-                        discord_user_id,
-                        chud_name: chud_name.to_string(),
-                    }],
-                    legacy_discord_user_id: None,
-                    legacy_chud_name: None,
+                    chuds: vec![RecordChud::new(discord_user_id, chud_name)],
                 });
             }
             Some(current) if difficulty > current.difficulty => {
                 current.difficulty = difficulty;
-                current.chuds = vec![RecordChud {
-                    discord_user_id,
-                    chud_name: chud_name.to_string(),
-                }];
+                current.chuds = vec![RecordChud::new(discord_user_id, chud_name)];
             }
             Some(current) if difficulty == current.difficulty => {
                 push_record_chud(&mut current.chuds, discord_user_id, chud_name);
@@ -214,15 +162,7 @@ impl EpisodeStats {
         if amount == 0 {
             return;
         }
-        let entry = self
-            .money
-            .by_chud
-            .entry(discord_user_id)
-            .or_insert_with(|| ChudMoneyStats {
-                chud_name: chud_name.to_string(),
-                ..Default::default()
-            });
-        entry.chud_name = chud_name.to_string();
+        let entry = self.money_entry(discord_user_id, chud_name);
         entry.earned = entry.earned.saturating_add(amount);
     }
 
@@ -230,15 +170,7 @@ impl EpisodeStats {
         if amount == 0 {
             return;
         }
-        let entry = self
-            .money
-            .by_chud
-            .entry(discord_user_id)
-            .or_insert_with(|| ChudMoneyStats {
-                chud_name: chud_name.to_string(),
-                ..Default::default()
-            });
-        entry.chud_name = chud_name.to_string();
+        let entry = self.money_entry(discord_user_id, chud_name);
         entry.spent = entry.spent.saturating_add(amount);
     }
 
@@ -253,6 +185,19 @@ impl EpisodeStats {
             });
         entry.chud_name = chud_name.to_string();
         entry.hospital_days = entry.hospital_days.saturating_add(1);
+    }
+
+    fn money_entry(&mut self, discord_user_id: u64, chud_name: &str) -> &mut ChudMoneyStats {
+        let entry = self
+            .money
+            .by_chud
+            .entry(discord_user_id)
+            .or_insert_with(|| ChudMoneyStats {
+                chud_name: chud_name.to_string(),
+                ..Default::default()
+            });
+        entry.chud_name = chud_name.to_string();
+        entry
     }
 
     /// Consider each trial margin; keep the most negative roll seen this episode.
@@ -287,22 +232,14 @@ impl EpisodeStats {
                     player_roll,
                     trial_roll,
                     margin,
-                    chuds: vec![RecordChud {
-                        discord_user_id,
-                        chud_name: chud_name.to_string(),
-                    }],
-                    legacy_discord_user_id: None,
-                    legacy_chud_name: None,
+                    chuds: vec![RecordChud::new(discord_user_id, chud_name)],
                 });
             }
             Some(current) if margin < current.margin => {
                 current.player_roll = player_roll;
                 current.trial_roll = trial_roll;
                 current.margin = margin;
-                current.chuds = vec![RecordChud {
-                    discord_user_id,
-                    chud_name: chud_name.to_string(),
-                }];
+                current.chuds = vec![RecordChud::new(discord_user_id, chud_name)];
             }
             Some(current) if margin == current.margin => {
                 push_record_chud(&mut current.chuds, discord_user_id, chud_name);
@@ -345,10 +282,9 @@ impl EpisodeStats {
 
         if let Some(hd) = &self.records.highest_difficulty {
             if !hd.chuds.is_empty() {
-                let names: Vec<&str> = hd.chuds.iter().map(|c| c.chud_name.as_str()).collect();
                 lines.push(format!(
                     "{} completed the hardest job; difficulty {}",
-                    format_chud_names(&names),
+                    format_chud_names(&record_names(&hd.chuds)),
                     hd.difficulty
                 ));
             }
@@ -356,31 +292,32 @@ impl EpisodeStats {
 
         if let Some(wr) = &self.records.worst_roll {
             if !wr.chuds.is_empty() {
-                let names: Vec<&str> = wr.chuds.iter().map(|c| c.chud_name.as_str()).collect();
                 lines.push(format!(
                     "{} had the worst roll of {} vs {}",
-                    format_chud_names(&names),
+                    format_chud_names(&record_names(&wr.chuds)),
                     wr.player_roll,
                     wr.trial_roll
                 ));
             }
         }
 
-        if let Some((amount, names)) = self.chuds_at_top_money(|stats| stats.earned) {
+        if let Some((amount, names)) = chuds_at_top(&self.money.by_chud, |s| s.earned, |s| s.chud_name.as_str()) {
             lines.push(format!(
                 "{} made the most money; ${amount}",
                 format_chud_names(&names)
             ));
         }
 
-        if let Some((amount, names)) = self.chuds_at_top_money(|stats| stats.spent) {
+        if let Some((amount, names)) = chuds_at_top(&self.money.by_chud, |s| s.spent, |s| s.chud_name.as_str()) {
             lines.push(format!(
                 "{} spent the most money; ${amount}",
                 format_chud_names(&names)
             ));
         }
 
-        if let Some((days, names)) = self.chuds_at_top_hospital(|stats| stats.hospital_days) {
+        if let Some((days, names)) =
+            chuds_at_top(&self.hospital.by_chud, |s| s.hospital_days, |s| s.chud_name.as_str())
+        {
             lines.push(format!(
                 "{} spent the most time in the hospital; {days} days",
                 format_chud_names(&names)
@@ -389,58 +326,26 @@ impl EpisodeStats {
 
         lines
     }
+}
 
-    fn chuds_at_top_money(
-        &self,
-        amount_for: impl Fn(&ChudMoneyStats) -> u32,
-    ) -> Option<(u32, Vec<&str>)> {
-        let max = self
-            .money
-            .by_chud
-            .values()
-            .map(&amount_for)
-            .max()
-            .filter(|&amount| amount > 0)?;
+fn record_names(chuds: &[RecordChud]) -> Vec<&str> {
+    chuds.iter().map(|c| c.chud_name.as_str()).collect()
+}
 
-        let names: Vec<&str> = self
-            .money
-            .by_chud
-            .values()
-            .filter(|stats| amount_for(stats) == max)
-            .map(|stats| stats.chud_name.as_str())
-            .collect();
-
-        if names.is_empty() {
-            return None;
-        }
-
-        Some((max, names))
-    }
-
-    fn chuds_at_top_hospital(
-        &self,
-        amount_for: impl Fn(&ChudHospitalStats) -> u32,
-    ) -> Option<(u32, Vec<&str>)> {
-        let max = self
-            .hospital
-            .by_chud
-            .values()
-            .map(&amount_for)
-            .max()
-            .filter(|&amount| amount > 0)?;
-
-        let names: Vec<&str> = self
-            .hospital
-            .by_chud
-            .values()
-            .filter(|stats| amount_for(stats) == max)
-            .map(|stats| stats.chud_name.as_str())
-            .collect();
-
-        if names.is_empty() {
-            return None;
-        }
-
-        Some((max, names))
-    }
+fn chuds_at_top<'a, T>(
+    by_chud: &'a HashMap<u64, T>,
+    amount_for: impl Fn(&T) -> u32,
+    name_for: impl Fn(&'a T) -> &'a str,
+) -> Option<(u32, Vec<&'a str>)> {
+    let max = by_chud
+        .values()
+        .map(&amount_for)
+        .max()
+        .filter(|&amount| amount > 0)?;
+    let names: Vec<&str> = by_chud
+        .values()
+        .filter(|stats| amount_for(stats) == max)
+        .map(name_for)
+        .collect();
+    (!names.is_empty()).then_some((max, names))
 }

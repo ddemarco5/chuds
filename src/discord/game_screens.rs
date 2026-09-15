@@ -8,7 +8,6 @@ use crate::discord::context::GameRuntime;
 use crate::discord::formatting::{format_player_stats_block, PlayerStatsBlockOptions};
 use crate::discord::guild_hall::{edit_cv2, reset_channel_cache, send_cv2};
 use crate::discord::report_dm::{pack_message_segments, DM_CHAR_LIMIT};
-use crate::game::domain::player::Player;
 use crate::game::engine;
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::storage;
@@ -16,21 +15,10 @@ use crate::story_jobs;
 
 /// Collect the names of every chud currently in the game (one per player save with a chud).
 fn living_chud_names() -> Vec<String> {
-    let ids = match storage::list_player_ids() {
-        Ok(ids) => ids,
-        Err(e) => {
-            tracing::warn!(err = %e, "failed to list players for attract screen");
-            return Vec::new();
-        }
-    };
-    let mut names = Vec::new();
-    for id in ids {
-        if let Ok(Some(player)) = storage::load_player(id) {
-            if player.has_chud() {
-                names.push(player.chud_ref().name.clone());
-            }
-        }
-    }
+    let mut names: Vec<String> = storage::load_chuds()
+        .into_iter()
+        .map(|player| player.chud_ref().name.clone())
+        .collect();
     names.sort();
     names
 }
@@ -133,22 +121,7 @@ fn build_rich_complete_message(header: &str, chud_blocks: &[String]) -> Componen
 }
 
 fn per_chud_complete_blocks(registry: &ItemRegistry) -> Vec<String> {
-    let ids = match storage::list_player_ids() {
-        Ok(ids) => ids,
-        Err(e) => {
-            tracing::warn!(err = %e, "failed to list players for complete screen");
-            return Vec::new();
-        }
-    };
-
-    let mut players: Vec<Player> = Vec::new();
-    for id in ids {
-        if let Ok(Some(player)) = storage::load_player(id) {
-            if player.has_chud() {
-                players.push(player);
-            }
-        }
-    }
+    let mut players = storage::load_chuds();
     players.sort_by(|a, b| a.chud_ref().name.cmp(&b.chud_ref().name));
 
     players

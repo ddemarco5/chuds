@@ -9,7 +9,7 @@ use crate::discord::channel::append_activity_log;
 use crate::discord::context::Data;
 use crate::game::busy::BusyReason;
 use crate::game::domain::board::Board;
-use crate::game::domain::player::Player;
+use crate::game::domain::player::{first_word, Player};
 use crate::game::engine;
 use crate::game::guild_status::{self, GuildHallStatus};
 use crate::game::persistence::storage;
@@ -112,13 +112,11 @@ async fn announce_taken_quest(
     info: &engine::AssignInfo,
     status: &GuildHallStatus,
 ) -> anyhow::Result<()> {
-    let chud_name = info.player.chud_ref().name.clone();
-    let first_name = chud_name
-        .split_whitespace()
-        .next()
-        .unwrap_or(&chud_name)
-        .to_string();
-    let content = chud_msg!("chud_takes_job", first_name, info.quest_title);
+    let content = chud_msg!(
+        "chud_takes_job",
+        first_word(&info.player.chud_ref().name),
+        info.quest_title
+    );
 
     append_activity_log(&data.runtime.activity_log, &content).await;
     guild_hall::update_board_message(
@@ -296,13 +294,7 @@ pub async fn handle_scout_button(
             ephemeral_followup(ctx, interaction, "That job is no longer available.").await?;
         }
         ScoutOutcome::Scouted { board, status } => {
-            let chud_name = player.chud_ref().name.clone();
-            let first_name = chud_name
-                .split_whitespace()
-                .next()
-                .unwrap_or(&chud_name)
-                .to_string();
-            let content = chud_msg!("chud_scouts_out", first_name);
+            let content = chud_msg!("chud_scouts_out", first_word(&player.chud_ref().name));
             append_activity_log(&data.runtime.activity_log, &content).await;
             guild_hall::update_board_message(
                 &ctx.http,

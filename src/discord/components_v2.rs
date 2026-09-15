@@ -276,6 +276,13 @@ impl ComponentsV2Message {
         }
     }
 
+    pub fn ephemeral(components: Vec<Component>) -> Self {
+        Self {
+            flags: components_v2_flags(),
+            components,
+        }
+    }
+
     /// Single top-level container (the visible “box” in the client).
     pub fn channel_box(inner: Vec<ContainerChild>, accent_color: Option<u32>) -> Self {
         let container = match accent_color {

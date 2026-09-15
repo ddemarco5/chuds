@@ -15,8 +15,7 @@ use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::storage;
 
 use super::super::components_v2::{
-    components_v2_flags, ActionRow, Button, Component, ComponentsV2Message, Separator,
-    TextDisplay,
+    ActionRow, Button, Component, ComponentsV2Message, Separator, TextDisplay,
 };
 use super::super::context::Data;
 use super::{no_chud_message, push_status_notice, respond_ephemeral_update};
@@ -202,10 +201,7 @@ pub fn build_gear_message(
 
     push_status_notice(&mut components, notice);
 
-    ComponentsV2Message {
-        flags: components_v2_flags(),
-        components,
-    }
+    ComponentsV2Message::ephemeral(components)
 }
 
 fn equipment_locked_action_notice(reason: BusyReason, player: &Player) -> String {
@@ -347,12 +343,7 @@ fn apply_gear_action(
             .get(item_id)
             .map(|i| i.name.clone())
             .unwrap_or_else(|| "item".into());
-        let chud_name = player.chud_ref().name.clone();
-        let first_name = chud_name
-            .split_whitespace()
-            .next()
-            .unwrap_or(&chud_name)
-            .to_string();
+        let first_name = crate::game::domain::player::first_word(&player.chud_ref().name).to_string();
         let (notice, activity_log) = match engine::sell_item(
             board, hospital, player, registry, merchant, item_id,
         )

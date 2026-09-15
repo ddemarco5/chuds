@@ -82,21 +82,16 @@ pub fn compute_guild_hall_status(
         .collect();
     hospital_names.sort();
 
-    let player_ids = storage::list_player_ids()?;
     let mut idle_names = Vec::new();
     let mut has_any_chud = false;
 
-    for &id in &player_ids {
-        if let Some(player) = storage::load_player(id)? {
-            if !player.has_chud() {
-                continue;
-            }
-            has_any_chud = true;
-            if active.contains_key(&id) || scouting.contains(&id) || hospitalized.contains(&id) {
-                continue;
-            }
-            idle_names.push(player.chud_ref().name.clone());
+    for player in storage::try_load_chuds()? {
+        let id = player.discord_user_id;
+        has_any_chud = true;
+        if active.contains_key(&id) || scouting.contains(&id) || hospitalized.contains(&id) {
+            continue;
         }
+        idle_names.push(player.chud_ref().name.clone());
     }
     idle_names.sort();
 

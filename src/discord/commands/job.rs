@@ -4,7 +4,7 @@ use poise::Modal;
 
 use crate::discord::guild_hall;
 use crate::discord::context::{
-    admin_guard, chudmaster_check, parse_difficulty, parse_difficulty_optional, require_playing,
+    cm_guard, defer_admin_playing, parse_difficulty, parse_difficulty_optional, parse_user_id,
     say_ephemeral, Context, Error, GenerateJobModal, WriteJobModal,
 };
 use crate::game::engine::{self, QuestPlacement};
@@ -12,12 +12,7 @@ use crate::game::persistence::storage;
 
 #[poise::command(slash_command)]
 pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
-    let user_id = ctx.author().id.get();
-    let channel_id = ctx.channel_id().get();
-    if !chudmaster_check(ctx.data(), user_id, channel_id) {
-        tracing::info!("Non-CM tried to submit a generate job");
-        tracing::warn!(user = user_id, channel = channel_id, "unauthorized or off-channel command ignored");
-        say_ephemeral(ctx, "you don't have permission for this command (sorry bud)").await?;
+    if !cm_guard(ctx).await {
         return Ok(());
     }
     // Intentionally not gated on the Playing phase: chudmasters pre-fill the job queue during
@@ -84,12 +79,7 @@ pub async fn generate_job(ctx: Context<'_>) -> Result<(), Error> {
 
 #[poise::command(slash_command)]
 pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
-    let user_id = ctx.author().id.get();
-    let channel_id = ctx.channel_id().get();
-    if !chudmaster_check(ctx.data(), user_id, channel_id) {
-        tracing::info!("Non-CM tried to submit a write job");
-        tracing::warn!(user = user_id, channel = channel_id, "unauthorized or off-channel command ignored");
-        say_ephemeral(ctx, "you don't have permission for this command (sorry bud)").await?;
+    if !cm_guard(ctx).await {
         return Ok(());
     }
     // Intentionally not gated on the Playing phase: chudmasters pre-fill the job queue during
@@ -173,11 +163,7 @@ pub async fn write_job(ctx: Context<'_>) -> Result<(), Error> {
 
 #[poise::command(slash_command)]
 pub async fn delete_job(ctx: Context<'_>, quest_id: u32) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
-        return Ok(());
-    }
-    if !require_playing(ctx).await {
+    if !defer_admin_playing(ctx).await? {
         return Ok(());
     }
     let max_jobs = ctx.data().runtime.max_jobs;
@@ -215,19 +201,11 @@ pub async fn assign(
     target_user_id: String,
     quest_id: u32,
 ) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin_playing(ctx).await? {
         return Ok(());
     }
-    if !require_playing(ctx).await {
+    let Some(target_user_id) = parse_user_id(ctx, &target_user_id).await? else {
         return Ok(());
-    }
-    let target_user_id: u64 = match target_user_id.trim().parse() {
-        Ok(id) => id,
-        Err(_) => {
-            ctx.say("invalid Discord user ID").await?;
-            return Ok(());
-        }
     };
     let http = &ctx.serenity_context().http;
     let max_jobs = ctx.data().runtime.max_jobs;

@@ -22,37 +22,21 @@ pub struct PlayerStatsBlockOptions {
 pub fn format_equipment_summary(player: &Player, registry: &ItemRegistry) -> String {
     let chud = player.chud_ref();
     let mut lines = Vec::new();
-    if let Some(id) = chud.equipment.gear {
-        if let Some(item) = registry.get(id) {
-            lines.push(format!(
-                "Gear: **{}** ({}) [{}]",
-                item.name,
-                format_item_slot_label(item),
-                item.stats.format_triplet(),
-            ));
-        }
-    }
-    if let Some(id) = chud.equipment.weapon {
-        if let Some(item) = registry.get(id) {
-            lines.push(format!(
-                "Weapon: **{}** ({}) [{}]",
-                item.name,
-                format_item_slot_label(item),
-                item.stats.format_triplet(),
-            ));
-        }
-    }
-    for (i, slot) in chud.equipment.misc.iter().enumerate() {
-        if let Some(id) = slot {
-            if let Some(item) = registry.get(*id) {
+    {
+        let mut push_slot = |label: String, id: Option<u32>| {
+            if let Some(item) = id.and_then(|id| registry.get(id)) {
                 lines.push(format!(
-                    "Misc {}: **{}** ({}) [{}]",
-                    i + 1,
+                    "{label}: **{}** ({}) [{}]",
                     item.name,
                     format_item_slot_label(item),
                     item.stats.format_triplet(),
                 ));
             }
+        };
+        push_slot("Gear".into(), chud.equipment.gear);
+        push_slot("Weapon".into(), chud.equipment.weapon);
+        for (i, slot) in chud.equipment.misc.iter().enumerate() {
+            push_slot(format!("Misc {}", i + 1), *slot);
         }
     }
     lines.join("\n")
@@ -109,6 +93,14 @@ pub fn format_player_stats_block(
 /// Collapse whitespace so Discord `*italic*` markers stay on one line.
 fn markdown_italic_line(text: &str) -> String {
     collapse_whitespace(text)
+}
+
+/// Prefix each line with Discord subtext (`-#`).
+pub fn subtext_lines(text: &str) -> String {
+    text.lines()
+        .map(|line| format!("-# {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Accent colors for quest outcome containers (RGB integers).
@@ -460,7 +452,7 @@ fn item_type_label(item_type: ItemType) -> &'static str {
     }
 }
 
-fn oxford_join(names: &[&str]) -> String {
+pub fn oxford_join(names: &[&str]) -> String {
     match names.len() {
         0 => String::new(),
         1 => names[0].to_string(),

@@ -86,16 +86,31 @@ pub async fn admin_guard(ctx: Context<'_>) -> bool {
     let ok = ctx.author().id.get() == rt.admin_user_id
         && ctx.channel_id().get() == rt.channel_id;
     if !ok {
-        tracing::warn!(
-            user = ctx.author().id.get(),
-            channel = ctx.channel_id().get(),
-            "unauthorized or off-channel command ignored"
-        );
-        say_ephemeral(ctx, "you don't have permission for this command (sorry bud)")
-            .await
-            .ok();
+        deny_unauthorized(ctx).await;
     }
     ok
+}
+
+/// Defer ephemeral and require admin. Returns `true` if the command may proceed.
+pub async fn defer_admin(ctx: Context<'_>) -> Result<bool, Error> {
+    ctx.defer_ephemeral().await?;
+    Ok(admin_guard(ctx).await)
+}
+
+/// Defer ephemeral, require admin, and require the Playing phase.
+pub async fn defer_admin_playing(ctx: Context<'_>) -> Result<bool, Error> {
+    Ok(defer_admin(ctx).await? && require_playing(ctx).await)
+}
+
+/// Parse a Discord user ID from an admin-supplied string. Replies and returns `None` on failure.
+pub async fn parse_user_id(ctx: Context<'_>, raw: &str) -> Result<Option<u64>, Error> {
+    match raw.trim().parse() {
+        Ok(id) => Ok(Some(id)),
+        Err(_) => {
+            ctx.say("invalid Discord user ID").await?;
+            Ok(None)
+        }
+    }
 }
 
 /// Reject (with an ephemeral reply) any command run outside the `Playing` phase.
@@ -108,23 +123,38 @@ pub async fn require_playing(ctx: Context<'_>) -> bool {
         user = ctx.author().id.get(),
         "command rejected: game is not in the playing phase"
     );
-    // Keep the rejection out of the channel — reply only to the caller.
-    ctx.send(
-        poise::CreateReply::default()
-            .content("the game isn't running right now (sorry bud)")
-            .ephemeral(true),
-    )
-    .await
-    .ok();
+    say_ephemeral(ctx, "the game isn't running right now (sorry bud)")
+        .await
+        .ok();
     false
 }
 
-pub fn chudmaster_check(data: &Data, user_id: u64, channel_id: u64) -> bool {
+fn chudmaster_check(data: &Data, user_id: u64, channel_id: u64) -> bool {
     let rt = &data.runtime;
     let is_admin = user_id == rt.admin_user_id;
     let is_chudmaster =
         crate::game::persistence::storage::is_chudmaster(user_id).unwrap_or(false);
     (is_admin || is_chudmaster) && channel_id == rt.channel_id
+}
+
+/// Require chudmaster (or admin) in the game channel. Returns `true` if the command may proceed.
+pub async fn cm_guard(ctx: Context<'_>) -> bool {
+    if chudmaster_check(ctx.data(), ctx.author().id.get(), ctx.channel_id().get()) {
+        return true;
+    }
+    deny_unauthorized(ctx).await;
+    false
+}
+
+async fn deny_unauthorized(ctx: Context<'_>) {
+    tracing::warn!(
+        user = ctx.author().id.get(),
+        channel = ctx.channel_id().get(),
+        "unauthorized or off-channel command ignored"
+    );
+    say_ephemeral(ctx, "you don't have permission for this command (sorry bud)")
+        .await
+        .ok();
 }
 
 pub fn parse_difficulty(raw: &str) -> Result<u8, &'static str> {

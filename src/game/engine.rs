@@ -508,28 +508,12 @@ pub const DEFAULT_MEAN_CHUD_STAT: f64 = 1.0;
 /// Mean of each chud's two highest effective stats (base + item modifiers), averaged across
 /// all saved players. Falls back to [`DEFAULT_MEAN_CHUD_STAT`] when there are no chuds yet.
 pub fn mean_chud_stat(registry: &ItemRegistry) -> f64 {
-    let ids = match storage::list_player_ids() {
-        Ok(ids) => ids,
-        Err(e) => {
-            tracing::warn!(err = %e, "failed to list players for mean stat; using default");
-            return DEFAULT_MEAN_CHUD_STAT;
-        }
-    };
-
     let mut chud_means: Vec<f64> = Vec::new();
-    for id in ids {
-        match storage::load_player(id) {
-            Ok(Some(player)) => {
-                if player.chud.is_some() {
-                    let (str, smt, sth) = effective_stats(&player, registry);
-                    let mut stats = [str, smt, sth];
-                    stats.sort_by(|a, b| b.cmp(a));
-                    chud_means.push((stats[0] as f64 + stats[1] as f64) / 2.0);
-                }
-            }
-            Ok(None) => {}
-            Err(e) => tracing::warn!(err = %e, player = id, "failed to load player for mean stat"),
-        }
+    for player in storage::load_chuds() {
+        let (str, smt, sth) = effective_stats(&player, registry);
+        let mut stats = [str, smt, sth];
+        stats.sort_by(|a, b| b.cmp(a));
+        chud_means.push((stats[0] as f64 + stats[1] as f64) / 2.0);
     }
 
     if chud_means.is_empty() {

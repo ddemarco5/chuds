@@ -5,7 +5,9 @@ use poise::serenity_prelude as serenity;
 
 use crate::discord::buttons::post_quest_taken_announcement;
 use crate::discord::channel::{append_activity_log, append_activity_log_deferred};
-use crate::discord::context::{admin_guard, require_playing, Context, Error, GameRuntime};
+use crate::discord::context::{
+    defer_admin, defer_admin_playing, parse_user_id, Context, Error, GameRuntime,
+};
 use crate::discord::game_screens;
 use crate::discord::guild_hall::recover_persistent_board_messages;
 use crate::discord::report_dm;
@@ -42,16 +44,11 @@ fn parse_start_time(input: &str) -> Option<i64> {
 
 #[poise::command(slash_command)]
 pub async fn add_cm(ctx: Context<'_>, discord_user_id: String) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin(ctx).await? {
         return Ok(());
     }
-    let discord_user_id: u64 = match discord_user_id.trim().parse() {
-        Ok(id) => id,
-        Err(_) => {
-            ctx.say("invalid Discord user ID").await?;
-            return Ok(());
-        }
+    let Some(discord_user_id) = parse_user_id(ctx, &discord_user_id).await? else {
+        return Ok(());
     };
     let added = storage::add_chudmaster(discord_user_id)?;
     if !added {
@@ -71,16 +68,11 @@ pub async fn add_cm(ctx: Context<'_>, discord_user_id: String) -> Result<(), Err
 
 #[poise::command(slash_command)]
 pub async fn delete_cm(ctx: Context<'_>, discord_user_id: String) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin(ctx).await? {
         return Ok(());
     }
-    let discord_user_id: u64 = match discord_user_id.trim().parse() {
-        Ok(id) => id,
-        Err(_) => {
-            ctx.say("invalid Discord user ID").await?;
-            return Ok(());
-        }
+    let Some(discord_user_id) = parse_user_id(ctx, &discord_user_id).await? else {
+        return Ok(());
     };
     let removed = storage::remove_chudmaster(discord_user_id)?;
     if !removed {
@@ -96,11 +88,7 @@ pub async fn admin_spawn_merchant(
     ctx: Context<'_>,
     #[description = "Merchant name to spawn (random if omitted)"] merchant_name: Option<String>,
 ) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
-        return Ok(());
-    }
-    if !require_playing(ctx).await {
+    if !defer_admin_playing(ctx).await? {
         return Ok(());
     }
     let mut merchant = ctx.data().runtime.merchant.lock().await;
@@ -132,11 +120,7 @@ pub async fn admin_spawn_merchant(
 
 #[poise::command(slash_command)]
 pub async fn admin_redraw(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
-        return Ok(());
-    }
-    if !require_playing(ctx).await {
+    if !defer_admin_playing(ctx).await? {
         return Ok(());
     }
     let http = &ctx.serenity_context().http;
@@ -163,8 +147,7 @@ pub async fn admin_redraw(ctx: Context<'_>) -> Result<(), Error> {
 /// Switch the game into the Attract phase and post the attract screen (simulation off).
 #[poise::command(slash_command)]
 pub async fn admin_attract(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin(ctx).await? {
         return Ok(());
     }
     let data = ctx.data();
@@ -182,8 +165,7 @@ pub async fn admin_attract(ctx: Context<'_>) -> Result<(), Error> {
 /// Switch the game into the Playing phase and start the simulation (normal game loop).
 #[poise::command(slash_command)]
 pub async fn admin_game(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin(ctx).await? {
         return Ok(());
     }
     let data = ctx.data();
@@ -200,8 +182,7 @@ pub async fn admin_game(ctx: Context<'_>) -> Result<(), Error> {
 /// Switch the game into the Complete phase and post the game-over screen (simulation off).
 #[poise::command(slash_command)]
 pub async fn admin_complete(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin(ctx).await? {
         return Ok(());
     }
     let data = ctx.data();
@@ -237,8 +218,7 @@ async fn wait_for_generation_idle(rt: &GameRuntime) {
 /// Reset to a brand-new game: wipe chuds, game state, and LLM memory, then enter attract.
 #[poise::command(slash_command)]
 pub async fn admin_reset(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin(ctx).await? {
         return Ok(());
     }
     let data = ctx.data();
@@ -279,8 +259,7 @@ pub async fn admin_schedule_start(
     ctx: Context<'_>,
     #[description = "unix timestamp, RFC3339, or `YYYY-MM-DD HH:MM` (UTC)"] when: String,
 ) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin(ctx).await? {
         return Ok(());
     }
     let data = ctx.data();
@@ -315,11 +294,7 @@ pub async fn admin_schedule_start(
 
 #[poise::command(slash_command)]
 pub async fn tick(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
-        return Ok(());
-    }
-    if !require_playing(ctx).await {
+    if !defer_admin_playing(ctx).await? {
         return Ok(());
     }
     tick::execute_tick(&ctx.data().runtime).await?;
@@ -333,19 +308,11 @@ pub async fn admin_take_gen_item(
     target_user_id: String,
     quest_id: u32,
 ) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin_playing(ctx).await? {
         return Ok(());
     }
-    if !require_playing(ctx).await {
+    let Some(target_user_id) = parse_user_id(ctx, &target_user_id).await? else {
         return Ok(());
-    }
-    let target_user_id: u64 = match target_user_id.trim().parse() {
-        Ok(id) => id,
-        Err(_) => {
-            ctx.say("invalid Discord user ID").await?;
-            return Ok(());
-        }
     };
     let http = &ctx.serenity_context().http;
     let hospital = storage::load_hospital()?;
@@ -377,16 +344,11 @@ pub async fn add_chud(
     name: String,
     description: String,
 ) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin(ctx).await? {
         return Ok(());
     }
-    let target_user_id: u64 = match target_user_id.trim().parse() {
-        Ok(id) => id,
-        Err(_) => {
-            ctx.say("invalid Discord user ID").await?;
-            return Ok(());
-        }
+    let Some(target_user_id) = parse_user_id(ctx, &target_user_id).await? else {
+        return Ok(());
     };
     if ctx.data().runtime.session.lock().await.phase == GamePhase::Complete {
         ctx.say("the game is over").await?;
@@ -399,8 +361,7 @@ pub async fn add_chud(
 
 #[poise::command(slash_command)]
 pub async fn delete_chud(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin(ctx).await? {
         return Ok(());
     }
     engine::delete_chud(ctx.author().id.get())?;
@@ -410,8 +371,7 @@ pub async fn delete_chud(ctx: Context<'_>) -> Result<(), Error> {
 
 #[poise::command(slash_command)]
 pub async fn save(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin(ctx).await? {
         return Ok(());
     }
     let rt = &ctx.data().runtime;
@@ -441,19 +401,11 @@ pub async fn admin_kill_chud(
     #[description = "Trial situation that killed them"] death_trial: Option<String>,
     #[description = "Outcome that killed them"] death_outcome: Option<String>,
 ) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin_playing(ctx).await? {
         return Ok(());
     }
-    if !require_playing(ctx).await {
+    let Some(target_user_id) = parse_user_id(ctx, &target_user_id).await? else {
         return Ok(());
-    }
-    let target_user_id: u64 = match target_user_id.trim().parse() {
-        Ok(id) => id,
-        Err(_) => {
-            ctx.say("invalid Discord user ID").await?;
-            return Ok(());
-        }
     };
 
     let hospital = storage::load_hospital()?;
@@ -496,12 +448,7 @@ pub async fn admin_kill_chud(
         epitaph,
     };
 
-    let first_name = kill
-        .chud_name
-        .split_whitespace()
-        .next()
-        .unwrap_or(&kill.chud_name)
-        .to_string();
+    let first_name = crate::game::domain::player::first_word(&kill.chud_name);
     let return_msg = crate::chud_msg!("return_died", first_name);
     append_activity_log_deferred(
         &ctx.data().runtime.activity_log,
@@ -530,17 +477,12 @@ pub async fn admin_kill_chud(
 
 #[poise::command(slash_command)]
 pub async fn load(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-    if !admin_guard(ctx).await {
+    if !defer_admin(ctx).await? {
         return Ok(());
     }
     let rt = &ctx.data().runtime;
     let (mut new_board, new_registry) = engine::load_all()?;
-    storage::reconcile_resumed_board(
-        &mut new_board,
-        rt.job_timeout_tick,
-        &rt.generation_queue,
-    )?;
+    storage::reconcile_resumed_board(&mut new_board, &rt.generation_queue)?;
     let new_merchant = storage::load_merchant_state(&new_registry)?;
     let new_session = storage::load_session()?;
     *rt.board.lock().await = new_board;

@@ -9,38 +9,14 @@ use crate::game::merchant::{
 use crate::game::persistence::item_registry::ItemRegistry;
 
 const MERCHANTS_PATH: &str = "data/merchants.yaml";
-const GUILD_HALL_PATH: &str = "data/guild_hall.yaml";
 
-/// Load the merchant roster from `data/merchants.yaml`, migrating from legacy
-/// `guild_hall.yaml` catalog data when present.
+/// Load the merchant roster from `data/merchants.yaml`.
 pub fn load_merchants() -> anyhow::Result<Option<MerchantCatalog>> {
-    if Path::new(MERCHANTS_PATH).exists() {
-        let yaml = std::fs::read_to_string(MERCHANTS_PATH).context("reading merchants")?;
-        let catalog: MerchantCatalog =
-            serde_yaml::from_str(&yaml).context("parsing merchants")?;
-        return Ok(Some(catalog));
-    }
-
-    if let Some(catalog) = try_migrate_from_guild_hall()? {
-        save_merchants(&catalog)?;
-        tracing::info!(path = MERCHANTS_PATH, "migrated merchant catalog from guild_hall.yaml");
-        return Ok(Some(catalog));
-    }
-
-    Ok(None)
-}
-
-fn try_migrate_from_guild_hall() -> anyhow::Result<Option<MerchantCatalog>> {
-    if !Path::new(GUILD_HALL_PATH).exists() {
+    if !Path::new(MERCHANTS_PATH).exists() {
         return Ok(None);
     }
-    let yaml = std::fs::read_to_string(GUILD_HALL_PATH).context("reading guild hall for migration")?;
-    let root: serde_yaml::Value = serde_yaml::from_str(&yaml).context("parsing guild hall for migration")?;
-    let Some(catalog_value) = root.get("merchant").and_then(|m| m.get("catalog")) else {
-        return Ok(None);
-    };
-    let catalog: MerchantCatalog =
-        serde_yaml::from_value(catalog_value.clone()).context("parsing legacy merchant catalog")?;
+    let yaml = std::fs::read_to_string(MERCHANTS_PATH).context("reading merchants")?;
+    let catalog: MerchantCatalog = serde_yaml::from_str(&yaml).context("parsing merchants")?;
     Ok(Some(catalog))
 }
 

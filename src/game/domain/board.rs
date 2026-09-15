@@ -194,15 +194,6 @@ impl Board {
         }
     }
 
-    /// Set timeout on open non-story quests that lack one (legacy saves).
-    pub fn backfill_job_timeouts(&mut self, job_timeout_tick: u32) {
-        for q in &mut self.quests {
-            if q.states.is_empty() && !q.is_story() && q.timeout == 0 {
-                q.timeout = job_timeout_tick;
-            }
-        }
-    }
-
     /// The active quest for a given player, if any.
     pub fn active_quest_for(&self, discord_user_id: u64) -> Option<&BoardQuest> {
         self.quests.iter().find(|q| {

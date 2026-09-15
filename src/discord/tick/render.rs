@@ -7,6 +7,7 @@ use crate::discord::formatting;
 use crate::discord::guild_hall;
 use crate::discord::report_dm;
 use crate::discord::ui::update_merchant_message;
+use crate::game::domain::player::first_word;
 use crate::game::engine::{self, KillChudPending, KillResult};
 use crate::game::persistence::message_cache::ActivityLogKind;
 use crate::game::persistence::storage;
@@ -60,24 +61,12 @@ pub async fn render_tick_outcome(
             if qr.level_up.exp_up {
                 adjs.push("more experienced");
             }
-            let adj_str = match adjs.len() {
-                1 => adjs[0].to_string(),
-                2 => format!("{} and {}", adjs[0], adjs[1]),
-                _ => {
-                    let (last, rest) = adjs.split_last().unwrap();
-                    format!("{}, and {}", rest.join(", "), last)
-                }
-            };
+            let adj_str = formatting::oxford_join(&adjs);
             let level_msg = format!("{} seems {}.", qr.player_name, adj_str);
             append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &level_msg).await;
         }
 
-        let first_name = qr
-            .player_name
-            .split_whitespace()
-            .next()
-            .unwrap_or(&qr.player_name)
-            .to_string();
+        let first_name = first_word(&qr.player_name);
         let return_key = if qr.died {
             "return_died"
         } else if qr.hospitalized {
@@ -115,12 +104,7 @@ pub async fn render_tick_outcome(
     }
 
     for sr in &outcome.scout_results {
-        let first_name = sr
-            .player_name
-            .split_whitespace()
-            .next()
-            .unwrap_or(&sr.player_name)
-            .to_string();
+        let first_name = first_word(&sr.player_name);
         let scout_return_msg =
             chud_msg!(formatting::scout_returned_message_key(sr.chance), first_name);
         append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &scout_return_msg).await;

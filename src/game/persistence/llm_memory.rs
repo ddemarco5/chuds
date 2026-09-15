@@ -21,13 +21,9 @@ pub struct LlmMemoryBundle {
     pub trials: HashMap<String, Vec<Message>>,
     pub results: HashMap<String, Vec<Message>>,
     pub item: HashMap<String, Vec<Message>>,
-    #[serde(default)]
     pub gravestone: HashMap<String, Vec<Message>>,
-    #[serde(default)]
     pub merchant: HashMap<String, Vec<Message>>,
-    #[serde(default)]
     pub story_description: HashMap<String, Vec<Message>>,
-    #[serde(default)]
     pub story_trials: HashMap<String, Vec<Message>>,
 }
 

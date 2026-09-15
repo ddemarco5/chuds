@@ -23,73 +23,26 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let api_key = std::env::var("LLM_API_KEY")
-        .map_err(|_| anyhow::anyhow!("LLM_API_KEY not set"))?;
-    let token = std::env::var("DISCORD_TOKEN")
-        .map_err(|_| anyhow::anyhow!("DISCORD_TOKEN not set"))?;
-    let admin_user_id: u64 = std::env::var("ADMIN_USER_ID")
-        .map_err(|_| anyhow::anyhow!("ADMIN_USER_ID not set"))?
-        .parse()
-        .map_err(|_| anyhow::anyhow!("ADMIN_USER_ID must be a u64"))?;
-    let channel_id: u64 = std::env::var("CHANNEL_ID")
-        .map_err(|_| anyhow::anyhow!("CHANNEL_ID not set"))?
-        .parse()
-        .map_err(|_| anyhow::anyhow!("CHANNEL_ID must be a u64"))?;
-    let guild_id: u64 = std::env::var("GUILD_ID")
-        .map_err(|_| anyhow::anyhow!("GUILD_ID not set"))?
-        .parse()
-        .map_err(|_| anyhow::anyhow!("GUILD_ID must be a u64"))?;
-    let activity_log_max_lines: usize = std::env::var("ACTIVITY_LOG_MAX_LINES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(4);
-    let activity_log_debounce_ms: u64 = std::env::var("ACTIVITY_LOG_DEBOUNCE_MS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5000);
-    let max_jobs: usize = std::env::var("MAX_JOBS")
-        .map_err(|_| anyhow::anyhow!("MAX_JOBS not set"))?
-        .parse()
-        .map_err(|_| anyhow::anyhow!("MAX_JOBS must be a positive integer"))?;
-    let max_job_queue: usize = std::env::var("MAX_JOB_QUEUE")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(30);
-    let max_non_bot_messages: usize = std::env::var("MAX_NON_BOT_MESSAGES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5);
-    let tick_time_s: u64 = std::env::var("TICK_TIME_S")
-        .map_err(|_| anyhow::anyhow!("TICK_TIME_S not set"))?
-        .parse()
-        .map_err(|_| anyhow::anyhow!("TICK_TIME_S must be a positive integer"))?;
-    let mut reserved_cm_slot_num: usize = std::env::var("RESERVED_CM_SLOT_NUM")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3);
-    let job_gen_min_history_msgs: usize = std::env::var("JOB_GEN_MIN_HISTORY_MSGS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(6);
-    let job_timeout_tick: u32 = std::env::var("JOB_TIMEOUT_TICK")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(10);
-    let jobs_per_tick: u32 = std::env::var("JOBS_PER_TICK")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1);
+    let api_key = require_env("LLM_API_KEY")?;
+    let token = require_env("DISCORD_TOKEN")?;
+    let admin_user_id: u64 = env_parse("ADMIN_USER_ID", "a u64")?;
+    let channel_id: u64 = env_parse("CHANNEL_ID", "a u64")?;
+    let guild_id: u64 = env_parse("GUILD_ID", "a u64")?;
+    let activity_log_max_lines: usize = env_or("ACTIVITY_LOG_MAX_LINES", 4);
+    let activity_log_debounce_ms: u64 = env_or("ACTIVITY_LOG_DEBOUNCE_MS", 5000);
+    let max_jobs: usize = env_parse("MAX_JOBS", "a positive integer")?;
+    let max_job_queue: usize = env_or("MAX_JOB_QUEUE", 30);
+    let max_non_bot_messages: usize = env_or("MAX_NON_BOT_MESSAGES", 5);
+    let tick_time_s: u64 = env_parse("TICK_TIME_S", "a positive integer")?;
+    let mut reserved_cm_slot_num: usize = env_or("RESERVED_CM_SLOT_NUM", 3);
+    let job_gen_min_history_msgs: usize = env_or("JOB_GEN_MIN_HISTORY_MSGS", 6);
+    let job_timeout_tick: u32 = env_or("JOB_TIMEOUT_TICK", 10);
+    let jobs_per_tick: u32 = env_or("JOBS_PER_TICK", 1);
     if jobs_per_tick == 0 {
         anyhow::bail!("JOBS_PER_TICK must be at least 1");
     }
-    let job_memory_reset_after: usize = std::env::var("JOB_MEMORY_RESET_AFTER")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(10);
-    let result_memory_reset_after: usize = std::env::var("RESULT_MEMORY_RESET_AFTER")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5);
+    let job_memory_reset_after: usize = env_or("JOB_MEMORY_RESET_AFTER", 10);
+    let result_memory_reset_after: usize = env_or("RESULT_MEMORY_RESET_AFTER", 5);
     if reserved_cm_slot_num > max_jobs {
         tracing::warn!(
             reserved = reserved_cm_slot_num,
@@ -346,7 +299,6 @@ async fn main() -> anyhow::Result<()> {
                     let mut board_guard = runtime.board.lock().await;
                     if let Err(e) = storage::reconcile_resumed_board(
                         &mut *board_guard,
-                        job_timeout_tick,
                         &runtime.generation_queue,
                     ) {
                         tracing::warn!(err = %e, "failed to reconcile board on resume");
@@ -430,25 +382,37 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("failed to build Discord client: {e}"))?;
 
     tracing::info!("bot connected, listening for slash commands");
+    let save_memory = || {
+        chuds::game::persistence::llm_memory::save_all_llm_memory(
+            &shutdown_quest,
+            &shutdown_item,
+            &shutdown_gravestone,
+            &shutdown_merchant,
+        )
+    };
     tokio::select! {
         res = client.start() => {
-            chuds::game::persistence::llm_memory::save_all_llm_memory(
-                &shutdown_quest,
-                &shutdown_item,
-                &shutdown_gravestone,
-                &shutdown_merchant,
-            )?;
+            save_memory()?;
             res.map_err(|e| anyhow::anyhow!("Discord client error: {e}"))
         }
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("shutdown signal received, saving LLM memory");
-            chuds::game::persistence::llm_memory::save_all_llm_memory(
-                &shutdown_quest,
-                &shutdown_item,
-                &shutdown_gravestone,
-                &shutdown_merchant,
-            )?;
+            save_memory()?;
             Ok(())
         }
     }
+}
+
+fn require_env(name: &str) -> anyhow::Result<String> {
+    std::env::var(name).map_err(|_| anyhow::anyhow!("{name} not set"))
+}
+
+fn env_parse<T: std::str::FromStr>(name: &str, hint: &str) -> anyhow::Result<T> {
+    require_env(name)?
+        .parse()
+        .map_err(|_| anyhow::anyhow!("{name} must be {hint}"))
+}
+
+fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
+    std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }

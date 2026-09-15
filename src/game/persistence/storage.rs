@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use anyhow::Context;
+use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::{Mutex, MutexGuard};
 
 use crate::game::domain::board::Board;
@@ -39,13 +40,38 @@ pub async fn message_cache_lock() -> MutexGuard<'static, ()> {
     MESSAGE_CACHE_LOCK.lock().await
 }
 
+fn save_yaml<T: Serialize>(path: &str, value: &T, name: &str) -> anyhow::Result<()> {
+    if let Some(parent) = Path::new(path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let yaml = serde_yaml::to_string(value).with_context(|| format!("serializing {name}"))?;
+    std::fs::write(path, yaml).with_context(|| format!("writing {name}"))
+}
+
+fn load_yaml<T: DeserializeOwned>(path: &str, name: &str) -> anyhow::Result<T> {
+    let yaml = std::fs::read_to_string(path).with_context(|| format!("reading {name}"))?;
+    serde_yaml::from_str(&yaml).with_context(|| format!("parsing {name}"))
+}
+
+fn load_yaml_or_else<T: DeserializeOwned>(
+    path: &str,
+    name: &str,
+    default: impl FnOnce() -> T,
+) -> anyhow::Result<T> {
+    if !Path::new(path).exists() {
+        return Ok(default());
+    }
+    load_yaml(path, name)
+}
+
+fn load_yaml_or_default<T: DeserializeOwned + Default>(path: &str, name: &str) -> anyhow::Result<T> {
+    load_yaml_or_else(path, name, T::default)
+}
+
 /// Persist a player to `data/players/<discord_user_id>.yaml`.
 pub fn save_player(player: &Player) -> anyhow::Result<()> {
-    std::fs::create_dir_all(PLAYERS_DIR)?;
     let path = format!("{}/{}.yaml", PLAYERS_DIR, player.discord_user_id);
-    let yaml = serde_yaml::to_string(player).context("serializing player")?;
-    std::fs::write(&path, yaml)
-        .with_context(|| format!("writing player {}", player.discord_user_id))
+    save_yaml(&path, player, &format!("player {}", player.discord_user_id))
 }
 
 /// Load a player by Discord user ID, or `None` if they don't exist yet.
@@ -54,27 +80,17 @@ pub fn load_player(discord_user_id: u64) -> anyhow::Result<Option<Player>> {
     if !Path::new(&path).exists() {
         return Ok(None);
     }
-    let yaml = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading player {}", discord_user_id))?;
-    let player = serde_yaml::from_str(&yaml)
-        .with_context(|| format!("parsing player {}", discord_user_id))?;
-    Ok(Some(player))
+    load_yaml(&path, &format!("player {discord_user_id}")).map(Some)
 }
 
 /// Persist the quest board to `data/board.yaml`.
 pub fn save_board(board: &Board) -> anyhow::Result<()> {
-    std::fs::create_dir_all("data")?;
-    let yaml = serde_yaml::to_string(board).context("serializing board")?;
-    std::fs::write(BOARD_PATH, yaml).context("writing board")
+    save_yaml(BOARD_PATH, board, "board")
 }
 
 /// Load the quest board, returning an empty board if no file exists yet.
 pub fn load_board() -> anyhow::Result<Board> {
-    if !Path::new(BOARD_PATH).exists() {
-        return Ok(fresh_board());
-    }
-    let yaml = std::fs::read_to_string(BOARD_PATH).context("reading board")?;
-    serde_yaml::from_str(&yaml).context("parsing board")
+    load_yaml_or_else(BOARD_PATH, "board", fresh_board)
 }
 
 /// New board with story catalog length initialized from the current catalog.
@@ -104,10 +120,8 @@ pub fn resume_story_state(board: &mut Board, session: &mut GameSession) -> anyho
 /// Missing quest results are re-enqueued for generation. Add future resume-time fixes here.
 pub fn reconcile_resumed_board(
     board: &mut Board,
-    job_timeout_tick: u32,
     generation_queue: &tokio::sync::mpsc::UnboundedSender<crate::game::engine::GenerationJob>,
 ) -> anyhow::Result<()> {
-    board.backfill_job_timeouts(job_timeout_tick);
     let enqueued = crate::game::engine::enqueue_missing_active_quest_results(board, generation_queue)?;
     if enqueued > 0 {
         tracing::info!(enqueued, "re-enqueued quest results on resume");
@@ -149,66 +163,75 @@ pub fn reconcile_session_story(
 
 /// Persist the hospital to `data/hospital.yaml`.
 pub fn save_hospital(hospital: &Hospital) -> anyhow::Result<()> {
-    std::fs::create_dir_all("data")?;
-    let yaml = serde_yaml::to_string(hospital).context("serializing hospital")?;
-    std::fs::write(HOSPITAL_PATH, yaml).context("writing hospital")
+    save_yaml(HOSPITAL_PATH, hospital, "hospital")
 }
 
 /// Load the hospital from disk, or return empty if no file exists.
 pub fn load_hospital() -> anyhow::Result<Hospital> {
-    if !Path::new(HOSPITAL_PATH).exists() {
-        return Ok(Hospital::default());
-    }
-    let yaml = std::fs::read_to_string(HOSPITAL_PATH).context("reading hospital")?;
-    serde_yaml::from_str(&yaml).context("parsing hospital")
+    load_yaml_or_default(HOSPITAL_PATH, "hospital")
 }
 
 /// Persist the graveyard to `data/graveyard.yaml`.
 pub fn save_graveyard(graveyard: &Graveyard) -> anyhow::Result<()> {
-    std::fs::create_dir_all("data")?;
-    let yaml = serde_yaml::to_string(graveyard).context("serializing graveyard")?;
-    std::fs::write(GRAVEYARD_PATH, yaml).context("writing graveyard")
+    save_yaml(GRAVEYARD_PATH, graveyard, "graveyard")
 }
 
 /// Load the graveyard from disk, or return empty if no file exists.
 pub fn load_graveyard() -> anyhow::Result<Graveyard> {
-    if !Path::new(GRAVEYARD_PATH).exists() {
-        return Ok(Graveyard::default());
-    }
-    let yaml = std::fs::read_to_string(GRAVEYARD_PATH).context("reading graveyard")?;
-    serde_yaml::from_str(&yaml).context("parsing graveyard")
+    load_yaml_or_default(GRAVEYARD_PATH, "graveyard")
 }
 
 /// Persist starting benefits to `data/starting_benefits.yaml`.
 pub fn save_starting_benefits(benefits: &StartingBenefits) -> anyhow::Result<()> {
-    std::fs::create_dir_all("data")?;
-    let yaml = serde_yaml::to_string(benefits).context("serializing starting benefits")?;
-    std::fs::write(STARTING_BENEFITS_PATH, yaml).context("writing starting benefits")
+    save_yaml(STARTING_BENEFITS_PATH, benefits, "starting benefits")
 }
 
 /// Load starting benefits from disk, or return empty if no file exists.
 pub fn load_starting_benefits() -> anyhow::Result<StartingBenefits> {
-    if !Path::new(STARTING_BENEFITS_PATH).exists() {
-        return Ok(StartingBenefits::default());
-    }
-    let yaml = std::fs::read_to_string(STARTING_BENEFITS_PATH).context("reading starting benefits")?;
-    serde_yaml::from_str(&yaml).context("parsing starting benefits")
+    load_yaml_or_default(STARTING_BENEFITS_PATH, "starting benefits")
 }
 
 /// Persist the job queue to `data/job_queue.yaml`.
 pub fn save_job_queue(queue: &JobQueue) -> anyhow::Result<()> {
-    std::fs::create_dir_all("data")?;
-    let yaml = serde_yaml::to_string(queue).context("serializing job queue")?;
-    std::fs::write(JOB_QUEUE_PATH, yaml).context("writing job queue")
+    save_yaml(JOB_QUEUE_PATH, queue, "job queue")
 }
 
 /// Load the job queue, returning empty if no file exists yet.
 pub fn load_job_queue() -> anyhow::Result<JobQueue> {
-    if !Path::new(JOB_QUEUE_PATH).exists() {
-        return Ok(JobQueue::default());
+    load_yaml_or_default(JOB_QUEUE_PATH, "job queue")
+}
+
+/// Load every saved player that currently has a chud. Missing files and parse
+/// errors are skipped (with a warning) so a single bad save cannot blank the roster.
+pub fn load_chuds() -> Vec<Player> {
+    let ids = match list_player_ids() {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!(err = %e, "failed to list players");
+            return Vec::new();
+        }
+    };
+    ids.into_iter()
+        .filter_map(|id| match load_player(id) {
+            Ok(Some(p)) if p.has_chud() => Some(p),
+            Ok(_) => None,
+            Err(e) => {
+                tracing::warn!(discord_user_id = id, err = %e, "failed to load player");
+                None
+            }
+        })
+        .collect()
+}
+
+/// Load every saved player that currently has a chud, failing on IO/parse errors.
+pub fn try_load_chuds() -> anyhow::Result<Vec<Player>> {
+    let mut players = Vec::new();
+    for id in list_player_ids()? {
+        if let Some(player) = load_player(id)?.filter(|p| p.has_chud()) {
+            players.push(player);
+        }
     }
-    let yaml = std::fs::read_to_string(JOB_QUEUE_PATH).context("reading job queue")?;
-    serde_yaml::from_str(&yaml).context("parsing job queue")
+    Ok(players)
 }
 
 /// Load the player whose chud name matches `name` (case-insensitive), if any.
@@ -217,16 +240,9 @@ pub fn find_player_by_name(name: &str) -> anyhow::Result<Option<Player>> {
     if needle.is_empty() {
         return Ok(None);
     }
-    for &id in &list_player_ids()? {
-        if let Some(player) = load_player(id)? {
-            if player.has_chud()
-                && player.chud_ref().name.eq_ignore_ascii_case(needle)
-            {
-                return Ok(Some(player));
-            }
-        }
-    }
-    Ok(None)
+    Ok(try_load_chuds()?
+        .into_iter()
+        .find(|player| player.chud_ref().name.eq_ignore_ascii_case(needle)))
 }
 
 /// Return the Discord user IDs of all players that have a save file.
@@ -262,47 +278,27 @@ pub fn delete_player(discord_user_id: u64) -> anyhow::Result<()> {
 
 /// Persist the message cache to `data/message_cache.yaml`.
 pub fn save_message_cache(cache: &MessageCache) -> anyhow::Result<()> {
-    std::fs::create_dir_all("data")?;
-    let yaml = serde_yaml::to_string(cache).context("serializing message cache")?;
-    std::fs::write(MESSAGE_CACHE_PATH, yaml).context("writing message cache")
+    save_yaml(MESSAGE_CACHE_PATH, cache, "message cache")
 }
 
 /// Load the message cache, returning an empty cache if no file exists yet.
 pub fn load_message_cache() -> anyhow::Result<MessageCache> {
-    if !Path::new(MESSAGE_CACHE_PATH).exists() {
-        return Ok(MessageCache::default());
-    }
-    let yaml = std::fs::read_to_string(MESSAGE_CACHE_PATH).context("reading message cache")?;
-    serde_yaml::from_str(&yaml).context("parsing message cache")
+    load_yaml_or_default(MESSAGE_CACHE_PATH, "message cache")
 }
 
 /// Persist the chudmasters list to `data/chudmasters.yaml`.
 pub fn save_chudmasters(chudmasters: &Chudmasters) -> anyhow::Result<()> {
-    std::fs::create_dir_all("data")?;
-    let yaml = serde_yaml::to_string(chudmasters).context("serializing chudmasters")?;
-    std::fs::write(CHUDMASTERS_PATH, yaml).context("writing chudmasters")
+    save_yaml(CHUDMASTERS_PATH, chudmasters, "chudmasters")
 }
 
 /// Load the chudmasters list, returning an empty list if no file exists yet.
 pub fn load_chudmasters() -> anyhow::Result<Chudmasters> {
-    if !Path::new(CHUDMASTERS_PATH).exists() {
-        return Ok(Chudmasters::default());
-    }
-    let yaml = std::fs::read_to_string(CHUDMASTERS_PATH).context("reading chudmasters")?;
-    serde_yaml::from_str(&yaml).context("parsing chudmasters")
+    load_yaml_or_default(CHUDMASTERS_PATH, "chudmasters")
 }
 
 /// Load the item registry, returning empty if no file exists yet.
 pub fn load_item_registry() -> anyhow::Result<ItemRegistry> {
-    if !Path::new(ITEM_REGISTRY_PATH).exists() {
-        return Ok(ItemRegistry::default());
-    }
-    let yaml = std::fs::read_to_string(ITEM_REGISTRY_PATH).context("reading item registry")?;
-    let mut registry: ItemRegistry = serde_yaml::from_str(&yaml).context("parsing item registry")?;
-    if registry.backfill_missing_values() {
-        save_item_registry(&registry)?;
-    }
-    Ok(registry)
+    load_yaml_or_default(ITEM_REGISTRY_PATH, "item registry")
 }
 
 /// Load merchant visit state and attach the roster from `data/merchants.yaml`.
@@ -379,25 +375,17 @@ pub fn save_guild_hall(merchant: &MerchantState) -> anyhow::Result<()> {
 
 /// Persist guild-hall state to `data/guild_hall.yaml`.
 pub fn save_guild_hall_full(hall: &GuildHall) -> anyhow::Result<()> {
-    std::fs::create_dir_all("data")?;
-    let yaml = serde_yaml::to_string(hall).context("serializing guild hall")?;
-    std::fs::write(GUILD_HALL_PATH, yaml).context("writing guild hall")
+    save_yaml(GUILD_HALL_PATH, hall, "guild hall")
 }
 
 /// Load guild-hall state from disk, or return empty if no file exists.
 pub fn load_guild_hall() -> anyhow::Result<GuildHall> {
-    if !Path::new(GUILD_HALL_PATH).exists() {
-        return Ok(GuildHall::default());
-    }
-    let yaml = std::fs::read_to_string(GUILD_HALL_PATH).context("reading guild hall")?;
-    serde_yaml::from_str(&yaml).context("parsing guild hall")
+    load_yaml_or_default(GUILD_HALL_PATH, "guild hall")
 }
 
 /// Persist the item registry to `data/item_registry.yaml`.
 pub fn save_item_registry(registry: &ItemRegistry) -> anyhow::Result<()> {
-    std::fs::create_dir_all("data")?;
-    let yaml = serde_yaml::to_string(registry).context("serializing item registry")?;
-    std::fs::write(ITEM_REGISTRY_PATH, yaml).context("writing item registry")
+    save_yaml(ITEM_REGISTRY_PATH, registry, "item registry")
 }
 
 /// Reset all per-game state to a fresh game: deletes every player and resets the board,
@@ -428,36 +416,22 @@ pub fn reset_game_data() -> anyhow::Result<()> {
 
 /// Persist the game-flow session to `data/session.yaml`.
 pub fn save_session(session: &GameSession) -> anyhow::Result<()> {
-    std::fs::create_dir_all("data")?;
-    let yaml = serde_yaml::to_string(session).context("serializing session")?;
-    std::fs::write(SESSION_PATH, yaml).context("writing session")
+    save_yaml(SESSION_PATH, session, "session")
 }
 
 /// Load the game-flow session, defaulting to `Playing` if no file exists yet.
 pub fn load_session() -> anyhow::Result<GameSession> {
-    if !Path::new(SESSION_PATH).exists() {
-        return Ok(GameSession::default());
-    }
-    let yaml = std::fs::read_to_string(SESSION_PATH).context("reading session")?;
-    serde_yaml::from_str(&yaml).context("parsing session")
+    load_yaml_or_default(SESSION_PATH, "session")
 }
 
 /// Persist episode stats to `data/episode_stats.yaml`.
 pub fn save_episode_stats(stats: &EpisodeStats) -> anyhow::Result<()> {
-    std::fs::create_dir_all("data")?;
-    let yaml = serde_yaml::to_string(stats).context("serializing episode stats")?;
-    std::fs::write(EPISODE_STATS_PATH, yaml).context("writing episode stats")
+    save_yaml(EPISODE_STATS_PATH, stats, "episode stats")
 }
 
 /// Load episode stats, returning defaults if no file exists yet.
 pub fn load_episode_stats() -> anyhow::Result<EpisodeStats> {
-    if !Path::new(EPISODE_STATS_PATH).exists() {
-        return Ok(EpisodeStats::default());
-    }
-    let yaml = std::fs::read_to_string(EPISODE_STATS_PATH).context("reading episode stats")?;
-    let mut stats: EpisodeStats = serde_yaml::from_str(&yaml).context("parsing episode stats")?;
-    stats.normalize();
-    Ok(stats)
+    load_yaml_or_default(EPISODE_STATS_PATH, "episode stats")
 }
 
 /// Return `true` if the given Discord user ID is a Chudmaster.

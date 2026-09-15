@@ -1,20 +1,11 @@
 use poise::serenity_prelude as serenity;
 
-use crate::discord::components_v2::{
-    components_v2_flags, Component, ComponentsV2Message, Separator, TextDisplay,
-};
+use crate::discord::components_v2::{Component, ComponentsV2Message, Separator, TextDisplay};
 use crate::discord::context::{Context, Error};
 use crate::discord::edit_ephemeral_message;
+use crate::discord::formatting::subtext_lines;
 use crate::discord::send_ephemeral_followup;
-use crate::game::domain::player::Player;
 use crate::game::persistence::storage;
-
-fn subtext_lines(text: &str) -> String {
-    text.lines()
-        .map(|line| format!("-# {line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
 
 async fn guild_member_nickname(http: &serenity::Http, guild_id: u64, user_id: u64) -> String {
     match http
@@ -35,13 +26,6 @@ async fn guild_member_nickname(http: &serenity::Http, guild_id: u64, user_id: u6
     }
 }
 
-fn ephemeral_cv2(components: Vec<Component>) -> ComponentsV2Message {
-    ComponentsV2Message {
-        flags: components_v2_flags(),
-        components,
-    }
-}
-
 fn format_chud_entry(chud_name: &str, nickname: &str, description: &str) -> String {
     format!(
         "**{chud_name}**, {nickname}'s chud\n{}",
@@ -52,29 +36,7 @@ fn format_chud_entry(chud_name: &str, nickname: &str, description: &str) -> Stri
 async fn build_all_chuds_messages(http: &serenity::Http, guild_id: u64) -> Vec<ComponentsV2Message> {
     const MAX_COMPONENTS: usize = 40;
 
-    let ids = match storage::list_player_ids() {
-        Ok(ids) => ids,
-        Err(e) => {
-            tracing::warn!(err = %e, "failed to list players for all_chuds");
-            return Vec::new();
-        }
-    };
-    if ids.is_empty() {
-        return Vec::new();
-    }
-
-    let mut players: Vec<Player> = ids
-        .iter()
-        .filter_map(|&id| match storage::load_player(id) {
-            Ok(Some(p)) if p.has_chud() => Some(p),
-            Ok(Some(_)) | Ok(None) => None,
-            Err(e) => {
-                tracing::warn!(discord_user_id = id, err = %e, "failed to load player for all_chuds");
-                None
-            }
-        })
-        .collect();
-
+    let mut players = storage::load_chuds();
     if players.is_empty() {
         return Vec::new();
     }
@@ -96,7 +58,7 @@ async fn build_all_chuds_messages(http: &serenity::Http, guild_id: u64) -> Vec<C
 
         if i > 0 {
             if components.len() + 2 > MAX_COMPONENTS {
-                messages.push(ephemeral_cv2(std::mem::take(&mut components)));
+                messages.push(ComponentsV2Message::ephemeral(std::mem::take(&mut components)));
             }
             if !components.is_empty() {
                 components.push(Component::Separator(Separator::section()));
@@ -104,14 +66,14 @@ async fn build_all_chuds_messages(http: &serenity::Http, guild_id: u64) -> Vec<C
         }
 
         if components.len() + 1 > MAX_COMPONENTS {
-            messages.push(ephemeral_cv2(std::mem::take(&mut components)));
+            messages.push(ComponentsV2Message::ephemeral(std::mem::take(&mut components)));
         }
 
         components.push(Component::Text(TextDisplay::new(entry)));
     }
 
     if !components.is_empty() {
-        messages.push(ephemeral_cv2(components));
+        messages.push(ComponentsV2Message::ephemeral(components));
     }
 
     messages
@@ -129,10 +91,9 @@ pub async fn all_chuds(ctx: Context<'_>) -> Result<(), Error> {
     let runtime = &ctx.data().runtime;
     let messages = build_all_chuds_messages(&runtime.http, runtime.guild_id).await;
     if messages.is_empty() {
-        let msg = ComponentsV2Message {
-            flags: components_v2_flags(),
-            components: vec![Component::Text(TextDisplay::new("*No chuds yet.*"))],
-        };
+        let msg = ComponentsV2Message::ephemeral(vec![Component::Text(TextDisplay::new(
+            "*No chuds yet.*",
+        ))]);
         edit_ephemeral_message(&http, &token, &msg).await?;
         return Ok(());
     }

@@ -8,6 +8,7 @@ use crate::discord::components_v2::{
     ActionRow, Button, Component, Container, ContainerChild, ComponentsV2Message, Separator,
     TextDisplay,
 };
+use crate::discord::formatting::subtext_lines;
 use crate::game::guild_status::{self, GuildHallStatus};
 
 /// Accent colors for job-slot containers (RGB integers).
@@ -28,13 +29,6 @@ use crate::game::persistence::storage;
 /// Serialize Discord board renders so overlapping tick/worker/button updates cannot
 /// both post new slot messages or clobber cache state.
 static BOARD_RENDER_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-fn subtext_lines(text: &str) -> String {
-    text.lines()
-        .map(|line| format!("-# {line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
 
 fn format_job_slot(quest: Option<&BoardQuest>) -> String {
     match quest {
@@ -317,29 +311,7 @@ async fn sync_job_slot(
 }
 
 pub async fn format_chudlerboard(http: &serenity::Http) -> String {
-    let ids = match storage::list_player_ids() {
-        Ok(ids) => ids,
-        Err(e) => {
-            tracing::warn!(err = %e, "failed to list players for chudlerboard");
-            return String::new();
-        }
-    };
-    if ids.is_empty() {
-        return String::new();
-    }
-
-    let players: Vec<Player> = ids
-        .iter()
-        .filter_map(|&id| match storage::load_player(id) {
-            Ok(Some(p)) if p.has_chud() => Some(p),
-            Ok(Some(_)) | Ok(None) => None,
-            Err(e) => {
-                tracing::warn!(discord_user_id = id, err = %e, "failed to load player for chudlerboard");
-                None
-            }
-        })
-        .collect();
-
+    let players = storage::load_chuds();
     if players.is_empty() {
         return String::new();
     }

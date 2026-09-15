@@ -79,6 +79,25 @@ pub fn yaml_correction(kind: &str, error: &str, raw_preview: &str) -> String {
     )
 }
 
+const YAML_PARSE_RETRIES: u32 = 5;
+
+fn yaml_retry(retries: &mut u32, raw: &str, kind: &str, error: &str) -> Option<String> {
+    if *retries >= YAML_PARSE_RETRIES {
+        return None;
+    }
+    *retries += 1;
+    let preview = truncate_for_log(raw, 500);
+    tracing::warn!(
+        kind,
+        error,
+        retries = *retries,
+        YAML_PARSE_RETRIES,
+        "retrying LLM YAML"
+    );
+    tracing::debug!(raw_preview = %preview, "LLM response that failed YAML parse");
+    Some(yaml_correction(kind, error, &preview))
+}
+
 fn parse_retry_delay(msg: &str) -> Option<u64> {
     let json_str = &msg[msg.find("with message: ")? + "with message: ".len()..];
     let body: serde_json::Value = serde_json::from_str(json_str).ok()?;
@@ -177,7 +196,6 @@ pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
     expected_trials: Option<usize>,
     conversation_id: &str,
 ) -> anyhow::Result<T> {
-    const MAX_RETRIES: u32 = 5;
     let mut retries = 0u32;
     let mut correction = String::new();
     loop {
@@ -191,24 +209,13 @@ pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
         let parsed = serde_yaml::from_str::<serde_yaml::Value>(&raw);
         match parsed {
             Err(e) => {
-                if retries < MAX_RETRIES {
-                    retries += 1;
-                    let preview = truncate_for_log(&raw, 500);
-                    tracing::warn!(
-                        error = %e,
-                        retries,
-                        MAX_RETRIES,
-                        "malformed YAML from LLM, retrying"
-                    );
-                    tracing::debug!(raw_preview = %preview, "LLM response that failed YAML parse");
-                    correction = yaml_correction("malformed YAML", &e.to_string(), &preview);
-                    continue;
-                }
-                return Err(anyhow::anyhow!(
-                    "LLM returned malformed YAML after {} retries: {}",
-                    MAX_RETRIES,
-                    e
-                ));
+                correction = yaml_retry(&mut retries, &raw, "malformed YAML", &e.to_string())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "LLM returned malformed YAML after {YAML_PARSE_RETRIES} retries: {e}"
+                        )
+                    })?;
+                continue;
             }
             Ok(mut value) => {
                 normalize_yaml_string_values(&mut value);
@@ -218,31 +225,14 @@ pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
                         .and_then(|t| t.as_sequence())
                         .map(|s| s.len());
                     if actual != Some(expected) {
-                        if retries < MAX_RETRIES {
-                            retries += 1;
-                            let preview = truncate_for_log(&raw, 500);
-                            tracing::warn!(
-                                expected,
-                                actual = ?actual,
-                                retries,
-                                MAX_RETRIES,
-                                "wrong trial count from LLM, retrying"
-                            );
-                            tracing::debug!(
-                                raw_preview = %preview,
-                                "LLM response with wrong trial count"
-                            );
-                            let msg =
-                                format!("expected {expected} trial strings, got {:?}", actual);
-                            correction = yaml_correction("wrong trial count", &msg, &preview);
-                            continue;
-                        }
-                        return Err(anyhow::anyhow!(
-                            "LLM returned wrong trial count after {} retries: expected {}, got {:?}",
-                            MAX_RETRIES,
-                            expected,
-                            actual
-                        ));
+                        let msg = format!("expected {expected} trial strings, got {actual:?}");
+                        correction = yaml_retry(&mut retries, &raw, "wrong trial count", &msg)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "LLM returned wrong trial count after {YAML_PARSE_RETRIES} retries: expected {expected}, got {actual:?}"
+                                )
+                            })?;
+                        continue;
                     }
                 }
                 match serde_yaml::from_value(value) {
@@ -257,28 +247,18 @@ pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
                         return Ok(result);
                     }
                     Err(e) => {
-                        if retries < MAX_RETRIES {
-                            retries += 1;
-                            let preview = truncate_for_log(&raw, 500);
-                            tracing::warn!(
-                                error = %e,
-                                retries,
-                                MAX_RETRIES,
-                                "unexpected YAML structure from LLM, retrying"
-                            );
-                            tracing::debug!(
-                                raw_preview = %preview,
-                                "LLM response with unexpected YAML structure"
-                            );
-                            correction =
-                                yaml_correction("unexpected YAML structure", &e.to_string(), &preview);
-                            continue;
-                        }
-                        return Err(anyhow::anyhow!(
-                            "LLM returned unexpected YAML structure after {} retries: {}",
-                            MAX_RETRIES,
-                            e
-                        ));
+                        correction = yaml_retry(
+                            &mut retries,
+                            &raw,
+                            "unexpected YAML structure",
+                            &e.to_string(),
+                        )
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "LLM returned unexpected YAML structure after {YAML_PARSE_RETRIES} retries: {e}"
+                            )
+                        })?;
+                        continue;
                     }
                 }
             }
