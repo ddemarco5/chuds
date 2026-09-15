@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-casino = "0.3.0"
 chrono = "0.4"
 dotenvy = "0.15"
 poise = "0.7.0"

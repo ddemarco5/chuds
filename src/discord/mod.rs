@@ -21,7 +21,7 @@ pub use buttons::{handle_heal_button, handle_scout_button, handle_take_button};
 pub use ui::{
     build_gear_message, build_gear_open_message, derive_gear_mode, edit_ephemeral_message,
     gear_equipment_locked_notice, handle_gear_button, handle_merchant_shop_button, handle_shop_buy,
-    handle_shop_select, handle_slots_spin, send_ephemeral_followup, update_merchant_message,
+    handle_shop_select, send_ephemeral_followup, update_merchant_message,
     GearInteractionMode,
 };
 pub use channel::{

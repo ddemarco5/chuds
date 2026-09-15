@@ -13,8 +13,6 @@ pub struct EpisodeStats {
     #[serde(default)]
     pub money: MoneyEpisodeStats,
     #[serde(default)]
-    pub gambling: GamblingEpisodeStats,
-    #[serde(default)]
     pub hospital: HospitalEpisodeStats,
 }
 
@@ -83,21 +81,6 @@ pub struct ChudMoneyStats {
     pub earned: u32,
     #[serde(default)]
     pub spent: u32,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct GamblingEpisodeStats {
-    #[serde(default)]
-    pub by_chud: HashMap<u64, ChudGamblingStats>,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct ChudGamblingStats {
-    pub chud_name: String,
-    #[serde(default)]
-    pub gambling_won: u32,
-    #[serde(default)]
-    pub gambling_lost: u32,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -259,33 +242,6 @@ impl EpisodeStats {
         entry.spent = entry.spent.saturating_add(amount);
     }
 
-    pub fn record_gambling_spin(
-        &mut self,
-        discord_user_id: u64,
-        chud_name: &str,
-        pay_in: u32,
-        payout: i64,
-    ) {
-        let net = payout - pay_in as i64;
-        if net == 0 {
-            return;
-        }
-        let entry = self
-            .gambling
-            .by_chud
-            .entry(discord_user_id)
-            .or_insert_with(|| ChudGamblingStats {
-                chud_name: chud_name.to_string(),
-                ..Default::default()
-            });
-        entry.chud_name = chud_name.to_string();
-        if net > 0 {
-            entry.gambling_won = entry.gambling_won.saturating_add(net as u32);
-        } else {
-            entry.gambling_lost = entry.gambling_lost.saturating_add((-net) as u32);
-        }
-    }
-
     pub fn record_hospital_day(&mut self, discord_user_id: u64, chud_name: &str) {
         let entry = self
             .hospital
@@ -424,20 +380,6 @@ impl EpisodeStats {
             ));
         }
 
-        if let Some((amount, names)) = self.chuds_at_top_gambling(|stats| stats.gambling_won) {
-            lines.push(format!(
-                "{} was the best gambler, they won ${amount}",
-                format_chud_names(&names)
-            ));
-        }
-
-        if let Some((amount, names)) = self.chuds_at_top_gambling(|stats| stats.gambling_lost) {
-            lines.push(format!(
-                "{} was the worst gambler, they lost ${amount}",
-                format_chud_names(&names)
-            ));
-        }
-
         if let Some((days, names)) = self.chuds_at_top_hospital(|stats| stats.hospital_days) {
             lines.push(format!(
                 "{} spent the most time in the hospital; {days} days",
@@ -462,33 +404,6 @@ impl EpisodeStats {
 
         let names: Vec<&str> = self
             .money
-            .by_chud
-            .values()
-            .filter(|stats| amount_for(stats) == max)
-            .map(|stats| stats.chud_name.as_str())
-            .collect();
-
-        if names.is_empty() {
-            return None;
-        }
-
-        Some((max, names))
-    }
-
-    fn chuds_at_top_gambling(
-        &self,
-        amount_for: impl Fn(&ChudGamblingStats) -> u32,
-    ) -> Option<(u32, Vec<&str>)> {
-        let max = self
-            .gambling
-            .by_chud
-            .values()
-            .map(&amount_for)
-            .max()
-            .filter(|&amount| amount > 0)?;
-
-        let names: Vec<&str> = self
-            .gambling
             .by_chud
             .values()
             .filter(|stats| amount_for(stats) == max)

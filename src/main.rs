@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use chuds::discord::{
     self, game_screens, handle_gear_button, handle_heal_button, handle_merchant_shop_button,
-    handle_scout_button, handle_shop_buy, handle_shop_select, handle_slots_spin,
+    handle_scout_button, handle_shop_buy, handle_shop_select,
     handle_take_button, update_board_message, ActivityLogSync, Data, GameCompletion, GameRuntime,
     SimulationController,
 };
@@ -167,7 +167,6 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::stats(),
                 discord::commands::inspect(),
                 discord::commands::gear(),
-                discord::commands::slots(),
                 discord::commands::job(),
                 discord::commands::save(),
                 discord::commands::load(),
@@ -177,7 +176,6 @@ async fn main() -> anyhow::Result<()> {
                 discord::commands::admin_redraw(),
                 discord::commands::admin_kill_chud(),
                 discord::commands::admin_spawn_merchant(),
-                discord::commands::admin_slots(),
                 discord::commands::admin_attract(),
                 discord::commands::admin_game(),
                 discord::commands::admin_complete(),
@@ -210,10 +208,6 @@ async fn main() -> anyhow::Result<()> {
                                 Some(handle_shop_select(ctx, component, data).await)
                             } else if id.starts_with("shop_buy:") {
                                 Some(handle_shop_buy(ctx, component, data).await)
-                            } else if id.starts_with("slots:spin:")
-                                || id.starts_with("admin_slots:spin:")
-                            {
-                                Some(handle_slots_spin(ctx, component, data).await)
                             } else {
                                 None
                             };

@@ -28,20 +28,6 @@ chud_buys_item:
   - "**{}** traded **{}** for ${} like it was a steal."
   - "**{}** walked away with **{}** lighter by ${}."
 
-chud_wins_slots:
-  - "**{}** hit the slots for ${}."
-  - "**{}** walked away from the slots up ${}."
-  - "**{}** pulled ${} off the one-armed bandit."
-  - "**{}** got lucky at the slots for ${}."
-  - "**{}** rang the slots for ${}."
-
-chud_jackpot_slots:
-  - "**{}** hit a **mini-jackpot** on the slots for ${}!"
-  - "**{}** lined up five in a row for ${}!"
-  - "The slots erupted — **{}** took home ${}!"
-  - "**{}** just ripped a ${} mini-jackpot off the bandit."
-  - "Five across for **{}**. ${}. Unreal."
-
 chud_sells_item:
   - "**{}** sold **{}** for ${}."
   - "**{}** pawned **{}** for ${}."

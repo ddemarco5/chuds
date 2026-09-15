@@ -1,6 +1,5 @@
 pub mod gear;
 pub mod merchant;
-pub mod casino;
 
 use poise::serenity_prelude::{ComponentInteraction, Http};
 
@@ -76,8 +75,4 @@ pub use gear::{
 };
 pub use merchant::{
     handle_merchant_shop_button, handle_shop_buy, handle_shop_select, update_merchant_message,
-};
-pub use casino::{
-    build_player_slots_open_message, build_slots_message, handle_slots_spin, validate_pay_in,
-    ADMIN_SPIN_PREFIX, PLAYER_SPIN_PREFIX,
 };
