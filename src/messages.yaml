@@ -31,7 +31,7 @@ chud_buys_item:
 chud_sells_item:
   - "**{}** sold **{}** for ${}."
   - "**{}** pawned **{}** for ${}."
-  - "**{}** dumped **{}** for ${}."
+  - "**{}** hocced **{}** for ${}."
   - "**{}** traded **{}** in for ${}."
   - "**{}** cashed out **{}** for ${}."
 

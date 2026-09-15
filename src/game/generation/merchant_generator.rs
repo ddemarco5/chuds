@@ -1,11 +1,11 @@
 use std::time::Instant;
 
-use rig::memory::ConversationMemory;
-use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
 
 use crate::game::domain::item::ItemSeed;
-use crate::game::generation::generators::{build_agent, prompt_parse_retry, OpenRouterAgent};
+use crate::game::generation::generators::{
+    build_agent, build_client, prompt_parse_retry, OpenRouterAgent,
+};
 use crate::game::generation::memory::{make_memory_from_store, GameConversationMemory};
 use crate::game::merchant::{MerchantCatalog, MerchantDefinition, MERCHANT_ROSTER_SIZE};
 use crate::game::persistence::item_registry::ItemRegistry;
@@ -98,7 +98,7 @@ pub struct MerchantGenerator {
 
 impl MerchantGenerator {
     pub fn new(api_key: &str, memory: &LlmMemoryBundle) -> anyhow::Result<Self> {
-        let client = openrouter::Client::new(api_key)?;
+        let client = build_client(api_key)?;
         Ok(Self {
             profile_agent: build_agent(&client, MERCHANT_PROFILE_SYSTEM_CONTEXT),
             stock_agent: build_agent(&client, MERCHANT_STOCK_SYSTEM_CONTEXT),
@@ -158,12 +158,11 @@ impl MerchantGenerator {
         );
         tracing::info!(merchant = %merchant_name, items = expected, "generating merchant stock");
         let started = Instant::now();
-        let response = prompt_parse_retry_with_list_count::<MerchantStockResponse>(
+        let response = prompt_parse_retry::<MerchantStockResponse>(
             &self.stock_agent,
             &self.memory,
             &prompt,
-            "items",
-            expected,
+            Some(("items", expected)),
             &format!("merchant_stock_{}", merchant_name.replace(' ', "_")),
         )
         .await?;
@@ -207,115 +206,5 @@ impl MerchantGenerator {
         }
 
         Ok(MerchantCatalog { merchants })
-    }
-}
-
-/// Like `prompt_parse_retry` but validates a named YAML list has the expected length.
-pub async fn prompt_parse_retry_with_list_count<T: serde::de::DeserializeOwned>(
-    agent: &OpenRouterAgent,
-    memory: &GameConversationMemory,
-    prompt: &str,
-    list_key: &str,
-    expected_count: usize,
-    conversation_id: &str,
-) -> anyhow::Result<T> {
-    use rig::completion::message::Message;
-
-    use crate::game::generation::generators::{
-        normalize_yaml_string_values, prompt_with_retry, truncate_for_log, yaml_correction,
-    };
-
-    const MAX_RETRIES: u32 = 5;
-    let mut retries = 0u32;
-    let mut correction = String::new();
-    loop {
-        let history = memory.load(conversation_id).await.unwrap_or_default();
-        let effective_prompt = if correction.is_empty() {
-            prompt.to_string()
-        } else {
-            format!("{prompt}\n\n{correction}")
-        };
-        let raw = prompt_with_retry(agent, &effective_prompt, &history, conversation_id).await?;
-        let parsed = serde_yaml::from_str::<serde_yaml::Value>(&raw);
-        match parsed {
-            Err(e) => {
-                if retries < MAX_RETRIES {
-                    retries += 1;
-                    let preview = truncate_for_log(&raw, 500);
-                    tracing::warn!(
-                        conversation_id,
-                        error = %e,
-                        retries,
-                        MAX_RETRIES,
-                        "malformed YAML from LLM, retrying"
-                    );
-                    correction = yaml_correction("malformed YAML", &e.to_string(), &preview);
-                    continue;
-                }
-                return Err(anyhow::anyhow!(
-                    "LLM returned malformed YAML after {} retries: {}",
-                    MAX_RETRIES,
-                    e
-                ));
-            }
-            Ok(mut value) => {
-                normalize_yaml_string_values(&mut value);
-                let actual = value
-                    .get(list_key)
-                    .and_then(|t| t.as_sequence())
-                    .map(|s| s.len());
-                if actual != Some(expected_count) {
-                    if retries < MAX_RETRIES {
-                        retries += 1;
-                        let preview = truncate_for_log(&raw, 500);
-                        tracing::warn!(
-                            conversation_id,
-                            expected_count,
-                            actual = ?actual,
-                            list_key,
-                            retries,
-                            MAX_RETRIES,
-                            "wrong list count from LLM, retrying"
-                        );
-                        let msg =
-                            format!("expected {expected_count} {list_key} entries, got {:?}", actual);
-                        correction = yaml_correction("wrong list count", &msg, &preview);
-                        continue;
-                    }
-                    return Err(anyhow::anyhow!(
-                        "LLM returned wrong {list_key} count after {} retries: expected {}, got {:?}",
-                        MAX_RETRIES,
-                        expected_count,
-                        actual
-                    ));
-                }
-                match serde_yaml::from_value(value) {
-                    Ok(result) => {
-                        let _ = memory
-                            .append(
-                                conversation_id,
-                                vec![Message::user(prompt), Message::assistant(&raw)],
-                            )
-                            .await;
-                        tracing::debug!(conversation_id, "committed to memory");
-                        return Ok(result);
-                    }
-                    Err(e) => {
-                        if retries < MAX_RETRIES {
-                            retries += 1;
-                            let preview = truncate_for_log(&raw, 500);
-                            correction =
-                                yaml_correction("unexpected YAML structure", &e.to_string(), &preview);
-                            continue;
-                        }
-                        return Err(anyhow::anyhow!(
-                            "LLM returned unexpected YAML structure after {} retries: {}",
-                            MAX_RETRIES,
-                            e
-                        ));
-                    }
-                }
-            }
-        }
     }
 }

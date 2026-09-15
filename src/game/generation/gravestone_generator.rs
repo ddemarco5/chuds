@@ -1,8 +1,9 @@
-use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
 
 use crate::game::domain::player::Chud;
-use crate::game::generation::generators::{build_agent, prompt_parse_retry, OpenRouterAgent};
+use crate::game::generation::generators::{
+    build_agent, build_client, prompt_parse_retry, OpenRouterAgent,
+};
 use crate::game::generation::memory::{make_memory_from_store, GameConversationMemory};
 use crate::game::persistence::llm_memory::LlmMemoryBundle;
 
@@ -43,7 +44,7 @@ pub struct GravestoneGenerator {
 
 impl GravestoneGenerator {
     pub fn new(api_key: &str, memory: &LlmMemoryBundle) -> anyhow::Result<Self> {
-        let client = openrouter::Client::new(api_key)?;
+        let client = build_client(api_key)?;
         Ok(Self {
             agent: build_agent(&client, GRAVESTONE_SYSTEM_CONTEXT),
             memory: make_memory_from_store(memory.gravestone.clone()),

@@ -3,6 +3,7 @@ use std::time::Instant;
 use rig::client::AgentClientExt;
 use rig::completion::{CompletionError, Prompt, PromptError};
 use rig::completion::message::Message;
+use rig::http_client::{HeaderMap, HeaderValue};
 use rig::memory::ConversationMemory;
 use rig::providers::openrouter;
 
@@ -14,6 +15,15 @@ pub const WORLD_BUILDING_CONTEXT: &str = "You are operating in a fantasy world t
 pub const PROMPT_TIMEOUT_SECS: u64 = 90;
 
 pub type OpenRouterAgent = rig::agent::Agent;
+
+pub fn build_client(api_key: &str) -> anyhow::Result<openrouter::Client> {
+    let mut headers = HeaderMap::new();
+    headers.insert("x-openrouter-title", HeaderValue::from_static("Chuds"));
+    Ok(openrouter::Client::builder()
+        .http_headers(headers)
+        .api_key(api_key)
+        .build()?)
+}
 
 pub fn build_agent(client: &openrouter::Client, system_context: &str) -> OpenRouterAgent {
     client
@@ -72,7 +82,7 @@ pub fn truncate_for_log(s: &str, max: usize) -> String {
     }
 }
 
-pub fn yaml_correction(kind: &str, error: &str, raw_preview: &str) -> String {
+fn yaml_correction(kind: &str, error: &str, raw_preview: &str) -> String {
     format!(
         "Your previous response was invalid ({kind}): {error}\n\
          Reply again with ONLY valid YAML matching the required fields. \
@@ -218,7 +228,7 @@ pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
     agent: &OpenRouterAgent,
     memory: &GameConversationMemory,
     prompt: &str,
-    expected_trials: Option<usize>,
+    expected_list: Option<(&str, usize)>,
     conversation_id: &str,
 ) -> anyhow::Result<T> {
     let mut retries = 0u32;
@@ -250,25 +260,37 @@ pub async fn prompt_parse_retry<T: serde::de::DeserializeOwned>(
             }
             Ok(mut value) => {
                 normalize_yaml_string_values(&mut value);
-                if let Some(expected) = expected_trials {
+                if let Some((list_key, expected)) = expected_list {
                     let actual = value
-                        .get("trials")
+                        .get(list_key)
                         .and_then(|t| t.as_sequence())
                         .map(|s| s.len());
                     if actual != Some(expected) {
-                        let msg = format!("expected {expected} trial strings, got {actual:?}");
+                        let (kind, msg, fail) = if list_key == "trials" {
+                            (
+                                "wrong trial count",
+                                format!("expected {expected} trial strings, got {actual:?}"),
+                                format!(
+                                    "LLM returned wrong trial count after {YAML_PARSE_RETRIES} retries: expected {expected}, got {actual:?}"
+                                ),
+                            )
+                        } else {
+                            (
+                                "wrong list count",
+                                format!("expected {expected} {list_key} entries, got {actual:?}"),
+                                format!(
+                                    "LLM returned wrong {list_key} count after {YAML_PARSE_RETRIES} retries: expected {expected}, got {actual:?}"
+                                ),
+                            )
+                        };
                         correction = yaml_retry(
                             &mut retries,
                             &raw,
-                            "wrong trial count",
+                            kind,
                             &msg,
                             conversation_id,
                         )
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "LLM returned wrong trial count after {YAML_PARSE_RETRIES} retries: expected {expected}, got {actual:?}"
-                            )
-                        })?;
+                        .ok_or_else(|| anyhow::anyhow!(fail))?;
                         continue;
                     }
                 }

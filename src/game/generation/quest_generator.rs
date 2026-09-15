@@ -1,9 +1,10 @@
 use rig::memory::ConversationMemory;
-use rig::providers::openrouter;
 use serde::{Deserialize, Serialize};
 
 use crate::game::domain::quest::TrialStats;
-use crate::game::generation::generators::{build_agent, prompt_parse_retry, OpenRouterAgent};
+use crate::game::generation::generators::{
+    build_agent, build_client, prompt_parse_retry, OpenRouterAgent,
+};
 use crate::game::generation::memory::{make_memory_from_store, GameConversationMemory, LlmMemorySlot};
 use crate::game::persistence::llm_memory::LlmMemoryBundle;
 use crate::game::tuneable_rolls::calculate_quest_reward;
@@ -236,7 +237,7 @@ impl QuestGenerator {
         memory: &LlmMemoryBundle,
         reset_config: QuestMemoryResetConfig,
     ) -> anyhow::Result<Self> {
-        let client = openrouter::Client::new(api_key)?;
+        let client = build_client(api_key)?;
         let mut results_store = memory.results.clone();
         results_store.remove("results");
         Ok(Self {
@@ -403,7 +404,7 @@ impl QuestGenerator {
             &self.trial_agent,
             mem.trials,
             &trial_yaml,
-            Some(quest.trials.len()),
+            Some(("trials", quest.trials.len())),
             mem.trials_conv_id,
         )
         .await?
@@ -460,7 +461,7 @@ impl QuestGenerator {
             &self.trial_agent,
             &self.trial_memory,
             &trial_yaml,
-            Some(quest.trials.len()),
+            Some(("trials", quest.trials.len())),
             REGULAR_TRIALS_CONV_ID,
         )
         .await?
@@ -525,7 +526,7 @@ impl QuestGenerator {
             &self.results_agent,
             &self.results_memory,
             &results_prompt,
-            Some(outcomes.len()),
+            Some(("trials", outcomes.len())),
             &conversation_id,
         )
         .await?;
