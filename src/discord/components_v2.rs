@@ -18,6 +18,13 @@ const TYPE_TEXT_DISPLAY: u8 = 10;
 const TYPE_SEPARATOR: u8 = 14;
 const TYPE_CONTAINER: u8 = 17;
 
+/// Discord's per-message component budget, nested children included.
+pub const MAX_MESSAGE_COMPONENTS: usize = 40;
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// Message body for a Components V2 interaction response (no legacy `content` field).
 #[derive(Debug, Clone, Serialize)]
 pub struct ComponentsV2Message {
@@ -41,6 +48,8 @@ pub struct Container {
     kind: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     accent_color: Option<u32>,
+    #[serde(skip_serializing_if = "is_false")]
+    spoiler: bool,
     components: Vec<ContainerChild>,
 }
 
@@ -49,6 +58,7 @@ impl Container {
         Self {
             kind: TYPE_CONTAINER,
             accent_color: None,
+            spoiler: false,
             components,
         }
     }
@@ -57,8 +67,35 @@ impl Container {
         Self {
             kind: TYPE_CONTAINER,
             accent_color: Some(accent_color),
+            spoiler: false,
             components,
         }
+    }
+
+    pub fn spoiled(components: Vec<ContainerChild>) -> Self {
+        Self {
+            kind: TYPE_CONTAINER,
+            accent_color: None,
+            spoiler: true,
+            components,
+        }
+    }
+
+    pub fn with_accent_spoiled(accent_color: u32, components: Vec<ContainerChild>) -> Self {
+        Self {
+            kind: TYPE_CONTAINER,
+            accent_color: Some(accent_color),
+            spoiler: true,
+            components,
+        }
+    }
+
+    fn tree_size(&self) -> usize {
+        1 + self
+            .components
+            .iter()
+            .map(ContainerChild::tree_size)
+            .sum::<usize>()
     }
 }
 
@@ -69,6 +106,25 @@ pub enum ContainerChild {
     Text(TextDisplay),
     ActionRow(ActionRow),
     Separator(Separator),
+}
+
+impl ContainerChild {
+    fn tree_size(&self) -> usize {
+        match self {
+            Self::Text(_) | Self::Separator(_) => 1,
+            Self::ActionRow(row) => 1 + row.components.len(),
+        }
+    }
+}
+
+impl Component {
+    pub fn tree_size(&self) -> usize {
+        match self {
+            Self::Container(container) => container.tree_size(),
+            Self::Text(_) | Self::Separator(_) => 1,
+            Self::ActionRow(row) => 1 + row.components.len(),
+        }
+    }
 }
 
 /// [Text Display](https://docs.discord.com/developers/components/reference#text-display) (type 10).
@@ -290,6 +346,26 @@ impl ComponentsV2Message {
             None => Container::new(inner),
         };
         Self::channel(vec![Component::Container(container)])
+    }
+
+    /// Pack components into one or more messages that stay under Discord's nested-component budget.
+    pub fn channel_packed(components: Vec<Component>) -> Vec<Self> {
+        let mut messages = Vec::new();
+        let mut current: Vec<Component> = Vec::new();
+        let mut current_size = 0;
+        for component in components {
+            let size = component.tree_size();
+            if !current.is_empty() && current_size + size > MAX_MESSAGE_COMPONENTS {
+                messages.push(Self::channel(std::mem::take(&mut current)));
+                current_size = 0;
+            }
+            current_size += size;
+            current.push(component);
+        }
+        if !current.is_empty() {
+            messages.push(Self::channel(current));
+        }
+        messages
     }
 
     /// Stable fingerprint for message-cache skip logic (full payload, not just text).

@@ -95,7 +95,7 @@ pub async fn send_job_completion_dm(
         qr.hospitalized,
         kill,
     );
-    let plain_len = content.plain().len();
+    let messages = formatting::build_dm_completion_messages(&content);
 
     let Some(dm_channel) = open_dm_channel(http, qr.discord_user_id).await else {
         return;
@@ -104,44 +104,20 @@ pub async fn send_job_completion_dm(
     tracing::debug!(
         discord_user_id = qr.discord_user_id,
         player = %qr.player_name,
-        segmented = plain_len > DM_CHAR_LIMIT,
-        plain_len,
+        parts = messages.len(),
         "sending job completion DM"
     );
 
-    if plain_len <= DM_CHAR_LIMIT {
-        let dm_report = formatting::build_dm_completion_components(&content);
-        if let Err(e) = http.send_message(dm_channel, vec![], &dm_report).await {
+    for (i, message) in messages.iter().enumerate() {
+        if let Err(e) = http.send_message(dm_channel, vec![], message).await {
             tracing::warn!(
                 discord_user_id = qr.discord_user_id,
+                part = i,
                 err = %e,
                 "failed to DM quest report"
             );
-        }
-        return;
-    }
-
-    for part in pack_message_segments(content.segments(), DM_CHAR_LIMIT) {
-        if let Err(e) = http
-            .send_message(dm_channel, vec![], &CreateMessage::new().content(&part))
-            .await
-        {
-            tracing::warn!(
-                discord_user_id = qr.discord_user_id,
-                err = %e,
-                "failed to DM quest report segment"
-            );
             return;
         }
-    }
-
-    let outcome = formatting::build_dm_summary_components(&content);
-    if let Err(e) = http.send_message(dm_channel, vec![], &outcome).await {
-        tracing::warn!(
-            discord_user_id = qr.discord_user_id,
-            err = %e,
-            "failed to DM quest report outcome"
-        );
     }
 }
 

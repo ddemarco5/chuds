@@ -7,6 +7,7 @@ use crate::game::domain::graveyard::GraveyardEntry;
 use crate::game::domain::item::{Item, ItemType};
 use crate::game::domain::player::Player;
 use crate::game::domain::quest_result::{CompletedTrial, QuestResult};
+use crate::game::mechanics::quest_builder::StatChoice;
 use crate::game::domain::stash::STASH_CAPACITY;
 use crate::game::engine::KillResult;
 use crate::game::mechanics::simulation::effective_stats;
@@ -108,23 +109,20 @@ const ACCENT_PASSED: u32 = 0x57F287;
 const ACCENT_FAILED: u32 = 0xED4245;
 const ACCENT_DEATH: u32 = 0x2F3136;
 
-/// Preamble, outcome, and ordered text segments for long DM delivery.
-pub struct DmCompletionContent {
-    pub preamble: String,
-    pub summary: String,
-    passed: bool,
-    died: bool,
-    segments: Vec<String>,
+struct TrialCardText {
+    situation: String,
+    result: String,
 }
 
-impl DmCompletionContent {
-    pub fn plain(&self) -> String {
-        format!("{}\n\n{}", self.preamble, self.summary)
-    }
-
-    pub fn segments(&self) -> &[String] {
-        &self.segments
-    }
+/// Header, briefing, spoiled trial cards, and spoiled accented outcome for job DMs.
+pub struct DmCompletionContent {
+    header: String,
+    briefing: String,
+    trials: Vec<TrialCardText>,
+    summary: String,
+    item: Option<String>,
+    passed: bool,
+    died: bool,
 }
 
 pub fn build_dm_completion_content(
@@ -139,84 +137,113 @@ pub fn build_dm_completion_content(
     hospitalized: bool,
     kill: Option<&KillResult>,
 ) -> DmCompletionContent {
-    let segments = build_dm_preamble_segments(player_name, result, player, registry);
-    let preamble = segments.join("");
-    let (summary, passed, died) = if let Some(kill) = kill {
+    let (summary, item, passed, died) = if let Some(kill) = kill {
         let footer = format_death_footer(kill);
-        let summary = format_completion_outcome_box("DIED", &result.summary, &footer, None);
-        (summary, false, true)
+        let summary = format_completion_outcome_box(Some("DIED"), &result.summary, &footer, None);
+        (summary, None, false, true)
     } else {
-        let outcome = if result.passed { "PASSED" } else { "FAILED" };
-        let footer = format_completion_footer(
-            player_name,
-            player,
-            level_up,
-            result.passed,
-            reward,
-            item_awarded,
-            item_award_disposition,
-        );
+        let footer = format_completion_rewards(player_name, player, level_up, result.passed, reward);
         let hospital_msg = hospitalized.then(|| chud_msg!("dm_hospitalized", player_name));
         let summary = format_completion_outcome_box(
-            outcome,
+            None,
             &result.summary,
             &footer,
             hospital_msg.as_deref(),
         );
-        (summary, result.passed, false)
+        let item = item_awarded.map(|item| format_item_award(item, item_award_disposition));
+        (summary, item, result.passed, false)
     };
     DmCompletionContent {
-        preamble,
+        header: format_dm_header(player, registry),
+        briefing: format_dm_quest(result),
+        trials: result
+            .trials
+            .iter()
+            .enumerate()
+            .map(|(i, trial)| format_dm_trial(player_name, trial, i))
+            .collect(),
         summary,
+        item,
         passed,
         died,
-        segments,
     }
 }
 
-fn summary_container(summary: &str, passed: bool, died: bool) -> Component {
-    let accent = if died {
+fn outcome_accent(passed: bool, died: bool) -> u32 {
+    if died {
         ACCENT_DEATH
     } else if passed {
         ACCENT_PASSED
     } else {
         ACCENT_FAILED
-    };
-    Component::Container(Container::with_accent(
-        accent,
-        vec![ContainerChild::Text(TextDisplay::new(summary.to_string()))],
+    }
+}
+
+fn spoiled_trial_container(trial: &TrialCardText) -> Component {
+    Component::Container(Container::spoiled(vec![
+        ContainerChild::Text(TextDisplay::new(trial.situation.clone())),
+        ContainerChild::Separator(Separator::section()),
+        ContainerChild::Text(TextDisplay::new(trial.result.clone())),
+    ]))
+}
+
+fn spoiled_outcome_container(summary: &str, item: Option<&str>, passed: bool, died: bool) -> Component {
+    let mut inner = vec![ContainerChild::Text(TextDisplay::new(summary.to_string()))];
+    if let Some(item) = item.filter(|text| !text.is_empty()) {
+        inner.push(ContainerChild::Separator(Separator::section()));
+        inner.push(ContainerChild::Text(TextDisplay::new(item.to_string())));
+    }
+    Component::Container(Container::with_accent_spoiled(
+        outcome_accent(passed, died),
+        inner,
     ))
 }
 
-pub fn build_dm_completion_components(content: &DmCompletionContent) -> ComponentsV2Message {
-    ComponentsV2Message::channel(vec![
-        Component::Text(TextDisplay::new(content.preamble.clone())),
-        summary_container(&content.summary, content.passed, content.died),
-    ])
+fn notice_container(message: &str, passed: bool) -> Component {
+    Component::Container(Container::with_accent(
+        outcome_accent(passed, false),
+        vec![ContainerChild::Text(TextDisplay::new(message.to_string()))],
+    ))
 }
 
-/// Outcome block only — same container as the short DM path.
+pub fn build_dm_completion_messages(content: &DmCompletionContent) -> Vec<ComponentsV2Message> {
+    let mut components = vec![
+        Component::Text(TextDisplay::new(content.header.clone())),
+        Component::Text(TextDisplay::new(content.briefing.clone())),
+    ];
+    components.extend(content.trials.iter().map(spoiled_trial_container));
+    components.extend(build_dm_summary_components(content).components);
+    ComponentsV2Message::channel_packed(components)
+}
+
+/// Outcome block only — same spoiled accented container as the full report.
 pub fn build_dm_summary_components(content: &DmCompletionContent) -> ComponentsV2Message {
-    ComponentsV2Message::channel(vec![summary_container(
+    ComponentsV2Message::channel(vec![spoiled_outcome_container(
         &content.summary,
+        content.item.as_deref(),
         content.passed,
         content.died,
     )])
 }
 
-/// Single-notice DM — same accent container as the job pass/fail summary.
+/// Single-notice DM — accented container, not spoiled.
 pub fn build_dm_notice_components(message: &str, passed: bool) -> ComponentsV2Message {
-    ComponentsV2Message::channel(vec![summary_container(message, passed, false)])
+    ComponentsV2Message::channel(vec![notice_container(message, passed)])
 }
 
-/// Header, summary, rewards, and optional hospital note — one multiline block inside the container.
+/// Summary, gold, hospital, and level-up — one multiline block above any item divider.
+/// Pass/fail is the container accent; `outcome` is only used for death (`DIED`).
 fn format_completion_outcome_box(
-    outcome: &str,
+    outcome: Option<&str>,
     summary: &str,
     footer: &str,
     hospital_msg: Option<&str>,
 ) -> String {
-    let mut sections = vec![format!("**{outcome}**"), summary.to_string()];
+    let mut sections = Vec::new();
+    if let Some(outcome) = outcome {
+        sections.push(format!("**{outcome}**"));
+    }
+    sections.push(summary.to_string());
     if !footer.is_empty() {
         sections.push(footer.to_string());
     }
@@ -229,7 +256,7 @@ fn format_completion_outcome_box(
 fn format_dm_header(player: &Player, registry: &ItemRegistry) -> String {
     let effective = effective_stats(player, registry);
     format!(
-        "{} -- *{}*\n\n",
+        "{} -- *{}*",
         player.chud_ref().name,
         player.format_effective_stats(effective),
     )
@@ -237,85 +264,50 @@ fn format_dm_header(player: &Player, registry: &ItemRegistry) -> String {
 
 fn format_dm_quest(result: &QuestResult) -> String {
     format!(
-        "**{}** - _{}_\n{}\n",
+        "**{}** - _{}_\n{}",
         result.quest_title, result.quest_giver, result.quest_description
     )
 }
 
-fn format_dm_trial(player_name: &str, trial: &CompletedTrial, index: usize) -> String {
-    let pass_str = if trial.passed { "\u{2705}" } else { "\u{274c}" };
-    let brain = if trial.chose_optimal { " \u{1F9E0}" } else { "" };
-    format!(
-        "\n**Trial {}** - {}\n{} {} | {} rolled {} vs {}{}\n*{}*\n",
-        index + 1,
-        trial.situation,
-        pass_str,
-        trial.stat_used.label(),
-        player_name,
-        trial.format_player_roll(),
-        trial.trial_roll,
-        brain,
-        markdown_italic_line(&trial.narrative),
-    )
-}
-
-fn build_dm_preamble_segments(
-    player_name: &str,
-    result: &QuestResult,
-    player: &Player,
-    registry: &ItemRegistry,
-) -> Vec<String> {
-    let mut segments = vec![format_dm_header(player, registry), format_dm_quest(result)];
-    for (i, trial) in result.trials.iter().enumerate() {
-        segments.push(format_dm_trial(player_name, trial, i));
+fn format_trial_stat(trial: &CompletedTrial) -> String {
+    let (emoji, name) = match trial.stat_used {
+        StatChoice::Strength => ("\u{1F4AA}", "Strength"),
+        StatChoice::Smarts => ("\u{1F9E0}", "Smarts"),
+        StatChoice::Stealth => ("\u{1F977}", "Stealth"),
+    };
+    if trial.chose_optimal {
+        format!("{emoji}\u{2726}{name}\u{2726}")
+    } else {
+        format!("{emoji}{name}")
     }
-    segments
 }
 
-fn format_completion_footer(
+fn format_dm_trial(player_name: &str, trial: &CompletedTrial, index: usize) -> TrialCardText {
+    let pass_str = if trial.passed { "\u{2705}" } else { "\u{274c}" };
+    TrialCardText {
+        situation: format!("**Trial {}** - {}", index + 1, trial.situation),
+        result: format!(
+            "{} used {} and rolled {} against {} -- {}\n\n{}",
+            player_name,
+            format_trial_stat(trial),
+            trial.format_player_roll(),
+            trial.trial_roll,
+            pass_str,
+            markdown_italic_line(&trial.narrative),
+        ),
+    }
+}
+
+fn format_completion_rewards(
     player_name: &str,
     player: &Player,
     level_up: &crate::game::domain::player::LevelUp,
     passed: bool,
     reward: u32,
-    item_awarded: Option<&Item>,
-    item_award_disposition: Option<crate::game::engine::ItemAwardDisposition>,
 ) -> String {
     let mut out = String::new();
     if passed && reward > 0 {
         out.push_str(&chud_msg!("chud_brings_money", reward));
-    }
-    if let Some(item) = item_awarded {
-        let slot = format_item_slot_label(item);
-        if !out.is_empty() {
-            out.push('\n');
-        }
-        match item_award_disposition {
-            Some(crate::game::engine::ItemAwardDisposition::Sold(gold)) => {
-                out.push_str(&format!(
-                    "**Stash full — sold {} for ${gold}:** ({slot})\nStats: {}\n_{}_",
-                    item.name,
-                    item.stats.format_triplet(),
-                    item.description,
-                ));
-            }
-            Some(crate::game::engine::ItemAwardDisposition::Equipped) => {
-                out.push_str(&format!(
-                    "**Stash full — auto-equipped:** {} ({slot})\nStats: {}\n_{}_",
-                    item.name,
-                    item.stats.format_triplet(),
-                    item.description,
-                ));
-            }
-            _ => {
-                out.push_str(&format!(
-                    "**Item stashed:** {} ({slot})\nStats: {}\n_{}_\nUse `/gear` to equip.",
-                    item.name,
-                    item.stats.format_triplet(),
-                    item.description,
-                ));
-            }
-        }
     }
     if level_up.any() {
         fn fmt_stat(levelled: bool, val: u8) -> String {
@@ -338,6 +330,33 @@ fn format_completion_footer(
         ));
     }
     out
+}
+
+fn format_item_award(
+    item: &Item,
+    item_award_disposition: Option<crate::game::engine::ItemAwardDisposition>,
+) -> String {
+    let slot = format_item_slot_label(item);
+    match item_award_disposition {
+        Some(crate::game::engine::ItemAwardDisposition::Sold(gold)) => format!(
+            "**Stash full — sold {} for ${gold}:** ({slot})\nStats: {}\n_{}_",
+            item.name,
+            item.stats.format_triplet(),
+            item.description,
+        ),
+        Some(crate::game::engine::ItemAwardDisposition::Equipped) => format!(
+            "**Stash full — auto-equipped:** {} ({slot})\nStats: {}\n_{}_",
+            item.name,
+            item.stats.format_triplet(),
+            item.description,
+        ),
+        _ => format!(
+            "**Item stashed:** {} ({slot})\nStats: {}\n_{}_",
+            item.name,
+            item.stats.format_triplet(),
+            item.description,
+        ),
+    }
 }
 
 fn format_death_footer(kill: &KillResult) -> String {
