@@ -1,8 +1,8 @@
+use rig::client::AgentClientExt;
 use rig::completion::{CompletionError, Prompt, PromptError};
 use rig::completion::message::Message;
 use rig::memory::ConversationMemory;
 use rig::providers::openrouter;
-use rig::client::CompletionClient;
 
 use crate::game::generation::memory::GameConversationMemory;
 
@@ -11,7 +11,7 @@ pub const WORLD_BUILDING_CONTEXT: &str = "You are operating in a fantasy world t
 /// Per-attempt timeout for LLM requests. Raise if using slow free-tier models.
 pub const PROMPT_TIMEOUT_SECS: u64 = 90;
 
-pub type OpenRouterAgent = rig::agent::Agent<openrouter::completion::CompletionModel, ()>;
+pub type OpenRouterAgent = rig::agent::Agent;
 
 pub fn build_agent(client: &openrouter::Client, system_context: &str) -> OpenRouterAgent {
     client
@@ -112,7 +112,7 @@ pub async fn prompt_with_retry(
             agent
                 .prompt(prompt)
                 .without_memory()
-                .with_history(history.iter().cloned()),
+                .history(history.iter().cloned()),
         )
         .await
         {
