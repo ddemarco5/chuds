@@ -7,7 +7,9 @@ use crate::game::generation::generators::{
 use crate::game::generation::memory::{make_memory_from_store, GameConversationMemory};
 use crate::game::persistence::llm_memory::LlmMemoryBundle;
 
-const GRAVESTONE_SYSTEM_CONTEXT: &str = r#"You are writing epitaph text for a fallen Chud's gravestone.
+fn gravestone_system_context() -> String {
+    format!(
+        r#"You are writing epitaph text for a fallen Chud's gravestone.
 
 You will receive:
 - The chud's name and description
@@ -16,13 +18,16 @@ You will receive:
 Your task:
 - Write an 'epitaph': 1-3 sentences, artistic, solemn, mildly humorous, third person
   - Capture who they were and what killed them
-  - Match the satirical, crude, lighthearted tone of the world
+  - Match this world setting: {}
 
 RULES:
 - Avoid emdash use
 - Output ONLY valid YAML with an 'epitaph' field
 - Reply with ONLY valid YAML (no preamble). You may wrap in ```yaml fences.
-- Use block scalars (|) or double-quoted strings when needed"#;
+- Use block scalars (|) or double-quoted strings when needed"#,
+        crate::story_jobs::world_setting()
+    )
+}
 
 #[derive(Serialize)]
 struct GravestonePrompt<'a> {
@@ -46,7 +51,7 @@ impl GravestoneGenerator {
     pub fn new(api_key: &str, memory: &LlmMemoryBundle) -> anyhow::Result<Self> {
         let client = build_client(api_key)?;
         Ok(Self {
-            agent: build_agent(&client, GRAVESTONE_SYSTEM_CONTEXT),
+            agent: build_agent(&client, &gravestone_system_context()),
             memory: make_memory_from_store(memory.gravestone.clone()),
         })
     }

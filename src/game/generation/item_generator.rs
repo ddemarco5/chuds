@@ -9,7 +9,9 @@ use crate::game::generation::generators::{
 use crate::game::generation::memory::{make_memory_from_store, GameConversationMemory};
 use crate::game::persistence::llm_memory::LlmMemoryBundle;
 
-const ITEM_SYSTEM_CONTEXT: &str = r#"You are naming and describing loot found after a Chud completes a job.
+fn item_system_context() -> String {
+    format!(
+        r#"You are naming and describing loot found after a Chud completes a job.
 
 You will receive:
 - Partial item data (type, optional subtype, stat bonuses, rarity) already rolled by the game
@@ -33,12 +35,15 @@ Your task:
   - Describe the object only; do NOT recap the quest, mention the chud, or explain how it was obtained
 
 RULES:
-- Match the satirical, crude, lighthearted tone of the world
+- Match this world setting: {}
 - Do NOT change item type, subtype, or stats
 - Avoid emdash use
 - Output ONLY valid YAML with 'name' and 'description' fields
 - Reply with ONLY valid YAML (no preamble). You may wrap in ```yaml fences.
-- Use block scalars (|) or double-quoted strings when needed"#;
+- Use block scalars (|) or double-quoted strings when needed"#,
+        crate::story_jobs::world_setting()
+    )
+}
 
 #[derive(Serialize)]
 struct MissionContext<'a> {
@@ -69,7 +74,7 @@ impl ItemGenerator {
     pub fn new(api_key: &str, memory: &LlmMemoryBundle) -> anyhow::Result<Self> {
         let client = build_client(api_key)?;
         Ok(Self {
-            agent: build_agent(&client, ITEM_SYSTEM_CONTEXT),
+            agent: build_agent(&client, &item_system_context()),
             memory: make_memory_from_store(memory.item.clone()),
         })
     }

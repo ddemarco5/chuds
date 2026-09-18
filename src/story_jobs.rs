@@ -7,10 +7,13 @@ use crate::game::domain::item::ItemStats;
 
 const STORY_JOBS_PATH: &str = "data/story_jobs.yaml";
 const VALID_RARITIES: &[&str] = &["common", "uncommon", "rare", "exceptional"];
+const DEFAULT_WORLD_SETTING: &str = "You are operating in a fantasy world that is lighthearted, full of satire, and often crude. Adventurers are known as 'Chuds' and are often exceptionally bizarre";
 
 #[derive(Debug, Deserialize)]
 struct StoryJobsFile {
     story_line_name: String,
+    #[serde(default)]
+    world_setting: Option<String>,
     stories: Vec<StoryEntryRaw>,
 }
 
@@ -32,6 +35,7 @@ struct StoryRewardRaw {
 #[derive(Debug, Clone)]
 pub struct StoryCatalog {
     pub story_line_name: String,
+    pub world_setting: String,
     pub stories: Vec<StoryEntry>,
 }
 
@@ -71,10 +75,17 @@ fn validate_rarity(rarity: &str) -> String {
     normalized
 }
 
+fn resolve_world_setting(raw: Option<String>) -> String {
+    raw.map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_WORLD_SETTING.to_string())
+}
+
 fn parse_catalog(yaml: &str) -> anyhow::Result<StoryCatalog> {
     let file: StoryJobsFile = serde_yaml::from_str(yaml).context("parsing story_jobs.yaml")?;
     Ok(StoryCatalog {
         story_line_name: file.story_line_name,
+        world_setting: resolve_world_setting(file.world_setting),
         stories: file
             .stories
             .into_iter()
@@ -125,6 +136,14 @@ pub fn story_line_name() -> String {
         .read()
         .expect("story catalog lock poisoned")
         .story_line_name
+        .clone()
+}
+
+pub fn world_setting() -> String {
+    CATALOG
+        .read()
+        .expect("story catalog lock poisoned")
+        .world_setting
         .clone()
 }
 

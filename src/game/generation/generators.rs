@@ -9,8 +9,6 @@ use rig::providers::openrouter;
 
 use crate::game::generation::memory::GameConversationMemory;
 
-pub const WORLD_BUILDING_CONTEXT: &str = "You are operating in a fantasy world that is lighthearted, full of satire, and often crude. Adventurers are known as 'Chuds' and are often exceptionally bizarre";
-
 /// Per-attempt timeout for LLM requests. Raise if using slow free-tier models.
 pub const PROMPT_TIMEOUT_SECS: u64 = 90;
 
@@ -28,7 +26,11 @@ pub fn build_client(api_key: &str) -> anyhow::Result<openrouter::Client> {
 pub fn build_agent(client: &openrouter::Client, system_context: &str) -> OpenRouterAgent {
     client
         .agent("openrouter/free")
-        .preamble([WORLD_BUILDING_CONTEXT, system_context].join("\n\n").as_str())
+        .preamble(
+            [crate::story_jobs::world_setting().as_str(), system_context]
+                .join("\n\n")
+                .as_str(),
+        )
         .build()
 }
 

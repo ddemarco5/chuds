@@ -12,10 +12,12 @@ use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::persistence::llm_memory::LlmMemoryBundle;
 use crate::game::tuneable_rolls::roll_item_value;
 
-const MERCHANT_PROFILE_SYSTEM_CONTEXT: &str = r#"You are inventing traveling merchants who visit a Chud guild hall to sell gear.
+fn merchant_profile_system_context() -> String {
+    format!(
+        r#"You are inventing traveling merchants who visit a Chud guild hall to sell gear.
 
 Your task:
-- Create distinct merchant shop identities for a satirical, crude, lighthearted fantasy world
+- Create distinct merchant shop identities for this world: {}
 - Each merchant needs a plain 'name' (2-5 words, like "Old Ropey Pete" or "The Scrap Witch")
 - Each merchant needs a 'theme': 1-2 sentences describing their shop vibe, specialty, and aesthetic (used later to name their inventory)
 
@@ -24,9 +26,14 @@ RULES:
 - Do NOT use legendary proper-noun titles
 - Avoid emdash use
 - Output ONLY valid YAML
-- Reply with ONLY valid YAML (no preamble). You may wrap in ```yaml fences."#;
+- Reply with ONLY valid YAML (no preamble). You may wrap in ```yaml fences."#,
+        crate::story_jobs::world_setting()
+    )
+}
 
-const MERCHANT_STOCK_SYSTEM_CONTEXT: &str = r#"You are naming and describing items sold by a traveling merchant.
+fn merchant_stock_system_context() -> String {
+    format!(
+        r#"You are naming and describing items sold by a traveling merchant.
 
 You will receive:
 - The merchant's name and theme
@@ -49,12 +56,15 @@ Your task:
   - Describe the object only; do NOT mention the merchant by name or explain the sale
 
 RULES:
-- Match the satirical, crude, lighthearted tone of the world
+- Match this world setting: {}
 - Do NOT change item type, subtype, or stats
 - Return exactly as many items as provided in the input, in the same order
 - Avoid emdash use
-- Output ONLY valid YAML with an 'items' list of {name, description} objects
-- Reply with ONLY valid YAML (no preamble). You may wrap in ```yaml fences."#;
+- Output ONLY valid YAML with an 'items' list of {{name, description}} objects
+- Reply with ONLY valid YAML (no preamble). You may wrap in ```yaml fences."#,
+        crate::story_jobs::world_setting()
+    )
+}
 
 #[derive(Serialize)]
 struct MerchantProfilePrompt {
@@ -100,8 +110,8 @@ impl MerchantGenerator {
     pub fn new(api_key: &str, memory: &LlmMemoryBundle) -> anyhow::Result<Self> {
         let client = build_client(api_key)?;
         Ok(Self {
-            profile_agent: build_agent(&client, MERCHANT_PROFILE_SYSTEM_CONTEXT),
-            stock_agent: build_agent(&client, MERCHANT_STOCK_SYSTEM_CONTEXT),
+            profile_agent: build_agent(&client, &merchant_profile_system_context()),
+            stock_agent: build_agent(&client, &merchant_stock_system_context()),
             memory: make_memory_from_store(memory.merchant.clone()),
         })
     }
