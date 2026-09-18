@@ -96,6 +96,33 @@ fn format_stat_value(label: &str, raw: u8, effective: u8) -> String {
     }
 }
 
+/// Percent of the way from `level` to `level + 1`. Full at the cap.
+fn stat_level_progress_pct(level: u8, successes: u32, base: u32) -> u32 {
+    if level >= MAX_STAT {
+        return 100;
+    }
+    let threshold = base * u32::from(level);
+    if threshold == 0 {
+        0
+    } else {
+        successes.saturating_mul(100) / threshold
+    }
+}
+
+fn format_stat_value_with_progress(
+    label: &str,
+    raw: u8,
+    effective: u8,
+    successes: u32,
+    base: u32,
+) -> String {
+    format!(
+        "\n\t{} ({}%)",
+        format_stat_value(label, raw, effective),
+        stat_level_progress_pct(raw, successes, base),
+    )
+}
+
 fn apply_wins(val: &mut u8, counter: &mut u32, wins: u32, base: u32) -> bool {
     *counter += wins;
     let threshold = base * *val as u32;
@@ -190,7 +217,34 @@ impl Player {
     }
 
     pub fn format_effective_stats_line(&self, effective: (u8, u8, u8)) -> String {
-        format!("Stats: {}", self.format_effective_stats(effective))
+        let chud = self.chud_ref();
+        let (eff_str, eff_smt, eff_sth) = effective;
+        format!(
+            "Stats: {}, {}, {}, Experience {} ({}%)",
+            format_stat_value_with_progress(
+                "Strength",
+                chud.strength,
+                eff_str,
+                chud.str_successes,
+                STAT_LEVEL_BASE,
+            ),
+            format_stat_value_with_progress(
+                "Smarts",
+                chud.smarts,
+                eff_smt,
+                chud.smt_successes,
+                STAT_LEVEL_BASE,
+            ),
+            format_stat_value_with_progress(
+                "Stealth",
+                chud.stealth,
+                eff_sth,
+                chud.sth_successes,
+                STAT_LEVEL_BASE,
+            ),
+            chud.experience,
+            stat_level_progress_pct(chud.experience, chud.job_successes, EXP_LEVEL_BASE),
+        )
     }
 
     pub fn record_quest(&mut self, result: &QuestResult) -> LevelUp {
