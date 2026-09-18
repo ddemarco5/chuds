@@ -198,6 +198,11 @@ busy_hospitalized:
   - "{} is in the infirmary. {} days until they're back."
   - "{} is being patched up. {} days left on the clock."
 
+busy_returning:
+  - "{} isn't back yet. Check your DMs."
+  - "{} is still out. Send them back from the job report."
+  - "{} finished the job but hasn't walked in. Collect rewards from your DMs."
+
 gear_equipment_locked:
   - "{} is {}. You can still buy and sell stash items."
   - "{} is {}. Stash buys and sells still work."
@@ -285,6 +290,17 @@ inspect_hospital_prefix:
   - "This chud is unconscious in the hospital."
   - "This one's out cold in the infirmary."
   - "They're laid up unconscious in the hospital."
+
+inspect_returning_prefix:
+  - "They're not back in the hall yet."
+  - "Still out. They haven't walked in from the job."
+  - "Finished the job, but they haven't come through the door."
+
+return_button_label:
+  - "Return to Guild Hall"
+  - "Send them back"
+  - "Back to work, Chud"
+  - "Return"
 
 return_died:
   - "{} won't be coming back."

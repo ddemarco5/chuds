@@ -45,7 +45,9 @@ pub fn gear_equipment_locked_notice(reason: BusyReason, player: &Player) -> Stri
     let status = match reason {
         BusyReason::ActiveQuest { quest_title } => format!("on the job \"{quest_title}\""),
         BusyReason::Scouting => "out scouting".into(),
-        BusyReason::Hospitalized => unreachable!("hospitalized chuds are not equipment-locked"),
+        BusyReason::Hospitalized | BusyReason::ReturningFromJob => {
+            unreachable!("hospitalized/returning chuds are not equipment-locked")
+        }
     };
     chud_msg!("gear_equipment_locked", name, status)
 }

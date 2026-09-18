@@ -11,6 +11,7 @@ pub struct GuildHallStatus {
     active: HashMap<u64, String>,
     scouting: HashSet<u64>,
     hospitalized: HashSet<u64>,
+    returning: HashSet<u64>,
     pub idle_names: Vec<String>,
     pub hospital_names: Vec<String>,
     pub show_all_busy: bool,
@@ -30,6 +31,9 @@ impl GuildHallStatus {
         if self.hospitalized.contains(&discord_user_id) {
             return Some(BusyReason::Hospitalized);
         }
+        if self.returning.contains(&discord_user_id) {
+            return Some(BusyReason::ReturningFromJob);
+        }
         None
     }
 
@@ -41,7 +45,8 @@ impl GuildHallStatus {
 /// Rebuilds who is busy and who is loitering in the guild hall from current game state.
 ///
 /// Walks every quest on the board once to collect players on active jobs or scouting,
-/// merges in hospital admissions, then treats every other saved chud as idle. The result
+/// merges in hospital admissions and chuds awaiting a job-summary return click,
+/// then treats every other saved chud as idle. The result
 /// powers the persistent status box under the job board (idle / all-busy / no-chuds / hospital lists)
 /// and cheap per-user checks via [`GuildHallStatus::busy_reason`] without rescanning quests.
 ///
@@ -83,12 +88,17 @@ pub fn compute_guild_hall_status(
     hospital_names.sort();
 
     let mut idle_names = Vec::new();
+    let mut returning = HashSet::new();
     let mut has_any_chud = false;
 
     for player in storage::try_load_chuds()? {
         let id = player.discord_user_id;
         has_any_chud = true;
         if active.contains_key(&id) || scouting.contains(&id) || hospitalized.contains(&id) {
+            continue;
+        }
+        if player.chud_ref().awaiting_guild_return.is_some() {
+            returning.insert(id);
             continue;
         }
         idle_names.push(player.chud_ref().name.clone());
@@ -102,6 +112,7 @@ pub fn compute_guild_hall_status(
         active,
         scouting,
         hospitalized,
+        returning,
         idle_names,
         hospital_names,
         show_all_busy,

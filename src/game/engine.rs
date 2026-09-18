@@ -6,7 +6,7 @@ use crate::game::guild_status::GuildHallStatus;
 use crate::game::domain::item::{EquipmentSlot, ItemType};
 use crate::game::persistence::item_registry::ItemRegistry;
 use crate::game::domain::job_queue::JobQueue;
-use crate::game::domain::player::{create_chud, Player};
+use crate::game::domain::player::{create_chud, GuildReturn, Player};
 use crate::game::domain::quest_result::QuestResult;
 use crate::game::generation::gravestone_generator::GravestoneGenerator;
 use crate::game::generation::item_generator::ItemGenerator;
@@ -708,6 +708,20 @@ pub fn assign_chud_to_quest(
         player,
         quest_title,
     })
+}
+
+/// Clear a pending hall return. `Some` if the chud was waiting and is now available.
+pub fn complete_guild_return(discord_user_id: u64) -> anyhow::Result<Option<(String, GuildReturn)>> {
+    let mut player = match storage::load_player(discord_user_id)? {
+        Some(p) if p.has_chud() => p,
+        _ => return Ok(None),
+    };
+    let Some(kind) = player.take_guild_return() else {
+        return Ok(None);
+    };
+    let name = player.chud_ref().name.clone();
+    storage::save_player(&player)?;
+    Ok(Some((name, kind)))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

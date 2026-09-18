@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use chuds::discord::{
-    self, game_screens, handle_gear_button, handle_heal_button, handle_merchant_shop_button,
-    handle_scout_button, handle_shop_buy, handle_shop_select,
+    self, game_screens, handle_gear_button, handle_heal_button, handle_job_return,
+    handle_merchant_shop_button, handle_scout_button, handle_shop_buy, handle_shop_select,
     handle_take_button, update_board_message, ActivityLogSync, Data, GameCompletion, GameRuntime,
     SimulationController,
 };
@@ -148,6 +148,8 @@ async fn main() -> anyhow::Result<()> {
                                 Some(handle_scout_button(ctx, component, data).await)
                             } else if id.starts_with("heal:") {
                                 Some(handle_heal_button(ctx, component, data).await)
+                            } else if id == "job_return" {
+                                Some(handle_job_return(ctx, component, data).await)
                             } else if id.starts_with("g_equip:")
                                 || id.starts_with("g_unequip:")
                                 || id.starts_with("g_sell:")

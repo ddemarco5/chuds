@@ -38,6 +38,8 @@ pub struct QuestResolved {
     pub death_ctx: Option<crate::game::engine::DeathContext>,
     pub item_awarded: Option<Item>,
     pub item_award_disposition: Option<crate::game::engine::ItemAwardDisposition>,
+    /// Survived and is held out of the hall until the job-summary DM button is clicked.
+    pub awaiting_return: bool,
 }
 
 pub struct TickContext<'a> {

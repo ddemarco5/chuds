@@ -17,7 +17,7 @@ pub use guild_hall::{
 };
 pub use context::{GameCompletion, GameRuntime, require_playing};
 pub use simulation::SimulationController;
-pub use buttons::{handle_heal_button, handle_scout_button, handle_take_button};
+pub use buttons::{handle_heal_button, handle_job_return, handle_scout_button, handle_take_button};
 pub use ui::{
     build_gear_message, build_gear_open_message, derive_gear_mode, edit_ephemeral_message,
     gear_equipment_locked_notice, handle_gear_button, handle_merchant_shop_button, handle_shop_buy,

@@ -60,6 +60,27 @@ pub struct ChudEquipment {
     pub misc: [Option<u32>; 2],
 }
 
+/// Survived a job and is waiting for the owner to send them back to the guild hall.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GuildReturn {
+    Passed,
+    Failed,
+}
+
+impl GuildReturn {
+    pub fn from_passed(passed: bool) -> Self {
+        if passed { Self::Passed } else { Self::Failed }
+    }
+
+    pub fn message_key(self) -> &'static str {
+        match self {
+            Self::Passed => "return_passed",
+            Self::Failed => "return_failed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chud {
     pub name: String,
@@ -76,6 +97,8 @@ pub struct Chud {
     pub total_job_failures: u32,
     #[serde(default)]
     pub equipment: ChudEquipment,
+    #[serde(default)]
+    pub awaiting_guild_return: Option<GuildReturn>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,6 +169,10 @@ impl Player {
 
     pub fn chud_mut(&mut self) -> &mut Chud {
         self.chud.as_mut().expect("player has no chud")
+    }
+
+    pub fn take_guild_return(&mut self) -> Option<GuildReturn> {
+        self.chud.as_mut()?.awaiting_guild_return.take()
     }
 
     /// Credit cash and optionally record the earning against episode stats.
@@ -309,6 +336,7 @@ pub fn create_chud(discord_user_id: u64, name: String, description: String) -> P
             total_job_successes: 0,
             total_job_failures: 0,
             equipment: ChudEquipment::default(),
+            awaiting_guild_return: None,
         }),
     }
 }

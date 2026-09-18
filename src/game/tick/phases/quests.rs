@@ -3,6 +3,7 @@ use crate::game::engine::{self, DeathContext};
 use crate::game::persistence::storage;
 use crate::game::tick::{QuestResolved, TickContext, TickOutcome};
 use crate::game::tuneable_rolls::{death_chance, injury_chance, roll_failure_consequences};
+use crate::game::domain::player::GuildReturn;
 
 pub fn quest_phase(ctx: &mut TickContext, outcome: &mut TickOutcome) -> anyhow::Result<()> {
     let due = ctx.board.tick_and_take_due(ctx.jobs_per_tick);
@@ -134,8 +135,6 @@ fn resolve_quest(
         }
     }
 
-    storage::save_player(&player)?;
-
     tracing::info!(
         player = %player_name,
         quest = %quest_title,
@@ -203,6 +202,12 @@ fn resolve_quest(
         });
     }
 
+    let awaiting_return = !died && !hospitalized;
+    if awaiting_return {
+        player.chud_mut().awaiting_guild_return = Some(GuildReturn::from_passed(passed));
+    }
+    storage::save_player(&player)?;
+
     Ok(Some(QuestResolved {
         discord_user_id,
         player_name,
@@ -217,5 +222,6 @@ fn resolve_quest(
         death_ctx,
         item_awarded,
         item_award_disposition,
+        awaiting_return,
     }))
 }

@@ -153,6 +153,11 @@ pub async fn inspect(ctx: Context<'_>, name: String) -> Result<(), Error> {
                     &player,
                     &registry,
                 ),
+                Some(BusyReason::ReturningFromJob) => format_inspect_with_prefix(
+                    chud_msg!("inspect_returning_prefix"),
+                    &player,
+                    &registry,
+                ),
             }
         }
     };

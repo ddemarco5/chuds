@@ -77,12 +77,13 @@ pub async fn send_hospital_release_dm(http: &Http, discord_user_id: u64, message
 }
 
 /// DM a finished job report; logs warnings and never fails the tick.
+/// Returns whether every part, including the summary container, was sent.
 pub async fn send_job_completion_dm(
     http: &Http,
     registry: &ItemRegistry,
     qr: &QuestResolved,
     kill: Option<&KillResult>,
-) {
+) -> bool {
     let content = formatting::build_dm_completion_content(
         &qr.player_name,
         &qr.result,
@@ -94,11 +95,12 @@ pub async fn send_job_completion_dm(
         qr.item_award_disposition,
         qr.hospitalized,
         kill,
+        qr.awaiting_return,
     );
     let messages = formatting::build_dm_completion_messages(&content);
 
     let Some(dm_channel) = open_dm_channel(http, qr.discord_user_id).await else {
-        return;
+        return false;
     };
 
     tracing::debug!(
@@ -116,9 +118,10 @@ pub async fn send_job_completion_dm(
                 err = %e,
                 "failed to DM quest report"
             );
-            return;
+            return false;
         }
     }
+    true
 }
 
 /// DM a death notice; logs warnings and never fails the caller.

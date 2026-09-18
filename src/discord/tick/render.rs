@@ -66,17 +66,13 @@ pub async fn render_tick_outcome(
         }
 
         let first_name = first_word(&qr.player_name);
-        let return_key = if qr.died {
-            "return_died"
+        if qr.died {
+            let return_msg = chud_msg!("return_died", first_name);
+            append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &return_msg).await;
         } else if qr.hospitalized {
-            "return_hospitalized"
-        } else if qr.result.passed {
-            "return_passed"
-        } else {
-            "return_failed"
-        };
-        let return_msg = chud_msg!(return_key, first_name);
-        append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &return_msg).await;
+            let return_msg = chud_msg!("return_hospitalized", first_name);
+            append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &return_msg).await;
+        }
 
         let kill_result = if qr.died {
             if let Some(pending) = pending_deaths
@@ -99,7 +95,22 @@ pub async fn render_tick_outcome(
             None
         };
 
-        report_dm::send_job_completion_dm(http, &registry, qr, kill_result.as_ref()).await;
+        let dm_ok = report_dm::send_job_completion_dm(http, &registry, qr, kill_result.as_ref()).await;
+        if qr.awaiting_return && !dm_ok {
+            match engine::complete_guild_return(qr.discord_user_id) {
+                Ok(Some((_, kind))) => {
+                    let return_msg = chud_msg!(kind.message_key(), first_name);
+                    append_activity_log_deferred(activity_log, ActivityLogKind::Standard, &return_msg)
+                        .await;
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(
+                    discord_user_id = qr.discord_user_id,
+                    err = %e,
+                    "failed to auto-return chud after DM failure"
+                ),
+            }
+        }
     }
 
     for sr in &outcome.scout_results {

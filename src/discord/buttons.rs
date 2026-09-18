@@ -101,6 +101,10 @@ async fn respond_to_busy(
         BusyReason::Hospitalized => {
             ephemeral_hospitalized_response(ctx, interaction, player, user_id).await?;
         }
+        BusyReason::ReturningFromJob => {
+            let msg = chud_msg!("busy_returning", player.chud_ref().name);
+            ephemeral_followup(ctx, interaction, &msg).await?;
+        }
     }
     Ok(())
 }
@@ -381,5 +385,37 @@ pub async fn handle_heal_button(
     )
     .await?;
 
+    Ok(())
+}
+
+pub async fn handle_job_return(
+    ctx: &serenity::Context,
+    interaction: &ComponentInteraction,
+    data: &Data,
+) -> anyhow::Result<()> {
+    interaction
+        .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+        .await?;
+
+    let user_id = interaction.user.id.get();
+    let Some((name, kind)) = engine::complete_guild_return(user_id)? else {
+        ephemeral_followup(ctx, interaction, "Your chud is already back.").await?;
+        return Ok(());
+    };
+
+    let return_msg = chud_msg!(kind.message_key(), first_word(&name));
+    append_activity_log(&data.runtime.activity_log, &return_msg).await;
+
+    let board = {
+        let guard = data.runtime.board.lock().await;
+        guard.clone()
+    };
+    guild_hall::refresh_board_status(
+        &ctx.http,
+        data.runtime.channel_id,
+        &board,
+        data.runtime.max_jobs,
+    )
+    .await?;
     Ok(())
 }

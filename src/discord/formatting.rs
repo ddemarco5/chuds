@@ -1,7 +1,7 @@
 use crate::chud_msg;
 use crate::discord::components_v2::{
-    components_v2_flags, Component, ComponentsV2Message, Container, ContainerChild, Separator,
-    TextDisplay,
+    components_v2_flags, ActionRow, Button, Component, ComponentsV2Message, Container,
+    ContainerChild, Separator, TextDisplay,
 };
 use crate::game::domain::graveyard::GraveyardEntry;
 use crate::game::domain::item::{Item, ItemType};
@@ -108,6 +108,8 @@ const ACCENT_PASSED: u32 = 0x57F287;
 const ACCENT_FAILED: u32 = 0xED4245;
 const ACCENT_DEATH: u32 = 0x2F3136;
 
+pub const JOB_RETURN_CUSTOM_ID: &str = "job_return";
+
 struct TrialCardText {
     situation: String,
     result: String,
@@ -122,6 +124,7 @@ pub struct DmCompletionContent {
     item: Option<String>,
     passed: bool,
     died: bool,
+    include_return_button: bool,
 }
 
 pub fn build_dm_completion_content(
@@ -135,6 +138,7 @@ pub fn build_dm_completion_content(
     item_award_disposition: Option<crate::game::engine::ItemAwardDisposition>,
     hospitalized: bool,
     kill: Option<&KillResult>,
+    include_return_button: bool,
 ) -> DmCompletionContent {
     let (summary, item, passed, died) = if let Some(kill) = kill {
         let footer = format_death_footer(kill);
@@ -165,6 +169,7 @@ pub fn build_dm_completion_content(
         item,
         passed,
         died,
+        include_return_button,
     }
 }
 
@@ -186,11 +191,22 @@ fn spoiled_trial_container(trial: &TrialCardText) -> Component {
     ]))
 }
 
-fn spoiled_outcome_container(summary: &str, item: Option<&str>, passed: bool, died: bool) -> Component {
+fn spoiled_outcome_container(
+    summary: &str,
+    item: Option<&str>,
+    passed: bool,
+    died: bool,
+    include_return_button: bool,
+) -> Component {
     let mut inner = vec![ContainerChild::Text(TextDisplay::new(summary.to_string()))];
     if let Some(item) = item.filter(|text| !text.is_empty()) {
         inner.push(ContainerChild::Separator(Separator::section()));
         inner.push(ContainerChild::Text(TextDisplay::new(item.to_string())));
+    }
+    if include_return_button {
+        inner.push(ContainerChild::ActionRow(ActionRow::one_button(
+            Button::primary(JOB_RETURN_CUSTOM_ID, chud_msg!("return_button_label")),
+        )));
     }
     Component::Container(Container::with_accent_spoiled(
         outcome_accent(passed, died),
@@ -211,8 +227,9 @@ pub fn build_dm_completion_messages(content: &DmCompletionContent) -> Vec<Compon
         Component::Text(TextDisplay::new(content.briefing.clone())),
     ];
     components.extend(content.trials.iter().map(spoiled_trial_container));
-    components.extend(build_dm_summary_components(content).components);
-    ComponentsV2Message::channel_packed(components)
+    let mut messages = ComponentsV2Message::channel_packed(components);
+    messages.push(build_dm_summary_components(content));
+    messages
 }
 
 /// Outcome block only — same spoiled accented container as the full report.
@@ -222,6 +239,7 @@ pub fn build_dm_summary_components(content: &DmCompletionContent) -> ComponentsV
         content.item.as_deref(),
         content.passed,
         content.died,
+        content.include_return_button,
     )])
 }
 
