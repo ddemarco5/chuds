@@ -301,6 +301,7 @@ return_button_label:
   - "Send them back"
   - "Back to work, Chud"
   - "Return"
+  - "Thanks for the loot, Chud. Back to it."
 
 return_died:
   - "{} won't be coming back."
