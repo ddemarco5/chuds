@@ -296,12 +296,29 @@ inspect_returning_prefix:
   - "Still out. They haven't walked in from the job."
   - "Finished the job, but they haven't come through the door."
 
-return_button_label:
+return_button_label_passed:
   - "Return to Guild Hall"
   - "Send them back"
   - "Back to work, Chud"
   - "Return"
   - "Thanks for the loot, Chud. Back to it."
+
+return_button_label_failed:
+  - "Back to work, loser."
+  - "Walk of shame"
+  - "Get back in there"
+  - "Return anyway..."
+  - "Go back empty-handed"
+
+return_button_label_passed_clicked:
+  - "They're back"
+  - "Returned"
+  - "Back at the hall"
+
+return_button_label_failed_clicked:
+  - "They're back"
+  - "Slunk back in"
+  - "Returned anyway"
 
 return_died:
   - "{} won't be coming back."

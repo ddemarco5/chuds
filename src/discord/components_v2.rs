@@ -255,6 +255,7 @@ pub struct Button {
 
 const STYLE_PRIMARY: u8 = 1;
 const STYLE_SECONDARY: u8 = 2;
+const STYLE_SUCCESS: u8 = 3;
 const STYLE_DANGER: u8 = 4;
 
 impl Button {
@@ -284,6 +285,35 @@ impl Button {
             style: STYLE_DANGER,
         }
     }
+}
+
+/// Disable a button in a raw Components V2 tree and restyle it as a completed click.
+pub fn mark_button_clicked(components: &mut serde_json::Value, custom_id: &str, label: &str) -> bool {
+    let Some(arr) = components.as_array_mut() else {
+        return false;
+    };
+    let mut found = false;
+    for component in arr {
+        found |= mark_button_clicked_node(component, custom_id, label);
+    }
+    found
+}
+
+fn mark_button_clicked_node(value: &mut serde_json::Value, custom_id: &str, label: &str) -> bool {
+    let Some(obj) = value.as_object_mut() else {
+        return false;
+    };
+    let mut found = obj.get("type").and_then(|t| t.as_u64()) == Some(u64::from(TYPE_BUTTON))
+        && obj.get("custom_id").and_then(|t| t.as_str()) == Some(custom_id);
+    if found {
+        obj.insert("disabled".to_string(), serde_json::Value::Bool(true));
+        obj.insert("style".to_string(), serde_json::json!(STYLE_SUCCESS));
+        obj.insert("label".to_string(), serde_json::Value::String(label.to_string()));
+    }
+    if let Some(children) = obj.get_mut("components") {
+        found |= mark_button_clicked(children, custom_id, label);
+    }
+    found
 }
 
 /// Wrapper for `CHANNEL_MESSAGE_WITH_SOURCE` interaction responses (new ephemeral message).

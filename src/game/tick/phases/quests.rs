@@ -204,7 +204,11 @@ fn resolve_quest(
 
     let awaiting_return = !died && !hospitalized;
     if awaiting_return {
-        player.chud_mut().awaiting_guild_return = Some(GuildReturn::from_passed(passed));
+        player.chud_mut().awaiting_guild_return = Some(if passed {
+            GuildReturn::Passed
+        } else {
+            GuildReturn::Failed
+        });
     }
     storage::save_player(&player)?;
 

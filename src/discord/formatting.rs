@@ -205,7 +205,14 @@ fn spoiled_outcome_container(
     }
     if include_return_button {
         inner.push(ContainerChild::ActionRow(ActionRow::one_button(
-            Button::primary(JOB_RETURN_CUSTOM_ID, chud_msg!("return_button_label")),
+            Button::primary(
+                JOB_RETURN_CUSTOM_ID,
+                chud_msg!(if passed {
+                    "return_button_label_passed"
+                } else {
+                    "return_button_label_failed"
+                }),
+            ),
         )));
     }
     Component::Container(Container::with_accent_spoiled(

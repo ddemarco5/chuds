@@ -2,14 +2,17 @@ use poise::serenity_prelude::{
     self as serenity, ButtonStyle, ComponentInteraction, CreateActionRow, CreateButton,
     CreateInteractionResponse, CreateInteractionResponseFollowup, EditInteractionResponse,
 };
+use serenity::http::{LightMethod, Request, Route};
 
 use crate::chud_msg;
-use crate::discord::guild_hall;
 use crate::discord::channel::append_activity_log;
+use crate::discord::components_v2::{self, FLAG_IS_COMPONENTS_V2};
 use crate::discord::context::Data;
+use crate::discord::formatting::JOB_RETURN_CUSTOM_ID;
+use crate::discord::guild_hall;
 use crate::game::busy::BusyReason;
 use crate::game::domain::board::Board;
-use crate::game::domain::player::{first_word, Player};
+use crate::game::domain::player::{first_word, GuildReturn, Player};
 use crate::game::engine;
 use crate::game::guild_status::{self, GuildHallStatus};
 use crate::game::persistence::storage;
@@ -398,24 +401,63 @@ pub async fn handle_job_return(
         .await?;
 
     let user_id = interaction.user.id.get();
-    let Some((name, kind)) = engine::complete_guild_return(user_id)? else {
-        ephemeral_followup(ctx, interaction, "Your chud is already back.").await?;
+    let clicked_label = match engine::complete_guild_return(user_id)? {
+        Some((name, kind)) => {
+            let return_msg = chud_msg!(kind.message_key(), first_word(&name));
+            append_activity_log(&data.runtime.activity_log, &return_msg).await;
+            let board = {
+                let guard = data.runtime.board.lock().await;
+                guard.clone()
+            };
+            guild_hall::refresh_board_status(
+                &ctx.http,
+                data.runtime.channel_id,
+                &board,
+                data.runtime.max_jobs,
+            )
+            .await?;
+            chud_msg!(match kind {
+                GuildReturn::Passed => "return_button_label_passed_clicked",
+                GuildReturn::Failed => "return_button_label_failed_clicked",
+            })
+        }
+        None => {
+            ephemeral_followup(ctx, interaction, "Your chud is already back.").await?;
+            chud_msg!("return_button_label_passed_clicked")
+        }
+    };
+
+    if let Err(e) = mark_job_return_clicked(&ctx.http, interaction, &clicked_label).await {
+        tracing::warn!(err = %e, "failed to mark job return button clicked");
+    }
+    Ok(())
+}
+
+async fn mark_job_return_clicked(
+    http: &serenity::Http,
+    interaction: &ComponentInteraction,
+    label: &str,
+) -> anyhow::Result<()> {
+    let mut raw: serde_json::Value = http
+        .fire(Request::new(
+            Route::ChannelMessage {
+                channel_id: interaction.channel_id,
+                message_id: interaction.message.id,
+            },
+            LightMethod::Get,
+        ))
+        .await?;
+    let Some(components) = raw.get_mut("components") else {
         return Ok(());
     };
-
-    let return_msg = chud_msg!(kind.message_key(), first_word(&name));
-    append_activity_log(&data.runtime.activity_log, &return_msg).await;
-
-    let board = {
-        let guard = data.runtime.board.lock().await;
-        guard.clone()
-    };
-    guild_hall::refresh_board_status(
-        &ctx.http,
-        data.runtime.channel_id,
-        &board,
-        data.runtime.max_jobs,
-    )
-    .await?;
+    if !components_v2::mark_button_clicked(components, JOB_RETURN_CUSTOM_ID, label) {
+        return Ok(());
+    }
+    let payload = serde_json::json!({
+        "flags": FLAG_IS_COMPONENTS_V2,
+        "components": components,
+    });
+    http.edit_message(interaction.channel_id, interaction.message.id, &payload, vec![])
+        .await?;
     Ok(())
 }

@@ -69,10 +69,6 @@ pub enum GuildReturn {
 }
 
 impl GuildReturn {
-    pub fn from_passed(passed: bool) -> Self {
-        if passed { Self::Passed } else { Self::Failed }
-    }
-
     pub fn message_key(self) -> &'static str {
         match self {
             Self::Passed => "return_passed",
