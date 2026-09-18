@@ -2,7 +2,7 @@ use poise::serenity_prelude::{self as serenity, ComponentInteraction};
 
 use crate::chud_msg;
 use crate::discord::channel::append_activity_log;
-use crate::discord::formatting::format_item_block;
+use crate::discord::formatting::{format_chud_identity_block, format_item_block};
 use crate::game::busy::{self, BusyReason};
 use crate::game::domain::board::Board;
 use crate::game::domain::hospital::Hospital;
@@ -64,7 +64,7 @@ fn gear_persistent_notice(
     }
 }
 
-/// Build the gear UI for `/gear` or other first-open paths (no button action).
+/// Build the chud sheet UI for `/chud` or other first-open paths (no button action).
 pub async fn build_gear_open_message(
     data: &Data,
     player: &Player,
@@ -129,6 +129,10 @@ pub fn build_gear_message(
 ) -> ComponentsV2Message {
     let mut components = Vec::new();
 
+    components.push(Component::Text(TextDisplay::new(format_chud_identity_block(
+        player, registry,
+    ))));
+    components.push(Component::Separator(Separator::section()));
     components.push(Component::Text(TextDisplay::new(format!(
         "**Equipped** — ${} on hand",
         player.cash

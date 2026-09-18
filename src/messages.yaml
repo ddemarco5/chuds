@@ -244,7 +244,7 @@ all_busy:
 no_chuds:
   - "The guild hall is empty. No chuds yet."
   - "Dead silent in here. Where are all the chuds?"
-  - "Not a chud in sight. Use /chud to get started."
+  - "Not a chud in sight. Use /new_chud to get started."
   - "Nobody's shown up yet. The guild hall waits."
 
 hospital_waiting:
@@ -257,7 +257,7 @@ inspect_self:
   - "That's your chud, you chud."
   - "You inspected **{}**? That's *your* chud. You chud."
   - "**{}** is yours. You're the chud here."
-  - "Why are you /inspect-ing **{}**? You made them. Use /stats, you chud."
+  - "Why are you /inspect-ing **{}**? You made them. Use /chud, you chud."
   - "That's your chud you chud. Yes. Yours."
 
 # /inspect — idle chud description or why they are not around

@@ -41,7 +41,7 @@ async fn build_attract_message(runtime: &GameRuntime) -> ComponentsV2Message {
     };
     let list_header = chud_msg!("attract_chudlist");
     let body = format!(
-        "# {title}\n{when}\nType `/chud` to make your chud and join\n{list_header}\n{roster}"
+        "# {title}\n{when}\nType `/new_chud` to make your chud and join\n{list_header}\n{roster}"
     );
     ComponentsV2Message::channel(vec![Component::Text(TextDisplay::new(body))])
 }
@@ -131,7 +131,6 @@ fn per_chud_complete_blocks(registry: &ItemRegistry) -> Vec<String> {
                 player,
                 registry,
                 PlayerStatsBlockOptions {
-                    include_stash: false,
                     include_cash: false,
                 },
             );

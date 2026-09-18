@@ -8,7 +8,6 @@ use crate::game::domain::item::{Item, ItemType};
 use crate::game::domain::player::Player;
 use crate::game::domain::quest_result::{CompletedTrial, QuestResult};
 use crate::game::mechanics::quest_builder::StatChoice;
-use crate::game::domain::stash::STASH_CAPACITY;
 use crate::game::engine::KillResult;
 use crate::game::mechanics::simulation::effective_stats;
 use crate::game::generation::generators::collapse_whitespace;
@@ -16,7 +15,6 @@ use crate::game::persistence::item_registry::ItemRegistry;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PlayerStatsBlockOptions {
-    pub include_stash: bool,
     pub include_cash: bool,
 }
 
@@ -43,18 +41,36 @@ pub fn format_equipment_summary(player: &Player, registry: &ItemRegistry) -> Str
     lines.join("\n")
 }
 
+fn format_chud_name_block(player: &Player) -> String {
+    let chud = player.chud_ref();
+    format!("**{}**\n-# {}", chud.name, chud.description)
+}
+
+fn format_chud_stats_and_jobs(player: &Player, registry: &ItemRegistry) -> String {
+    let effective = effective_stats(player, registry);
+    format!(
+        "{}\n{}",
+        player.format_effective_stats_line(effective),
+        player.format_job_record(),
+    )
+}
+
+/// Name, description, effective stats, and job record — the identity header for `/chud`.
+pub fn format_chud_identity_block(player: &Player, registry: &ItemRegistry) -> String {
+    format!(
+        "{}\n\n{}",
+        format_chud_name_block(player),
+        format_chud_stats_and_jobs(player, registry),
+    )
+}
+
 pub fn format_player_stats_block(
     player: &Player,
     registry: &ItemRegistry,
     options: PlayerStatsBlockOptions,
 ) -> String {
-    let chud = player.chud_ref();
     let equipment = format_equipment_summary(player, registry);
-    let effective = effective_stats(player, registry);
-    let stats_line = player.format_effective_stats_line(effective);
-    let job_record = player.format_job_record();
-
-    let mut out = format!("**{}**\n-# {}", chud.name, chud.description);
+    let mut out = format_chud_name_block(player);
 
     if !equipment.is_empty() {
         out.push_str("\n\n");
@@ -62,24 +78,7 @@ pub fn format_player_stats_block(
     }
 
     out.push_str("\n\n");
-
-    if options.include_stash {
-        let stash_line = if player.stash.is_empty() {
-            format!("Stash: empty (0/{STASH_CAPACITY}) - use `/gear` to manage loadout")
-        } else {
-            format!(
-                "Stash: {}/{} items - use `/gear` to manage loadout",
-                player.stash.len(),
-                STASH_CAPACITY
-            )
-        };
-        out.push_str(&stash_line);
-        out.push('\n');
-    }
-
-    out.push_str(&stats_line);
-    out.push('\n');
-    out.push_str(&job_record);
+    out.push_str(&format_chud_stats_and_jobs(player, registry));
 
     if options.include_cash {
         out.push_str(&format!(

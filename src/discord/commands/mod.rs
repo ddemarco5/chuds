@@ -10,6 +10,6 @@ pub use admin::{
     delete_chud, delete_cm, load, save, tick,
 };
 pub use all_chuds::all_chuds;
-pub use chud::{chud, chudlerboard, gear, inspect, job, stats};
+pub use chud::{chud, chudlerboard, inspect, job, new_chud};
 pub use graveyard::graveyard;
 pub use job::{assign, delete_job, generate_job, write_job};

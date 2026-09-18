@@ -1,7 +1,5 @@
 use crate::chud_msg;
-use crate::discord::formatting::{
-    format_equipment_summary, format_player_stats_block, PlayerStatsBlockOptions,
-};
+use crate::discord::formatting::format_equipment_summary;
 use crate::discord::guild_hall;
 use crate::discord::game_screens;
 use crate::discord::channel::append_activity_log;
@@ -87,7 +85,7 @@ pub async fn handle_chud_join(
 }
 
 #[poise::command(slash_command)]
-pub async fn chud(ctx: Context<'_>, name: String, description: String) -> Result<(), Error> {
+pub async fn new_chud(ctx: Context<'_>, name: String, description: String) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     let user_id = ctx.author().id.get();
 
@@ -163,25 +161,7 @@ pub async fn inspect(ctx: Context<'_>, name: String) -> Result<(), Error> {
 }
 
 #[poise::command(slash_command)]
-pub async fn stats(ctx: Context<'_>) -> Result<(), Error> {
-    let Some(player) = require_chud(ctx).await? else {
-        return Ok(());
-    };
-    let registry = ctx.data().runtime.item_registry.lock().await;
-    let msg = format_player_stats_block(
-        &player,
-        &registry,
-        PlayerStatsBlockOptions {
-            include_stash: true,
-            include_cash: true,
-        },
-    );
-    ctx.say(msg).await?;
-    Ok(())
-}
-
-#[poise::command(slash_command)]
-pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
+pub async fn chud(ctx: Context<'_>) -> Result<(), Error> {
     let token = match &ctx {
         poise::Context::Application(app) => app.interaction.token.clone(),
         _ => return Ok(()),
@@ -195,7 +175,7 @@ pub async fn gear(ctx: Context<'_>) -> Result<(), Error> {
     let message = crate::discord::build_gear_open_message(ctx.data(), &player).await?;
 
     if let Err(e) = crate::discord::edit_ephemeral_message(&http, &token, &message).await {
-        tracing::debug!(err = %e, user_id = player.discord_user_id, "gear command edit failed (ephemeral may be dismissed)");
+        tracing::debug!(err = %e, user_id = player.discord_user_id, "chud command edit failed (ephemeral may be dismissed)");
     }
     Ok(())
 }
